@@ -44,7 +44,7 @@ async function startApiProcess() {
   );
   const childBaseUrl = `http://127.0.0.1:${port}/api`;
 
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
     if (child.exitCode !== null) {
       throw new Error(
         `API process exited before becoming ready: ${child.exitCode}`,
@@ -57,15 +57,19 @@ async function startApiProcess() {
     } catch {
       // The child process has not started listening yet.
     }
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
   child.kill();
+  await once(child, "exit");
   throw new Error("Timed out waiting for API process to become ready");
 }
 
-function stopApiProcess(child: ChildProcess) {
-  if (child.exitCode === null) child.kill();
+async function stopApiProcess(child: ChildProcess) {
+  if (child.exitCode === null) {
+    child.kill();
+    await once(child, "exit");
+  }
 }
 
 beforeEach(async () => {
@@ -228,9 +232,11 @@ test("separate API processes accept one concurrent ACK and journal one event", a
       .from(casIncidentEvents)
       .where(eq(casIncidentEvents.incidentId, id));
     assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
-  } finally {
-    stopApiProcess(first.child);
-    stopApiProcess(second.child);
+    } finally {
+    await Promise.all([
+      stopApiProcess(first.child),
+      stopApiProcess(second.child),
+    ]);
   }
 });
 
@@ -263,7 +269,9 @@ test("separate API processes accept one concurrent RESOLVE and journal one event
       .where(eq(casIncidentEvents.incidentId, id));
     assert.equal(events.filter((event) => event.type === "RESPONDER_RESOLVE").length, 1);
   } finally {
-    stopApiProcess(first.child);
-    stopApiProcess(second.child);
+    await Promise.all([
+      stopApiProcess(first.child),
+      stopApiProcess(second.child),
+    ]);
   }
 });

@@ -1,2 +1,3 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
+- [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
