@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "CovertAlertSystem"
+description = "A focused Milestone 0 feasibility console for evaluating covert proxy launch, SMS behavior, persistence, location, and observer visibility on a managed Pixel device."
+version = "1.0.0"
+id = "artifacts/covert-alert-system"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26170
+
+[services.development]
+run = "pnpm --filter @workspace/covert-alert-system run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/covert-alert-system", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/covert-alert-system/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26170"
+BASE_PATH = "/"
