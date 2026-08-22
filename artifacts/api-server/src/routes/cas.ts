@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Response, type NextFunction } from "express";
-import { and, asc, desc, eq, ne } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   casGateEvidence,
@@ -76,18 +77,25 @@ router.post("/cas/incidents/test", async (req, res, next) => {
 
 router.post("/cas/incidents/trigger", async (_req, res, next) => {
   try {
-    const active = await db.select().from(casIncidents).where(ne(casIncidents.status, "RESOLVED")).orderBy(desc(casIncidents.createdAt)).limit(1);
-    const now = new Date();
-    if (active[0]) {
-      const incident = active[0];
-      await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
+      // Serialize the active-incident check with its insert/update. A regular
+      // transaction does not prevent two READ COMMITTED transactions from
+      // both observing no active incident before either one inserts.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('cas:active-incident', 0))`);
+      const active = await tx.select().from(casIncidents)
+        .where(sql`${casIncidents.status} <> 'RESOLVED'`)
+        .orderBy(desc(casIncidents.createdAt))
+        .limit(1);
+      const now = new Date();
+
+      if (active[0]) {
+        const incident = active[0];
         await tx.update(casIncidents).set({ triggerCount: incident.triggerCount + 1, updatedAt: now }).where(eq(casIncidents.id, incident.id));
-        await tx.insert(casIncidentEvents).values({ id: `${incident.id}-retrigger-${now.getTime()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: "Repeat trigger folded into the existing active incident; timers and outbox were not reset.", createdAt: now });
-      });
-      return res.json({ id: incident.id, reused: true });
-    }
-    const id = `sim-${now.getTime()}`;
-    await db.transaction(async (tx) => {
+        await tx.insert(casIncidentEvents).values({ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: "Repeat trigger folded into the existing active incident; timers and outbox were not reset.", createdAt: now });
+        return { id: incident.id, reused: true };
+      }
+
+      const id = `sim-${now.getTime()}-${randomUUID()}`;
       await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now });
       await tx.insert(casIncidentEvents).values([
         { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: "Durable trigger received and incident identity committed.", createdAt: now },
@@ -97,8 +105,9 @@ router.post("/cas/incidents/trigger", async (_req, res, next) => {
         { id: `${id}-sms`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: now },
         { id: `${id}-xmpp`, incidentId: id, transport: "XMPP", state: "QUEUED", priority: "P1", createdAt: now },
       ]);
+      return { id, reused: false };
     });
-    return res.status(201).json({ id, reused: false });
+    return res.status(result.reused ? 200 : 201).json(result);
   } catch (error) { return next(error); }
 });
 
