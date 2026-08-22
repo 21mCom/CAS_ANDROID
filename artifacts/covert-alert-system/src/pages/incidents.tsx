@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Activity, ArrowRight, LockKeyhole, RotateCcw } from 'lucide-react';
+import { Activity, ArrowRight, Check, CircleStop, LockKeyhole, RotateCcw, ShieldAlert } from 'lucide-react';
 import { Link } from 'wouter';
 import { useFieldTest, type Priority } from '@/hooks/use-field-test';
 import { EvidenceLabel, EmptyState, PriorityPill, SectionKicker } from '@/components/field-ui';
 
 export default function Incidents() {
-  const { incidents, runTestIncident, resetDemo } = useFieldTest();
+  const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, resetDemo } = useFieldTest();
   const [filter, setFilter] = useState<'all' | Priority>('all');
   const visible = useMemo(() => filter === 'all' ? incidents : incidents.filter((item) => item.priority === filter), [filter, incidents]);
 
@@ -14,6 +14,41 @@ export default function Incidents() {
       <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker>Incident kernel / read-only</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">Preserve the sequence.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">A sample timeline for the future incident kernel. It keeps priority, event order, source, and observable state together without pretending that a backend exists.</p></div><button onClick={runTestIncident} className="inline-flex items-center justify-center gap-2 self-start bg-[#203c49] px-4 py-3 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55]" data-testid="button-incidents-test-incident"><Activity size={15} /> Run local TEST</button></section>
       <section className="fade-up fade-up-1 mt-5 grid gap-5 xl:grid-cols-[1fr_320px]">
         <div className="border border-[#d7d8d0] bg-[#fbfbf7]">
+          <div className="border-b border-[#d7d8d0] bg-[#f4f2e9] p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ShieldAlert size={16} className="text-[#a06712]" />
+                  <SectionKicker>Incident kernel / simulation</SectionKicker>
+                </div>
+                <h2 className="mt-1 font-display text-xl font-extrabold tracking-[-0.04em] text-[#203c49]">
+                  {activeIncident ? activeIncident.status.replaceAll('_', ' ') : 'No active incident'}
+                </h2>
+                <p className="mt-1 max-w-xl text-xs leading-5 text-[#687271]">
+                  {activeIncident
+                    ? `One durable incident · ${activeIncident.triggerCount} trigger${activeIncident.triggerCount === 1 ? '' : 's'} folded together · ${activeIncident.events.length} journal events`
+                    : 'Exercise idempotent triggers and responder transitions locally. This does not contact recipients or control a device.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={triggerKernel} className="inline-flex items-center gap-2 bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55]" data-testid="button-trigger-kernel"><ShieldAlert size={14} /> {activeIncident && activeIncident.status !== 'RESOLVED' ? 'Retrigger' : 'Activate kernel'}</button>
+                <button onClick={acknowledgeKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_UNACKED'} className="inline-flex items-center gap-2 border border-[#b9d8c5] bg-[#e1efe5] px-3 py-2 text-xs font-bold text-[#236047] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-ack-kernel"><Check size={14} /> ACK</button>
+                <button onClick={resolveKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_ACKED'} className="inline-flex items-center gap-2 border border-[#e7b8af] bg-[#f8e0db] px-3 py-2 text-xs font-bold text-[#914136] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-resolve-kernel"><CircleStop size={14} /> RESOLVE</button>
+              </div>
+            </div>
+            {activeIncident && (
+              <div className="mt-4 grid gap-3 border-t border-[#d7d8d0] pt-4 sm:grid-cols-2">
+                <div>
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Stable incident ID</p>
+                  <p className="mt-1 break-all font-mono-ui text-xs text-[#203c49]">{activeIncident.id}</p>
+                </div>
+                <div>
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Independent P1 outbox</p>
+                  <div className="mt-1 flex flex-wrap gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] text-[#687271]">{item.transport} · {item.state}</span>)}</div>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex flex-col gap-4 border-b border-[#d7d8d0] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(['all', 'P1', 'P2', 'P3'] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={`border px-3 py-2 font-mono-ui text-[10px] uppercase tracking-[0.1em] transition-colors ${filter === item ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] text-[#687271] hover:border-[#203c49]'}`} data-testid={`button-filter-priority-${item}`}>{item === 'all' ? 'All events' : item}</button>)}</div><button onClick={resetDemo} className="inline-flex items-center gap-2 self-start text-xs font-bold text-[#687271] hover:text-[#203c49]" data-testid="button-reset-incidents"><RotateCcw size={14} /> Reset sample</button></div>
           {visible.length === 0 ? <div className="p-6"><EmptyState title="No events in this priority" detail="Choose another priority or run a local TEST incident to add a P3 record." /></div> : <div className="relative px-5 py-5"><div className="absolute bottom-7 left-[38px] top-7 w-px bg-[#d7d8d0]" />{visible.map((incident) => <div key={incident.id} className="relative grid grid-cols-[28px_1fr] gap-4 pb-6 last:pb-0" data-testid={`row-incident-${incident.id}`}><div className="z-10 mt-1 flex h-7 w-7 items-center justify-center border border-[#d7d8d0] bg-[#fbfbf7]"><span className={`h-2 w-2 rounded-full ${incident.priority === 'P1' ? 'bg-[#203c49]' : incident.priority === 'P2' ? 'bg-[#e8a629]' : 'bg-[#8ca69f]'}`} /></div><div className="border border-[#e0e1da] bg-[#f7f7f1] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><PriorityPill priority={incident.priority} /><h2 className="text-sm font-bold text-[#203c49]">{incident.title}</h2></div><span className="font-mono-ui text-[10px] text-[#687271]">{incident.time} UTC</span></div><p className="mt-2 text-sm leading-5 text-[#687271]">{incident.detail}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e0e1da] pt-3 font-mono-ui text-[10px] uppercase tracking-[0.08em] text-[#687271]"><span>State: <strong className={incident.state === 'Blocked' ? 'text-[#914136]' : incident.state === 'Local only' ? 'text-[#a06712]' : 'text-[#236047]'}>{incident.state}</strong></span><span>Source: {incident.source}</span>{incident.sample ? <EvidenceLabel /> : <span className="text-[#a06712]">LOCAL ACTION</span>}</div></div></div>)}</div>}
         </div>

@@ -35,16 +35,46 @@ export type Incident = {
   sample: boolean;
 };
 
+export type KernelStatus = 'INACTIVE' | 'ACTIVE_UNACKED' | 'ACTIVE_ACKED' | 'RESOLVED';
+
+export type KernelEvent = {
+  id: string;
+  type: string;
+  priority: Priority;
+  time: string;
+  detail: string;
+};
+
+export type OutboxItem = {
+  id: string;
+  transport: 'SMS' | 'XMPP';
+  state: 'QUEUED' | 'DISPATCHING' | 'SENT' | 'WAITING';
+  priority: 'P1' | 'P2';
+};
+
+export type ActiveIncident = {
+  id: string;
+  status: KernelStatus;
+  triggerCount: number;
+  createdAt: string;
+  events: KernelEvent[];
+  outbox: OutboxItem[];
+};
+
 type FieldTestState = {
   gates: Gate[];
   setup: SetupItem[];
   incidents: Incident[];
+  activeIncident: ActiveIncident | null;
 };
 
 type FieldTestContextValue = FieldTestState & {
   updateGateStatus: (id: string, status: GateStatus) => void;
   toggleSetupItem: (id: string) => void;
   runTestIncident: () => void;
+  triggerKernel: () => void;
+  acknowledgeKernel: () => void;
+  resolveKernel: () => void;
   resetDemo: () => void;
 };
 
@@ -129,6 +159,7 @@ const initialState: FieldTestState = {
   gates: initialGates,
   setup: initialSetup,
   incidents: initialIncidents,
+  activeIncident: null,
 };
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
@@ -171,6 +202,94 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         sample: false,
       };
       return { ...current, incidents: [incident, ...current.incidents] };
+    }),
+    triggerKernel: () => setState((current) => {
+      const now = new Date();
+      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      if (current.activeIncident && current.activeIncident.status !== 'RESOLVED') {
+        const retrigger: KernelEvent = {
+          id: `event-retrigger-${now.getTime()}`,
+          type: 'TRIGGER_REUSED',
+          priority: 'P1',
+          time: stamp,
+          detail: 'Repeat trigger folded into the existing active incident; timers and outbox were not reset.',
+        };
+        return {
+          ...current,
+          activeIncident: {
+            ...current.activeIncident,
+            triggerCount: current.activeIncident.triggerCount + 1,
+            events: [...current.activeIncident.events, retrigger],
+          },
+        };
+      }
+      const id = `sim-${now.getTime()}`;
+      const events: KernelEvent[] = [
+        { id: `${id}-received`, type: 'TRIGGER_RECEIVED', priority: 'P1', time: stamp, detail: 'Durable trigger received and incident identity committed.' },
+        { id: `${id}-queued`, type: 'P1_QUEUED', priority: 'P1', time: stamp, detail: 'SMS and XMPP outbox items queued independently.' },
+      ];
+      return {
+        ...current,
+        activeIncident: {
+          id,
+          status: 'ACTIVE_UNACKED',
+          triggerCount: 1,
+          createdAt: stamp,
+          events,
+          outbox: [
+            { id: `${id}-sms`, transport: 'SMS', state: 'QUEUED', priority: 'P1' },
+            { id: `${id}-xmpp`, transport: 'XMPP', state: 'QUEUED', priority: 'P1' },
+          ],
+        },
+        incidents: [{
+          id: `${id}-log`,
+          priority: 'P1',
+          time: stamp,
+          title: 'Kernel simulation activated',
+          detail: 'One active incident created. No SMS or XMPP message was sent.',
+          state: 'Simulated',
+          source: 'Kernel simulator',
+          sample: false,
+        }, ...current.incidents],
+      };
+    }),
+    acknowledgeKernel: () => setState((current) => {
+      if (!current.activeIncident || current.activeIncident.status !== 'ACTIVE_UNACKED') return current;
+      const now = new Date();
+      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      return {
+        ...current,
+        activeIncident: {
+          ...current.activeIncident,
+          status: 'ACTIVE_ACKED',
+          events: [...current.activeIncident.events, {
+            id: `event-ack-${now.getTime()}`,
+            type: 'RESPONDER_ACK',
+            priority: 'P1',
+            time: stamp,
+            detail: 'Simulated responder acknowledgement accepted; location would continue.',
+          }],
+        },
+      };
+    }),
+    resolveKernel: () => setState((current) => {
+      if (!current.activeIncident || current.activeIncident.status !== 'ACTIVE_ACKED') return current;
+      const now = new Date();
+      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      return {
+        ...current,
+        activeIncident: {
+          ...current.activeIncident,
+          status: 'RESOLVED',
+          events: [...current.activeIncident.events, {
+            id: `event-resolve-${now.getTime()}`,
+            type: 'RESPONDER_RESOLVE',
+            priority: 'P1',
+            time: stamp,
+            detail: 'Simulated authenticated resolution appended to the journal.',
+          }],
+        },
+      };
     }),
     resetDemo: () => setState(initialState),
   }), [state]);
