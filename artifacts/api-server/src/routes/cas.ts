@@ -114,6 +114,9 @@ router.post("/cas/incidents/trigger", async (_req, res, next) => {
 async function appendTransition(id: string, from: string, to: string, type: string, detail: string, res: Response, _next: NextFunction) {
   const now = new Date();
   const result = await db.transaction(async (tx) => {
+    // Lock the incident before checking its state. Without this, concurrent
+    // responders can both read the same status and append duplicate events.
+    await tx.execute(sql`SELECT id FROM cas_incidents WHERE id = ${id} FOR UPDATE`);
     const rows = await tx.select().from(casIncidents).where(eq(casIncidents.id, id)).limit(1);
     if (!rows[0] || rows[0].status !== from) return false;
     await tx.update(casIncidents).set({ status: to, updatedAt: now }).where(eq(casIncidents.id, id));

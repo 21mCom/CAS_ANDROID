@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { after, before, test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 import app from "../app";
 import { db, pool } from "@workspace/db";
 import {
@@ -22,7 +22,7 @@ async function clearCasData() {
   await db.delete(casIncidents);
 }
 
-before(async () => {
+beforeEach(async () => {
   await clearCasData();
 });
 
@@ -107,4 +107,51 @@ test("concurrent triggers reuse one incident and preserve both observations", as
   ).map((event) => event.type);
   assert.ok(transitionTypes.includes("RESPONDER_ACK"));
   assert.ok(transitionTypes.includes("RESPONDER_RESOLVE"));
+});
+
+test("concurrent ACK requests accept one transition and conflict the other", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const responses = await Promise.all([
+    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
+    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
+  ]);
+
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+
+  const incident = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident[0].status, "ACTIVE_ACKED");
+
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
+});
+
+test("concurrent RESOLVE requests accept one transition and conflict the other", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
+  assert.equal(ack.status, 200);
+
+  const responses = await Promise.all([
+    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+  ]);
+
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+
+  const incident = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident[0].status, "RESOLVED");
+
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
+  assert.equal(events.filter((event) => event.type === "RESPONDER_RESOLVE").length, 1);
 });
