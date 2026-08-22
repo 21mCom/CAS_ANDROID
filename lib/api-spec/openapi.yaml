@@ -24,6 +24,92 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /cas/state:
+    get:
+      operationId: getCasState
+      tags: [cas]
+      summary: Read durable console state
+      responses:
+        "200":
+          description: Current readiness and incident journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CasState"
+  /cas/incidents/test:
+    post:
+      operationId: recordCasTestIncident
+      tags: [cas]
+      responses:
+        "201":
+          description: Test incident recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MutationResult" }
+  /cas/bootstrap:
+    post:
+      operationId: bootstrapCasReadiness
+      tags: [cas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [gates, setup], properties: { gates: { type: array, items: { type: object, additionalProperties: true } }, setup: { type: array, items: { type: object, additionalProperties: true } } } }
+      responses:
+        "201": { description: Readiness seeded }
+  /cas/incidents/trigger:
+    post:
+      operationId: triggerCasIncident
+      tags: [cas]
+      responses:
+        "201":
+          description: Incident created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MutationResult" }
+        "200":
+          description: Existing active incident reused
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MutationResult" }
+  /cas/incidents/{id}/ack:
+    post:
+      operationId: acknowledgeCasIncident
+      tags: [cas]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Acknowledged }
+  /cas/incidents/{id}/resolve:
+    post:
+      operationId: resolveCasIncident
+      tags: [cas]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Resolved }
+  /cas/setup/{id}:
+    patch:
+      operationId: updateCasSetup
+      tags: [cas]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [complete], properties: { complete: { type: boolean } } }
+      responses:
+        "200": { description: Updated }
+  /cas/gates/{id}:
+    patch:
+      operationId: updateCasGate
+      tags: [cas]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string } } }
+      responses:
+        "200": { description: Updated }
 components:
   schemas:
     HealthStatus:
@@ -33,4 +119,19 @@ components:
           type: string
       required:
         - status
+    MutationResult:
+      type: object
+      properties:
+        id: { type: string }
+        reused: { type: boolean }
+        status: { type: string }
+      required: [id]
+    CasState:
+      type: object
+      properties:
+        incidents: { type: array, items: { type: object, additionalProperties: true } }
+        activeIncident: { type: object, nullable: true, additionalProperties: true }
+        setup: { type: array, items: { type: object, additionalProperties: true } }
+        gates: { type: array, items: { type: object, additionalProperties: true } }
+      required: [incidents, activeIncident, setup, gates]
 

@@ -46,7 +46,7 @@ export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTe
             <p className="mt-2 font-display text-sm font-bold text-[#f2f0e6]">Google Pixel 8a</p>
             <p className="mt-1 font-mono-ui text-[10px] text-[#8ca69f]">stock Android · managed</p>
           </div>
-          <p className="mt-5 font-mono-ui text-[9px] leading-4 text-[#79918b]">No live alerting. No remote actions.<br />All records shown are local prototype state.</p>
+          <p className="mt-5 font-mono-ui text-[9px] leading-4 text-[#79918b]">No live alerting. No remote actions.<br />Test records are stored by the local API.</p>
         </div>
       </aside>
 

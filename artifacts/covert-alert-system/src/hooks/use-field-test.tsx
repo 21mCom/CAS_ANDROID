@@ -88,9 +88,6 @@ type FieldTestContextValue = FieldTestState & {
   resolveKernel: () => void;
   resetDemo: () => void;
 };
-
-const STORAGE_KEY = 'cas-milestone-0-state';
-
 const initialGates: Gate[] = [
   {
     id: 'proxy-launch',
@@ -186,25 +183,43 @@ const initialState: FieldTestState = {
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 
 export function FieldTestProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<FieldTestState>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? { ...initialState, ...JSON.parse(stored) } : initialState;
-    } catch {
-      return initialState;
-    }
-  });
+  const [state, setState] = useState<FieldTestState>(initialState);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    let cancelled = false;
+    const load = async () => {
+      try {
+        let response = await fetch('/api/cas/state');
+        if (!response.ok) throw new Error('Unable to load durable state');
+        let remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+        if (remote.gates.length === 0 && remote.setup.length === 0) {
+          await fetch('/api/cas/bootstrap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gates: initialGates, setup: initialSetup }),
+          });
+          response = await fetch('/api/cas/state');
+          remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+        }
+        if (!cancelled) setState({ ...remote, fieldRun: initialState.fieldRun });
+      } catch {
+        if (!cancelled) setState(initialState);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const reload = async () => {
+    const response = await fetch('/api/cas/state');
+    if (!response.ok) throw new Error('Unable to reload durable state');
+    const remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+    setState((current) => ({ ...remote, fieldRun: current.fieldRun }));
+  };
 
   const value = useMemo<FieldTestContextValue>(() => ({
     ...state,
-    updateGateStatus: (id, status) => setState((current) => ({
-      ...current,
-      gates: current.gates.map((gate) => gate.id === id ? { ...gate, status } : gate),
-    })),
+    updateGateStatus: (id, nextStatus) => { void fetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload); },
     recordObservation: (id, observation) => setState((current) => ({
       ...current,
       fieldRun: { ...current.fieldRun, observations: { ...current.fieldRun.observations, [id]: observation }, decision: 'pending' },
@@ -218,114 +233,12 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       ...current,
       fieldRun: { ...current.fieldRun, decision, startedAt: current.fieldRun.startedAt || new Date().toISOString() },
     })),
-    toggleSetupItem: (id) => setState((current) => ({
-      ...current,
-      setup: current.setup.map((item) => item.id === id ? { ...item, complete: !item.complete } : item),
-    })),
-    runTestIncident: () => setState((current) => {
-      const now = new Date();
-      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-      const incident: Incident = {
-        id: `test-${now.getTime()}`,
-        priority: 'P3',
-        time: stamp,
-        title: 'TEST incident recorded',
-        detail: 'Local test action completed. No message was sent and no device action was triggered.',
-        state: 'Local only',
-        source: 'Console control',
-        sample: false,
-      };
-      return { ...current, incidents: [incident, ...current.incidents] };
-    }),
-    triggerKernel: () => setState((current) => {
-      const now = new Date();
-      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-      if (current.activeIncident && current.activeIncident.status !== 'RESOLVED') {
-        const retrigger: KernelEvent = {
-          id: `event-retrigger-${now.getTime()}`,
-          type: 'TRIGGER_REUSED',
-          priority: 'P1',
-          time: stamp,
-          detail: 'Repeat trigger folded into the existing active incident; timers and outbox were not reset.',
-        };
-        return {
-          ...current,
-          activeIncident: {
-            ...current.activeIncident,
-            triggerCount: current.activeIncident.triggerCount + 1,
-            events: [...current.activeIncident.events, retrigger],
-          },
-        };
-      }
-      const id = `sim-${now.getTime()}`;
-      const events: KernelEvent[] = [
-        { id: `${id}-received`, type: 'TRIGGER_RECEIVED', priority: 'P1', time: stamp, detail: 'Durable trigger received and incident identity committed.' },
-        { id: `${id}-queued`, type: 'P1_QUEUED', priority: 'P1', time: stamp, detail: 'SMS and XMPP outbox items queued independently.' },
-      ];
-      return {
-        ...current,
-        activeIncident: {
-          id,
-          status: 'ACTIVE_UNACKED',
-          triggerCount: 1,
-          createdAt: stamp,
-          events,
-          outbox: [
-            { id: `${id}-sms`, transport: 'SMS', state: 'QUEUED', priority: 'P1' },
-            { id: `${id}-xmpp`, transport: 'XMPP', state: 'QUEUED', priority: 'P1' },
-          ],
-        },
-        incidents: [{
-          id: `${id}-log`,
-          priority: 'P1',
-          time: stamp,
-          title: 'Kernel simulation activated',
-          detail: 'One active incident created. No SMS or XMPP message was sent.',
-          state: 'Simulated',
-          source: 'Kernel simulator',
-          sample: false,
-        }, ...current.incidents],
-      };
-    }),
-    acknowledgeKernel: () => setState((current) => {
-      if (!current.activeIncident || current.activeIncident.status !== 'ACTIVE_UNACKED') return current;
-      const now = new Date();
-      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-      return {
-        ...current,
-        activeIncident: {
-          ...current.activeIncident,
-          status: 'ACTIVE_ACKED',
-          events: [...current.activeIncident.events, {
-            id: `event-ack-${now.getTime()}`,
-            type: 'RESPONDER_ACK',
-            priority: 'P1',
-            time: stamp,
-            detail: 'Simulated responder acknowledgement accepted; location would continue.',
-          }],
-        },
-      };
-    }),
-    resolveKernel: () => setState((current) => {
-      if (!current.activeIncident || current.activeIncident.status !== 'ACTIVE_ACKED') return current;
-      const now = new Date();
-      const stamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-      return {
-        ...current,
-        activeIncident: {
-          ...current.activeIncident,
-          status: 'RESOLVED',
-          events: [...current.activeIncident.events, {
-            id: `event-resolve-${now.getTime()}`,
-            type: 'RESPONDER_RESOLVE',
-            priority: 'P1',
-            time: stamp,
-            detail: 'Simulated authenticated resolution appended to the journal.',
-          }],
-        },
-      };
-    }),
-    resetDemo: () => setState(initialState),
+    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void fetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload); },
+    runTestIncident: () => { void fetch('/api/cas/incidents/test', { method: 'POST' }).then(reload); },
+    triggerKernel: () => { void fetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload); },
+    acknowledgeKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload); },
+    resolveKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload); },
+    resetDemo: () => { void reload(); },
   }), [state]);
 
   return <FieldTestContext.Provider value={value}>{children}</FieldTestContext.Provider>;

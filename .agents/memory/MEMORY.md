@@ -1,0 +1,1 @@
+- [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
