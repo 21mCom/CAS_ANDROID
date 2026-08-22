@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 export type GateStatus = 'verified' | 'partial' | 'blocked' | 'not-started';
 export type Priority = 'P1' | 'P2' | 'P3';
 
+export type ObservationResult = 'pass' | 'fail' | 'inconclusive';
 export type Gate = {
   id: string;
   index: string;
@@ -33,6 +34,12 @@ export type Incident = {
   state: string;
   source: string;
   sample: boolean;
+};
+
+export type GateObservation = {
+  result: ObservationResult;
+  notes: string;
+  recordedAt: string;
 };
 
 export type KernelStatus = 'INACTIVE' | 'ACTIVE_UNACKED' | 'ACTIVE_ACKED' | 'RESOLVED';
@@ -66,12 +73,16 @@ type FieldTestState = {
   setup: SetupItem[];
   incidents: Incident[];
   activeIncident: ActiveIncident | null;
+  fieldRun: FieldRun;
 };
 
 type FieldTestContextValue = FieldTestState & {
   updateGateStatus: (id: string, status: GateStatus) => void;
   toggleSetupItem: (id: string) => void;
   runTestIncident: () => void;
+  recordObservation: (id: string, observation: GateObservation) => void;
+  updateFieldRun: (changes: Partial<Omit<FieldRun, 'observations'>>) => void;
+  finalizeDecision: (decision: ReadinessDecision) => void;
   triggerKernel: () => void;
   acknowledgeKernel: () => void;
   resolveKernel: () => void;
@@ -155,11 +166,21 @@ const initialIncidents: Incident[] = [
   { id: 'inc-1409', priority: 'P3', time: '14:09:02', title: 'Observer record pending', detail: 'No inspection surface is available yet for a second operator.', state: 'Blocked', source: 'Handoff review', sample: true },
 ];
 
+const initialFieldRun: FieldRun = {
+  deviceModel: 'Google Pixel 8a',
+  androidVersion: 'Stock Android (enter version)',
+  build: '',
+  operator: '',
+  startedAt: '',
+  decision: 'no-go',
+  observations: {},
+};
 const initialState: FieldTestState = {
   gates: initialGates,
   setup: initialSetup,
   incidents: initialIncidents,
   activeIncident: null,
+  fieldRun: initialFieldRun,
 };
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
@@ -183,6 +204,19 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     updateGateStatus: (id, status) => setState((current) => ({
       ...current,
       gates: current.gates.map((gate) => gate.id === id ? { ...gate, status } : gate),
+    })),
+    recordObservation: (id, observation) => setState((current) => ({
+      ...current,
+      fieldRun: { ...current.fieldRun, observations: { ...current.fieldRun.observations, [id]: observation }, decision: 'pending' },
+      gates: current.gates.map((gate) => gate.id === id ? {
+        ...gate,
+        status: observation.result === 'pass' ? 'verified' : observation.result === 'fail' ? 'blocked' : 'partial',
+      } : gate),
+    })),
+    updateFieldRun: (changes) => setState((current) => ({ ...current, fieldRun: { ...current.fieldRun, ...changes } })),
+    finalizeDecision: (decision) => setState((current) => ({
+      ...current,
+      fieldRun: { ...current.fieldRun, decision, startedAt: current.fieldRun.startedAt || new Date().toISOString() },
     })),
     toggleSetupItem: (id) => setState((current) => ({
       ...current,
@@ -302,3 +336,15 @@ export function useFieldTest() {
   if (!context) throw new Error('useFieldTest must be used inside FieldTestProvider');
   return context;
 }
+
+export type FieldRun = {
+  deviceModel: string;
+  androidVersion: string;
+  build: string;
+  operator: string;
+  startedAt: string;
+  decision: ReadinessDecision;
+  observations: Record<string, GateObservation>;
+};
+
+export type ReadinessDecision = 'pending' | 'go' | 'no-go';
