@@ -159,6 +159,57 @@ test("concurrent triggers reuse one incident and preserve both observations", as
   assert.ok(transitionTypes.includes("RESPONDER_RESOLVE"));
 });
 
+test("separate API processes converge concurrent triggers on one incident", async () => {
+  const first = await startApiProcess();
+  const second = await startApiProcess();
+  try {
+    const responses = await Promise.all([
+      fetch(`${first.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+      fetch(`${second.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+    ]);
+
+    assert.ok(responses.every((response) => [200, 201].includes(response.status)));
+
+    const firstBody = (await responses[0].json()) as { id: string; reused: boolean };
+    const secondBody = (await responses[1].json()) as { id: string; reused: boolean };
+    assert.equal(firstBody.id, secondBody.id);
+    assert.deepEqual(
+      [firstBody.reused, secondBody.reused].sort(),
+      [false, true],
+    );
+
+    const incidents = await db.select().from(casIncidents);
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].id, firstBody.id);
+    assert.equal(incidents[0].triggerCount, 2);
+    assert.equal(incidents[0].status, "ACTIVE_UNACKED");
+
+    const events = await db
+      .select()
+      .from(casIncidentEvents)
+      .where(eq(casIncidentEvents.incidentId, firstBody.id));
+    assert.deepEqual(
+      events.filter((event) => event.type.startsWith("TRIGGER")).map((event) => event.type).sort(),
+      ["TRIGGER_RECEIVED", "TRIGGER_REUSED"],
+    );
+
+    const outbox = await db
+      .select()
+      .from(casOutbox)
+      .where(eq(casOutbox.incidentId, firstBody.id));
+    assert.equal(outbox.length, 2);
+    assert.deepEqual(
+      outbox.map((item) => `${item.transport}:${item.state}`).sort(),
+      ["SMS:QUEUED", "XMPP:QUEUED"],
+    );
+  } finally {
+    await Promise.all([
+      stopApiProcess(first.child),
+      stopApiProcess(second.child),
+    ]);
+  }
+});
+
 test("concurrent ACK requests accept one transition and conflict the other", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
   assert.equal(trigger.status, 201);
@@ -232,7 +283,7 @@ test("separate API processes accept one concurrent ACK and journal one event", a
       .from(casIncidentEvents)
       .where(eq(casIncidentEvents.incidentId, id));
     assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
-    } finally {
+  } finally {
     await Promise.all([
       stopApiProcess(first.child),
       stopApiProcess(second.child),
