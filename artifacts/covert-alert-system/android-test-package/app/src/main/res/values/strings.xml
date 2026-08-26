@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">CAS Pixel Gate 0A</string>
+    <string name="proxy_shortcut_label">Test cover launch</string>
+    <string name="proxy_shortcut_long_label">CAS Gate 0A test proxy</string>
+</resources>

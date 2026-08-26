@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.CasPixelTest" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#1f596b</item>
+        <item name="android:navigationBarColor">#f5f6f2</item>
+        <item name="android:statusBarColor">#f5f6f2</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+    <style name="Theme.CasPixelTest.Proxy" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorAccent">#1f596b</item>
+    </style>
+</resources>

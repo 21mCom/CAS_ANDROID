@@ -1,0 +1,10 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="gate0a-proxy"
+        android:enabled="true"
+        android:icon="@drawable/ic_proxy"
+        android:shortcutShortLabel="@string/proxy_shortcut_label"
+        android:shortcutLongLabel="@string/proxy_shortcut_long_label">
+        <intent android:action="com.covertalert.pixeltest.action.PROXY_TRIGGER" />
+    </shortcut>
+</shortcuts>
