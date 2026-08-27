@@ -30,6 +30,135 @@ export interface CasState {
   gates: CasStateGatesItem[];
 }
 
+export type Gate0aReportTarget = {
+  model: 'Pixel 8a';
+  androidApi: 35;
+  stockAndroid: true;
+};
+
+export type Gate0aReportSafety = {
+  liveMessagingEnabled: false;
+  evidenceCaptureEnabled: false;
+  covertProductionBehaviorEnabled: false;
+};
+
+export type Gate0aReportDeviceOwner = {
+  isCasDeviceOwner: boolean;
+  adminReceiverRegistered: boolean;
+  reportedOnly: true;
+};
+
+export type Gate0aReportPermissions = {
+  'android.permission.SEND_SMS': boolean;
+  'android.permission.ACCESS_FINE_LOCATION': boolean;
+  'android.permission.RECORD_AUDIO': boolean;
+  'android.permission.CAMERA': boolean;
+  'android.permission.INTERNET': boolean;
+};
+
+export type Gate0aReportShortcut = {
+  pinSupported: boolean;
+  pinned: boolean;
+  launcherControlsPinnedState: true;
+};
+
+export type Gate0aReportTasksItem = {
+  /** @minimum 0 */
+  taskId: number;
+  /**
+     * @maxLength 512
+     * @nullable
+     */
+  baseActivity: string | null;
+  /**
+     * @maxLength 512
+     * @nullable
+     */
+  topActivity: string | null;
+};
+
+export type Gate0aReportRecents = {
+  proxyExcludedFromRecents: boolean;
+  /** @minimum 0 */
+  observedTaskCount: number;
+};
+
+export type Gate0aReportBack = {
+  mainActivityCallbackRecorded: true;
+  predictiveBack: 'observe_on_device';
+};
+
+export type Gate0aReportObserver = {
+  settingsAppInfoReviewRequired: true;
+  quickSettingsReviewRequired: true;
+  notificationsReviewRequired: true;
+  coverAppBackHomeRecentsReviewRequired: true;
+};
+
+export type Gate0aReportEventsItemType = typeof Gate0aReportEventsItemType[keyof typeof Gate0aReportEventsItemType];
+
+
+export const Gate0aReportEventsItemType = {
+  BACK_OBSERVED: 'BACK_OBSERVED',
+  COVER_CONFIGURED: 'COVER_CONFIGURED',
+  COVER_LAUNCH_OUTCOME: 'COVER_LAUNCH_OUTCOME',
+  OBSERVER_SCREEN_OPENED: 'OBSERVER_SCREEN_OPENED',
+  PROXY_TRIGGER: 'PROXY_TRIGGER',
+  REPORT_COPIED: 'REPORT_COPIED',
+  SHORTCUT_OUTCOME: 'SHORTCUT_OUTCOME',
+} as const;
+
+export type Gate0aReportEventsItem = {
+  type: Gate0aReportEventsItemType;
+  /** @minimum 0 */
+  wallClockMs: number;
+  /** @minimum 0 */
+  elapsedRealtimeMs: number;
+  /** @maxLength 64 */
+  outcome?: string;
+  /** @maxLength 512 */
+  reason?: string;
+  /** @maxLength 255 */
+  coverPackage?: string;
+};
+
+export interface Gate0aReport {
+  schema: 'cas-gate0a-report-v1';
+  runPurpose: 'Disposable proxy-launch hardware measurement only';
+  target: Gate0aReportTarget;
+  safety: Gate0aReportSafety;
+  /** @maxLength 255 */
+  coverPackage: string;
+  deviceOwner: Gate0aReportDeviceOwner;
+  permissions: Gate0aReportPermissions;
+  shortcut: Gate0aReportShortcut;
+  /** @maxItems 10000 */
+  tasks: Gate0aReportTasksItem[];
+  recents: Gate0aReportRecents;
+  back: Gate0aReportBack;
+  observer: Gate0aReportObserver;
+  /** @maxItems 10000 */
+  events: Gate0aReportEventsItem[];
+}
+
+export type Gate0aImportResultObservation = {
+  result: 'inconclusive';
+  notes: string;
+  recordedAt: string;
+};
+
+export type Gate0aImportResultSummary = {
+  eventCount: number;
+  coverLaunchOutcomeCount: number;
+};
+
+export interface Gate0aImportResult {
+  accepted: true;
+  schema: 'cas-gate0a-report-v1';
+  observation: Gate0aImportResultObservation;
+  summary: Gate0aImportResultSummary;
+}
+
 export type BootstrapCasReadinessBodyGatesItem = { [key: string]: unknown };
 
 export type BootstrapCasReadinessBodySetupItem = { [key: string]: unknown };

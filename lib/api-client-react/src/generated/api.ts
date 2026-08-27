@@ -22,6 +22,8 @@ import type {
 import type {
   BootstrapCasReadinessBody,
   CasState,
+  Gate0aImportResult,
+  Gate0aReport,
   HealthStatus,
   MutationResult,
   UpdateCasGateBody,
@@ -273,6 +275,77 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getRecordCasTestIncidentMutationOptions(options));
+    }
+
+export const getImportCasGate0aReportUrl = () => {
+
+
+
+
+  return `/api/cas/gate0a/import`
+}
+
+/**
+ * @summary Validate and import a native Gate 0A report
+ */
+export const importCasGate0aReport = async (gate0aReport: Gate0aReport, options?: Parameters<typeof customFetch>[1]): Promise<Gate0aImportResult> => {
+
+  return customFetch<Gate0aImportResult>(getImportCasGate0aReportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(gate0aReport)
+  }
+);}
+
+
+
+
+
+export const getImportCasGate0aReportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importCasGate0aReport>>, TError,{data: BodyType<Gate0aReport>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof importCasGate0aReport>>, TError,{data: BodyType<Gate0aReport>}, TContext> => {
+
+const mutationKey = ['importCasGate0aReport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof importCasGate0aReport>>, {data: BodyType<Gate0aReport>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  importCasGate0aReport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ImportCasGate0aReportMutationResult = NonNullable<Awaited<ReturnType<typeof importCasGate0aReport>>>
+    export type ImportCasGate0aReportMutationBody = BodyType<Gate0aReport>
+    export type ImportCasGate0aReportMutationError = ErrorType<void>
+
+    /**
+ * @summary Validate and import a native Gate 0A report
+ */
+export const useImportCasGate0aReport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importCasGate0aReport>>, TError,{data: BodyType<Gate0aReport>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof importCasGate0aReport>>,
+        TError,
+        {data: BodyType<Gate0aReport>},
+        TContext
+      > => {
+      return useMutation(getImportCasGate0aReportMutationOptions(options));
     }
 
 export const getBootstrapCasReadinessUrl = () => {

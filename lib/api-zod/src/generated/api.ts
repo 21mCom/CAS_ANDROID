@@ -35,6 +35,110 @@ export const RecordCasTestIncidentResponse = zod.object({
 })
 
 
+/**
+ * @summary Validate and import a native Gate 0A report
+ */
+export const importCasGate0aReportBodyCoverPackageMax = 255;
+
+export const importCasGate0aReportBodyTasksItemTaskIdMin = 0;
+
+export const importCasGate0aReportBodyTasksItemBaseActivityMax = 512;
+
+export const importCasGate0aReportBodyTasksItemTopActivityMax = 512;
+
+export const importCasGate0aReportBodyTasksMax = 10000;
+
+export const importCasGate0aReportBodyRecentsObservedTaskCountMin = 0;
+
+export const importCasGate0aReportBodyEventsItemWallClockMsMin = 0;
+
+export const importCasGate0aReportBodyEventsItemElapsedRealtimeMsMin = 0;
+
+export const importCasGate0aReportBodyEventsItemOutcomeMax = 64;
+
+export const importCasGate0aReportBodyEventsItemReasonMax = 512;
+
+export const importCasGate0aReportBodyEventsItemCoverPackageMax = 255;
+
+export const importCasGate0aReportBodyEventsMax = 10000;
+
+
+
+export const ImportCasGate0aReportBody = zod.object({
+  "schema": zod.literal("cas-gate0a-report-v1"),
+  "runPurpose": zod.literal("Disposable proxy-launch hardware measurement only"),
+  "target": zod.object({
+  "model": zod.literal("Pixel 8a"),
+  "androidApi": zod.literal(35),
+  "stockAndroid": zod.literal(true)
+}),
+  "safety": zod.object({
+  "liveMessagingEnabled": zod.literal(false),
+  "evidenceCaptureEnabled": zod.literal(false),
+  "covertProductionBehaviorEnabled": zod.literal(false)
+}),
+  "coverPackage": zod.string().max(importCasGate0aReportBodyCoverPackageMax),
+  "deviceOwner": zod.object({
+  "isCasDeviceOwner": zod.boolean(),
+  "adminReceiverRegistered": zod.boolean(),
+  "reportedOnly": zod.literal(true)
+}),
+  "permissions": zod.object({
+  "android.permission.SEND_SMS": zod.boolean(),
+  "android.permission.ACCESS_FINE_LOCATION": zod.boolean(),
+  "android.permission.RECORD_AUDIO": zod.boolean(),
+  "android.permission.CAMERA": zod.boolean(),
+  "android.permission.INTERNET": zod.boolean()
+}),
+  "shortcut": zod.object({
+  "pinSupported": zod.boolean(),
+  "pinned": zod.boolean(),
+  "launcherControlsPinnedState": zod.literal(true)
+}),
+  "tasks": zod.array(zod.object({
+  "taskId": zod.number().min(importCasGate0aReportBodyTasksItemTaskIdMin),
+  "baseActivity": zod.string().max(importCasGate0aReportBodyTasksItemBaseActivityMax).nullable(),
+  "topActivity": zod.string().max(importCasGate0aReportBodyTasksItemTopActivityMax).nullable()
+})).max(importCasGate0aReportBodyTasksMax),
+  "recents": zod.object({
+  "proxyExcludedFromRecents": zod.boolean(),
+  "observedTaskCount": zod.number().min(importCasGate0aReportBodyRecentsObservedTaskCountMin)
+}),
+  "back": zod.object({
+  "mainActivityCallbackRecorded": zod.literal(true),
+  "predictiveBack": zod.literal("observe_on_device")
+}),
+  "observer": zod.object({
+  "settingsAppInfoReviewRequired": zod.literal(true),
+  "quickSettingsReviewRequired": zod.literal(true),
+  "notificationsReviewRequired": zod.literal(true),
+  "coverAppBackHomeRecentsReviewRequired": zod.literal(true)
+}),
+  "events": zod.array(zod.object({
+  "type": zod.enum(['BACK_OBSERVED', 'COVER_CONFIGURED', 'COVER_LAUNCH_OUTCOME', 'OBSERVER_SCREEN_OPENED', 'PROXY_TRIGGER', 'REPORT_COPIED', 'SHORTCUT_OUTCOME']),
+  "wallClockMs": zod.number().min(importCasGate0aReportBodyEventsItemWallClockMsMin),
+  "elapsedRealtimeMs": zod.number().min(importCasGate0aReportBodyEventsItemElapsedRealtimeMsMin),
+  "outcome": zod.string().max(importCasGate0aReportBodyEventsItemOutcomeMax).optional(),
+  "reason": zod.string().max(importCasGate0aReportBodyEventsItemReasonMax).optional(),
+  "coverPackage": zod.string().max(importCasGate0aReportBodyEventsItemCoverPackageMax).optional()
+})).max(importCasGate0aReportBodyEventsMax)
+})
+
+export const ImportCasGate0aReportResponse = zod.object({
+  "accepted": zod.literal(true),
+  "schema": zod.literal("cas-gate0a-report-v1"),
+  "observation": zod.object({
+  "result": zod.literal("inconclusive"),
+  "notes": zod.string(),
+  "recordedAt": zod.coerce.date()
+}),
+  "summary": zod.object({
+  "eventCount": zod.number(),
+  "coverLaunchOutcomeCount": zod.number()
+})
+})
+
+
 export const BootstrapCasReadinessBody = zod.object({
   "gates": zod.array(zod.record(zod.string(), zod.unknown())),
   "setup": zod.array(zod.record(zod.string(), zod.unknown()))

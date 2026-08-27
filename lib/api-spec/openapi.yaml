@@ -46,6 +46,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MutationResult" }
+  /cas/gate0a/import:
+    post:
+      operationId: importCasGate0aReport
+      tags: [cas]
+      summary: Validate and import a native Gate 0A report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Gate0aReport" }
+      responses:
+        "200":
+          description: Report accepted as an inconclusive physical observation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Gate0aImportResult" }
+        "400": { description: Malformed or unsafe report }
   /cas/bootstrap:
     post:
       operationId: bootstrapCasReadiness
@@ -134,4 +151,120 @@ components:
         setup: { type: array, items: { type: object, additionalProperties: true } }
         gates: { type: array, items: { type: object, additionalProperties: true } }
       required: [incidents, activeIncident, setup, gates]
+    Gate0aReport:
+      type: object
+      additionalProperties: false
+      required: [schema, runPurpose, target, safety, coverPackage, deviceOwner, permissions, shortcut, tasks, recents, back, observer, events]
+      properties:
+        schema: { type: string, const: cas-gate0a-report-v1 }
+        runPurpose: { type: string, const: Disposable proxy-launch hardware measurement only }
+        target:
+          type: object
+          additionalProperties: false
+          required: [model, androidApi, stockAndroid]
+          properties:
+            model: { type: string, const: Pixel 8a }
+            androidApi: { type: integer, const: 35 }
+            stockAndroid: { type: boolean, const: true }
+        safety:
+          type: object
+          additionalProperties: false
+          required: [liveMessagingEnabled, evidenceCaptureEnabled, covertProductionBehaviorEnabled]
+          properties:
+            liveMessagingEnabled: { type: boolean, const: false }
+            evidenceCaptureEnabled: { type: boolean, const: false }
+            covertProductionBehaviorEnabled: { type: boolean, const: false }
+        coverPackage: { type: string, maxLength: 255 }
+        deviceOwner:
+          type: object
+          additionalProperties: false
+          required: [isCasDeviceOwner, adminReceiverRegistered, reportedOnly]
+          properties:
+            isCasDeviceOwner: { type: boolean }
+            adminReceiverRegistered: { type: boolean }
+            reportedOnly: { type: boolean, const: true }
+        permissions:
+          type: object
+          additionalProperties: false
+          required: [android.permission.SEND_SMS, android.permission.ACCESS_FINE_LOCATION, android.permission.RECORD_AUDIO, android.permission.CAMERA, android.permission.INTERNET]
+          properties:
+            android.permission.SEND_SMS: { type: boolean }
+            android.permission.ACCESS_FINE_LOCATION: { type: boolean }
+            android.permission.RECORD_AUDIO: { type: boolean }
+            android.permission.CAMERA: { type: boolean }
+            android.permission.INTERNET: { type: boolean }
+        shortcut:
+          type: object
+          additionalProperties: false
+          required: [pinSupported, pinned, launcherControlsPinnedState]
+          properties:
+            pinSupported: { type: boolean }
+            pinned: { type: boolean }
+            launcherControlsPinnedState: { type: boolean, const: true }
+        tasks:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            additionalProperties: false
+            required: [taskId, baseActivity, topActivity]
+            properties:
+              taskId: { type: number, minimum: 0 }
+              baseActivity: { type: [string, "null"], maxLength: 512 }
+              topActivity: { type: [string, "null"], maxLength: 512 }
+        recents:
+          type: object
+          additionalProperties: false
+          required: [proxyExcludedFromRecents, observedTaskCount]
+          properties:
+            proxyExcludedFromRecents: { type: boolean }
+            observedTaskCount: { type: number, minimum: 0 }
+        back:
+          type: object
+          additionalProperties: false
+          required: [mainActivityCallbackRecorded, predictiveBack]
+          properties:
+            mainActivityCallbackRecorded: { type: boolean, const: true }
+            predictiveBack: { type: string, const: observe_on_device }
+        observer:
+          type: object
+          additionalProperties: false
+          required: [settingsAppInfoReviewRequired, quickSettingsReviewRequired, notificationsReviewRequired, coverAppBackHomeRecentsReviewRequired]
+          properties:
+            settingsAppInfoReviewRequired: { type: boolean, const: true }
+            quickSettingsReviewRequired: { type: boolean, const: true }
+            notificationsReviewRequired: { type: boolean, const: true }
+            coverAppBackHomeRecentsReviewRequired: { type: boolean, const: true }
+        events:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            required: [type, wallClockMs, elapsedRealtimeMs]
+            properties:
+              type: { type: string, enum: [BACK_OBSERVED, COVER_CONFIGURED, COVER_LAUNCH_OUTCOME, OBSERVER_SCREEN_OPENED, PROXY_TRIGGER, REPORT_COPIED, SHORTCUT_OUTCOME] }
+              wallClockMs: { type: number, minimum: 0 }
+              elapsedRealtimeMs: { type: number, minimum: 0 }
+              outcome: { type: string, maxLength: 64 }
+              reason: { type: string, maxLength: 512 }
+              coverPackage: { type: string, maxLength: 255 }
+    Gate0aImportResult:
+      type: object
+      required: [accepted, schema, observation, summary]
+      properties:
+        accepted: { type: boolean, const: true }
+        schema: { type: string, const: cas-gate0a-report-v1 }
+        observation:
+          type: object
+          required: [result, notes, recordedAt]
+          properties:
+            result: { type: string, const: inconclusive }
+            notes: { type: string }
+            recordedAt: { type: string, format: date-time }
+        summary:
+          type: object
+          required: [eventCount, coverLaunchOutcomeCount]
+          properties:
+            eventCount: { type: number }
+            coverLaunchOutcomeCount: { type: number }
 

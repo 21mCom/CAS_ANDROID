@@ -13,6 +13,144 @@ import { z } from "zod";
 
 const router: IRouter = Router();
 
+const gate0aEventTypes = [
+  "BACK_OBSERVED",
+  "COVER_CONFIGURED",
+  "COVER_LAUNCH_OUTCOME",
+  "OBSERVER_SCREEN_OPENED",
+  "PROXY_TRIGGER",
+  "REPORT_COPIED",
+  "SHORTCUT_OUTCOME",
+] as const;
+
+const gate0aEventSchema = z.object({
+  type: z.enum(gate0aEventTypes),
+  wallClockMs: z.number().int().nonnegative().safe(),
+  elapsedRealtimeMs: z.number().int().nonnegative().safe(),
+  outcome: z.string().max(64).optional(),
+  reason: z.string().max(512).optional(),
+  coverPackage: z.string().max(255).optional(),
+}).passthrough();
+
+export const gate0aReportSchema = z.object({
+  schema: z.literal("cas-gate0a-report-v1"),
+  runPurpose: z.literal("Disposable proxy-launch hardware measurement only"),
+  target: z.object({
+    model: z.literal("Pixel 8a"),
+    androidApi: z.literal(35),
+    stockAndroid: z.literal(true),
+  }).strict(),
+  safety: z.object({
+    liveMessagingEnabled: z.literal(false),
+    evidenceCaptureEnabled: z.literal(false),
+    covertProductionBehaviorEnabled: z.literal(false),
+  }).strict(),
+  coverPackage: z.string().max(255),
+  deviceOwner: z.object({
+    isCasDeviceOwner: z.boolean(),
+    adminReceiverRegistered: z.boolean(),
+    reportedOnly: z.literal(true),
+  }).strict(),
+  permissions: z.object({
+    "android.permission.SEND_SMS": z.boolean(),
+    "android.permission.ACCESS_FINE_LOCATION": z.boolean(),
+    "android.permission.RECORD_AUDIO": z.boolean(),
+    "android.permission.CAMERA": z.boolean(),
+    "android.permission.INTERNET": z.boolean(),
+  }).strict(),
+  shortcut: z.object({
+    pinSupported: z.boolean(),
+    pinned: z.boolean(),
+    launcherControlsPinnedState: z.literal(true),
+  }).strict(),
+  tasks: z.array(z.object({
+    taskId: z.number().int().nonnegative().safe(),
+    baseActivity: z.string().max(512).nullable(),
+    topActivity: z.string().max(512).nullable(),
+  }).strict()).max(10_000),
+  recents: z.object({
+    proxyExcludedFromRecents: z.boolean(),
+    observedTaskCount: z.number().int().nonnegative().safe(),
+  }).strict(),
+  back: z.object({
+    mainActivityCallbackRecorded: z.literal(true),
+    predictiveBack: z.literal("observe_on_device"),
+  }).strict(),
+  observer: z.object({
+    settingsAppInfoReviewRequired: z.literal(true),
+    quickSettingsReviewRequired: z.literal(true),
+    notificationsReviewRequired: z.literal(true),
+    coverAppBackHomeRecentsReviewRequired: z.literal(true),
+  }).strict(),
+  events: z.array(gate0aEventSchema).max(10_000),
+}).strict();
+
+type Gate0aReport = z.infer<typeof gate0aReportSchema>;
+
+function hasUnsafeJsonContent(value: unknown, depth = 0): boolean {
+  if (depth > 20 || value === null || typeof value !== "object") {
+    return depth > 20;
+  }
+  if (Array.isArray(value)) return value.some((entry) => hasUnsafeJsonContent(entry, depth + 1));
+  return Object.entries(value).some(([key, entry]) =>
+    key === "__proto__" || key === "prototype" || key === "constructor" ||
+    (typeof entry === "string" && /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(entry)) ||
+    hasUnsafeJsonContent(entry, depth + 1));
+}
+
+function formatGate0aNotes(report: Gate0aReport): string {
+  const timestampLines = report.events.map((event, index) =>
+    `${index + 1}. ${event.type}: wallClockMs=${event.wallClockMs}; elapsedRealtimeMs=${event.elapsedRealtimeMs}`);
+  const outcomes = report.events
+    .filter((event) => event.type === "COVER_LAUNCH_OUTCOME")
+    .map((event) => {
+      const details = [
+        `outcome=${event.outcome ?? "not reported"}`,
+        `wallClockMs=${event.wallClockMs}`,
+        `elapsedRealtimeMs=${event.elapsedRealtimeMs}`,
+        event.reason ? `reason=${event.reason}` : null,
+        event.coverPackage ? `coverPackage=${event.coverPackage}` : null,
+      ].filter((value): value is string => value !== null);
+      return details.join("; ");
+    });
+
+  return [
+    "Imported native Gate 0A report (cas-gate0a-report-v1).",
+    "This import is physical evidence for review only; it is recorded INCONCLUSIVE and never establishes Pass or production readiness.",
+    `Cover package reported: ${report.coverPackage || "(none)"}.`,
+    `Cover-launch outcomes (raw): ${outcomes.length > 0 ? outcomes.join(" | ") : "none recorded"}.`,
+    "Report event timestamps (raw device values):",
+    timestampLines.length > 0 ? timestampLines.join("\n") : "none recorded",
+  ].join("\n");
+}
+
+router.post("/cas/gate0a/import", async (req, res, next) => {
+  try {
+    if (hasUnsafeJsonContent(req.body)) {
+      return res.status(400).json({ error: "Gate 0A report contains unsafe JSON content" });
+    }
+    const parsed = gate0aReportSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid cas-gate0a-report-v1 report" });
+    }
+    const report = parsed.data;
+    const observation = {
+      result: "inconclusive" as const,
+      notes: formatGate0aNotes(report),
+      recordedAt: new Date().toISOString(),
+    };
+    return res.status(200).json({
+      accepted: true,
+      schema: report.schema,
+      observation,
+      summary: {
+        eventCount: report.events.length,
+        coverLaunchOutcomeCount: report.events.filter((event) => event.type === "COVER_LAUNCH_OUTCOME").length,
+      },
+    });
+  } catch (error) { return next(error); }
+});
+
 function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeof casIncidentEvents.$inferSelect[], outbox: typeof casOutbox.$inferSelect[]) {
   return {
     id: incident.id, status: incident.status, priority: incident.priority,

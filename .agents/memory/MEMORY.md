@@ -2,3 +2,4 @@
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
+- [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.

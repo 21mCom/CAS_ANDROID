@@ -81,6 +81,7 @@ type FieldTestContextValue = FieldTestState & {
   toggleSetupItem: (id: string) => void;
   runTestIncident: () => void;
   recordObservation: (id: string, observation: GateObservation) => void;
+  importGate0AReport: (reportText: string) => Promise<void>;
   updateFieldRun: (changes: Partial<Omit<FieldRun, 'observations'>>) => void;
   finalizeDecision: (decision: ReadinessDecision) => void;
   triggerKernel: () => void;
@@ -228,6 +229,40 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         status: observation.result === 'pass' ? 'verified' : observation.result === 'fail' ? 'blocked' : 'partial',
       } : gate),
     })),
+    importGate0AReport: async (reportText) => {
+      let report: unknown;
+      try {
+        report = JSON.parse(reportText);
+      } catch {
+        throw new Error('The selected file is not valid JSON.');
+      }
+      if (!report || typeof report !== 'object' || Array.isArray(report)) {
+        throw new Error('The selected file must contain a Gate 0A JSON report.');
+      }
+      const response = await fetch('/api/cas/gate0a/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(report),
+      });
+      const body = await response.json() as {
+        error?: string;
+        observation?: GateObservation;
+      };
+      if (!response.ok) throw new Error(body.error || 'Gate 0A report was rejected.');
+      const observation = body.observation;
+      if (!observation) throw new Error('Gate 0A report was accepted without an observation.');
+      setState((current) => ({
+        ...current,
+        fieldRun: {
+          ...current.fieldRun,
+          observations: { ...current.fieldRun.observations, 'proxy-launch': observation },
+          decision: 'pending',
+        },
+        gates: current.gates.map((gate) => gate.id === 'proxy-launch'
+          ? { ...gate, status: 'partial' }
+          : gate),
+      }));
+    },
     updateFieldRun: (changes) => setState((current) => ({ ...current, fieldRun: { ...current.fieldRun, ...changes } })),
     finalizeDecision: (decision) => setState((current) => ({
       ...current,

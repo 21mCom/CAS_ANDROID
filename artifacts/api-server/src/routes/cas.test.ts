@@ -76,6 +76,114 @@ beforeEach(async () => {
   await clearCasData();
 });
 
+const validGate0aReport = {
+  schema: "cas-gate0a-report-v1",
+  runPurpose: "Disposable proxy-launch hardware measurement only",
+  target: { model: "Pixel 8a", androidApi: 35, stockAndroid: true },
+  safety: {
+    liveMessagingEnabled: false,
+    evidenceCaptureEnabled: false,
+    covertProductionBehaviorEnabled: false,
+  },
+  coverPackage: "com.example.cover",
+  deviceOwner: {
+    isCasDeviceOwner: false,
+    adminReceiverRegistered: false,
+    reportedOnly: true,
+  },
+  permissions: {
+    "android.permission.SEND_SMS": false,
+    "android.permission.ACCESS_FINE_LOCATION": false,
+    "android.permission.RECORD_AUDIO": false,
+    "android.permission.CAMERA": false,
+    "android.permission.INTERNET": true,
+  },
+  shortcut: { pinSupported: true, pinned: false, launcherControlsPinnedState: true },
+  tasks: [{ taskId: 42, baseActivity: "com.example.cover/.MainActivity", topActivity: null }],
+  recents: { proxyExcludedFromRecents: true, observedTaskCount: 1 },
+  back: { mainActivityCallbackRecorded: true, predictiveBack: "observe_on_device" },
+  observer: {
+    settingsAppInfoReviewRequired: true,
+    quickSettingsReviewRequired: true,
+    notificationsReviewRequired: true,
+    coverAppBackHomeRecentsReviewRequired: true,
+  },
+  events: [
+    { type: "PROXY_TRIGGER", wallClockMs: 1724673600123, elapsedRealtimeMs: 987654 },
+    {
+      type: "COVER_LAUNCH_OUTCOME",
+      wallClockMs: 1724673600456,
+      elapsedRealtimeMs: 987987,
+      outcome: "STARTED",
+      coverPackage: "com.example.cover",
+    },
+  ],
+};
+
+test("Gate 0A import preserves raw timestamps and stays inconclusive", async () => {
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(validGate0aReport),
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as {
+    accepted: boolean;
+    observation: { result: string; notes: string };
+    summary: { eventCount: number; coverLaunchOutcomeCount: number };
+  };
+  assert.equal(body.accepted, true);
+  assert.equal(body.observation.result, "inconclusive");
+  assert.match(body.observation.notes, /wallClockMs=1724673600123/);
+  assert.match(body.observation.notes, /elapsedRealtimeMs=987987/);
+  assert.match(body.observation.notes, /outcome=STARTED/);
+  assert.equal(body.summary.eventCount, 2);
+  assert.equal(body.summary.coverLaunchOutcomeCount, 1);
+});
+
+test("Gate 0A import rejects malformed reports", async () => {
+  const malformed = { ...validGate0aReport, schema: "cas-gate0a-report-v0" };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(malformed),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v1 report" });
+});
+
+test("Gate 0A import rejects reports that cross the safety boundary", async () => {
+  const unsafe = {
+    ...validGate0aReport,
+    safety: { ...validGate0aReport.safety, liveMessagingEnabled: true },
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(unsafe),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v1 report" });
+});
+
+test("Gate 0A import rejects unsafe JSON keys", async () => {
+  const unsafe = {
+    ...validGate0aReport,
+    events: [{ ...validGate0aReport.events[0], constructor: "pollute" }],
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(unsafe),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Gate 0A report contains unsafe JSON content" });
+});
+
 after(async () => {
   await clearCasData();
   server.close();
