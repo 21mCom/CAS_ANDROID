@@ -3,3 +3,4 @@
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
+- [API client generation](api-client-generation.md) — run typechecks after OpenAPI codegen; this workspace needs compatibility fixes for generated Zod schemas and barrels.

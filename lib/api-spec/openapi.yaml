@@ -89,6 +89,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MutationResult" }
+  /cas/outbox/process:
+    post:
+      operationId: processCasOutbox
+      tags: [cas]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workerId: { type: string }
+                maxItems: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Queued deliveries claimed and processed
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /cas/incidents/{id}/ack:
     post:
       operationId: acknowledgeCasIncident
@@ -267,4 +286,3 @@ components:
           properties:
             eventCount: { type: number }
             coverLaunchOutcomeCount: { type: number }
-

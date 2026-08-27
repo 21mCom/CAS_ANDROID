@@ -63,7 +63,6 @@ export const importCasGate0aReportBodyEventsItemCoverPackageMax = 255;
 export const importCasGate0aReportBodyEventsMax = 10000;
 
 
-
 export const ImportCasGate0aReportBody = zod.object({
   "schema": zod.literal("cas-gate0a-report-v1"),
   "runPurpose": zod.literal("Disposable proxy-launch hardware measurement only"),
@@ -153,7 +152,7 @@ export const TriggerCasIncidentResponse = zod.object({
   "status": zod.string().optional()
 })
 
-
+export const processCasOutboxBodyMaxItemsMax = 100;
 export const AcknowledgeCasIncidentParams = zod.object({
   "id": zod.coerce.string()
 })
@@ -190,3 +189,9 @@ export const UpdateCasGateBody = zod.object({
 export const UpdateCasGateResponse = zod.unknown()
 
 
+export const ProcessCasOutboxBody = zod.object({
+  "workerId": zod.string().optional(),
+  "maxItems": zod.number().int().min(1).max(processCasOutboxBodyMaxItemsMax).optional()
+})
+
+export const ProcessCasOutboxResponse = zod.record(zod.string(), zod.unknown())

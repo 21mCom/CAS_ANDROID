@@ -31,5 +31,7 @@ export * from './gate0aReportTarget';
 export * from './gate0aReportTasksItem';
 export * from './healthStatus';
 export * from './mutationResult';
+export * from './processCasOutbox200';
+export * from './processCasOutboxBody';
 export * from './updateCasGateBody';
 export * from './updateCasSetupBody';

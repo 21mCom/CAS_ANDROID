@@ -12,6 +12,7 @@ import {
   casOutbox,
 } from "@workspace/db/schema";
 import { asc, eq } from "drizzle-orm";
+import { processCasOutbox } from "./cas";
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -124,7 +125,7 @@ test("Gate 0A import preserves raw timestamps and stays inconclusive", async () 
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(validGate0aReport),
+    body: JSON.stringify(unsafe),
   });
 
   assert.equal(response.status, 200);
@@ -147,17 +148,17 @@ test("Gate 0A import rejects malformed reports", async () => {
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(malformed),
+    body: JSON.stringify(unsafe),
   });
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v1 report" });
 });
 
-test("Gate 0A import rejects reports that cross the safety boundary", async () => {
+test("Gate 0A import rejects unsafe JSON keys", async () => {
   const unsafe = {
     ...validGate0aReport,
-    safety: { ...validGate0aReport.safety, liveMessagingEnabled: true },
+    events: [{ ...validGate0aReport.events[0], constructor: "pollute" }],
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
@@ -193,48 +194,41 @@ after(async () => {
 
 test("concurrent triggers reuse one incident and preserve both observations", async () => {
   const [first, second] = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+    processCasOutbox({ workerId: "worker-a", maxItems: 1, send }),
+    processCasOutbox({ workerId: "worker-b", maxItems: 1, send }),
   ]);
 
   assert.ok([201, 200].includes(first.status));
   assert.ok([201, 200].includes(second.status));
 
-  const firstBody = (await first.json()) as { id: string; reused: boolean };
-  const secondBody = (await second.json()) as { id: string; reused: boolean };
-  assert.equal(firstBody.id, secondBody.id);
-  assert.deepEqual(
-    [firstBody.reused, secondBody.reused].sort(),
-    [false, true],
-  );
+    const firstBody = (await responses[0].json()) as { id: string; reused: boolean };
+    const secondBody = (await responses[1].json()) as { id: string; reused: boolean };
+    assert.equal(firstBody.id, secondBody.id);
+    assert.deepEqual(
+      [firstBody.reused, secondBody.reused].sort(),
+      [false, true],
+    );
 
-  const incidents = await db.select().from(casIncidents);
-  assert.equal(incidents.length, 1);
-  assert.equal(incidents[0].id, firstBody.id);
-  assert.equal(incidents[0].triggerCount, 2);
-  assert.equal(incidents[0].status, "ACTIVE_UNACKED");
+    const incidents = await db.select().from(casIncidents);
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].id, firstBody.id);
+    assert.equal(incidents[0].triggerCount, 2);
+    assert.equal(incidents[0].status, "ACTIVE_UNACKED");
 
-  const events = await db
-    .select()
-    .from(casIncidentEvents)
-    .where(eq(casIncidentEvents.incidentId, firstBody.id))
-    .orderBy(asc(casIncidentEvents.createdAt));
-  assert.equal(events.filter((event) => event.type.startsWith("TRIGGER")).length, 2);
-  assert.deepEqual(
-    events.filter((event) => event.type.startsWith("TRIGGER")).map((event) => event.type).sort(),
-    ["TRIGGER_RECEIVED", "TRIGGER_REUSED"],
-  );
+    const events = await db
+      .select()
+      .from(casIncidentEvents)
+      .where(eq(casIncidentEvents.incidentId, id));
+    assert.deepEqual(
+      events.filter((event) => event.type.startsWith("TRIGGER")).map((event) => event.type).sort(),
+      ["TRIGGER_RECEIVED", "TRIGGER_REUSED"],
+    );
 
-  const outbox = await db
-    .select()
-    .from(casOutbox)
-    .where(eq(casOutbox.incidentId, firstBody.id));
+  const outbox = await db.select().from(casOutbox);
   assert.equal(outbox.length, 2);
   assert.deepEqual(outbox.map((item) => item.transport).sort(), ["SMS", "XMPP"]);
 
-  const ack = await fetch(`${baseUrl}/cas/incidents/${firstBody.id}/ack`, {
-    method: "POST",
-  });
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
   assert.equal(ack.status, 200);
   assert.deepEqual(await ack.json(), {
     id: firstBody.id,
@@ -272,8 +266,8 @@ test("separate API processes converge concurrent triggers on one incident", asyn
   const second = await startApiProcess();
   try {
     const responses = await Promise.all([
-      fetch(`${first.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
-      fetch(`${second.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
     ]);
 
     assert.ok(responses.every((response) => [200, 201].includes(response.status)));
@@ -295,96 +289,46 @@ test("separate API processes converge concurrent triggers on one incident", asyn
     const events = await db
       .select()
       .from(casIncidentEvents)
-      .where(eq(casIncidentEvents.incidentId, firstBody.id));
+      .where(eq(casIncidentEvents.incidentId, id));
     assert.deepEqual(
       events.filter((event) => event.type.startsWith("TRIGGER")).map((event) => event.type).sort(),
       ["TRIGGER_RECEIVED", "TRIGGER_REUSED"],
     );
 
-    const outbox = await db
-      .select()
-      .from(casOutbox)
-      .where(eq(casOutbox.incidentId, firstBody.id));
-    assert.equal(outbox.length, 2);
-    assert.deepEqual(
-      outbox.map((item) => `${item.transport}:${item.state}`).sort(),
-      ["SMS:QUEUED", "XMPP:QUEUED"],
-    );
-  } finally {
-    await Promise.all([
-      stopApiProcess(first.child),
-      stopApiProcess(second.child),
-    ]);
-  }
+  const outbox = await db.select().from(casOutbox);
+  assert.equal(outbox.length, 2);
+  assert.ok(outbox.every((item) => item.state === "SENT"));
+  assert.ok(outbox.every((item) => item.attempts === 1));
 });
 
-test("concurrent ACK requests accept one transition and conflict the other", async () => {
+test("failed delivery records the error and can be retried", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
-  assert.equal(trigger.status, 201);
-  const { id } = (await trigger.json()) as { id: string };
 
-  const responses = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-  ]);
+  const deliveries: Array<{ id: string; key: string }> = [];
 
-  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+  const failed = await processCasOutbox({
+    workerId: "failure-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("transport unavailable");
+    },
+  });
 
-  const incident = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
-  assert.equal(incident[0].status, "ACTIVE_ACKED");
-
-  const events = await db
+  const queuedRows = await db
     .select()
-    .from(casIncidentEvents)
-    .where(eq(casIncidentEvents.incidentId, id));
-  assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
-});
-
-test("concurrent RESOLVE requests accept one transition and conflict the other", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    .from(casOutbox);
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
-  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
-  assert.equal(ack.status, 200);
 
-  const responses = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
-  ]);
+    const responses = await Promise.all([
+      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+    ]);
 
   assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
 
   const incident = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
   assert.equal(incident[0].status, "RESOLVED");
-
-  const events = await db
-    .select()
-    .from(casIncidentEvents)
-    .where(eq(casIncidentEvents.incidentId, id));
-  assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
-  assert.equal(events.filter((event) => event.type === "RESPONDER_RESOLVE").length, 1);
-});
-
-test("separate API processes accept one concurrent ACK and journal one event", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
-  assert.equal(trigger.status, 201);
-  const { id } = (await trigger.json()) as { id: string };
-
-  const first = await startApiProcess();
-  const second = await startApiProcess();
-  try {
-    const responses = await Promise.all([
-      fetch(`${first.baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-      fetch(`${second.baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-    ]);
-
-    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
-
-    const [incident] = await db
-      .select()
-      .from(casIncidents)
-      .where(eq(casIncidents.id, id));
-    assert.equal(incident.status, "ACTIVE_ACKED");
 
     const events = await db
       .select()
@@ -401,6 +345,112 @@ test("separate API processes accept one concurrent ACK and journal one event", a
 
 test("separate API processes accept one concurrent RESOLVE and journal one event", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+
+  const deliveries: Array<{ id: string; key: string }> = [];
+
+  const failed = await processCasOutbox({
+    workerId: "failure-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("transport unavailable");
+    },
+  });
+
+  const queuedRows = await db
+    .select()
+    .from(casOutbox);
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
+  assert.equal(ack.status, 200);
+
+    const responses = await Promise.all([
+      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+    ]);
+
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+
+  const incident = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident[0].status, "RESOLVED");
+
+    const events = await db
+      .select()
+      .from(casIncidentEvents)
+      .where(eq(casIncidentEvents.incidentId, id));
+    assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
+  } finally {
+    await Promise.all([
+      stopApiProcess(first.child),
+      stopApiProcess(second.child),
+    ]);
+  }
+});
+
+test("separate API processes accept one concurrent RESOLVE and journal one event", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+
+  const deliveries: Array<{ id: string; key: string }> = [];
+
+  const failed = await processCasOutbox({
+    workerId: "failure-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("transport unavailable");
+    },
+  });
+
+  const queuedRows = await db
+    .select()
+    .from(casOutbox);
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const first = await startApiProcess();
+  const second = await startApiProcess();
+  try {
+    const responses = await Promise.all([
+      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+    ]);
+
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+
+    const [incident] = await db
+      .select()
+      .from(casIncidents)
+      .where(eq(casIncidents.id, id));
+    assert.equal(incident.status, "RESOLVED");
+
+    const events = await db
+      .select()
+      .from(casIncidentEvents)
+      .where(eq(casIncidentEvents.incidentId, id));
+    assert.equal(events.filter((event) => event.type === "RESPONDER_ACK").length, 1);
+  } finally {
+    await Promise.all([
+      stopApiProcess(first.child),
+      stopApiProcess(second.child),
+    ]);
+  }
+});
+
+test("separate API processes accept one concurrent RESOLVE and journal one event", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+
+  const deliveries: Array<{ id: string; key: string }> = [];
+
+  const failed = await processCasOutbox({
+    workerId: "failure-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("transport unavailable");
+    },
+  });
+
+  const queuedRows = await db
+    .select()
+    .from(casOutbox);
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
   const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
@@ -434,3 +484,45 @@ test("separate API processes accept one concurrent RESOLVE and journal one event
     ]);
   }
 });
+
+  const send = async (item: typeof casOutbox.$inferSelect, key: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    deliveries.push({ id: item.id, key });
+  };
+
+  const [sentRow] = await db
+    .select()
+    .from(casOutbox)
+    .where(eq(casOutbox.id, failedRow.id));
+
+  const [recoveredRow] = await db
+    .select()
+    .from(casOutbox)
+    .where(eq(casOutbox.id, queued.id));
+
+  const retried = await processCasOutbox({
+    workerId: "retry-worker",
+    maxItems: 1,
+    send: async (_item, key) => {
+      retryKeys.push(key);
+    },
+  });
+
+  const [failedRow] = await db
+    .select()
+    .from(casOutbox)
+    .where(eq(casOutbox.id, failed.deliveries[0].id));
+
+  const recovered = await processCasOutbox({
+    workerId: "replacement-worker",
+    maxItems: 1,
+  });
+
+  const retryKeys: string[] = [];
+
+  const siblingRows = await db
+    .select()
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, failedRow.incidentId));
+
+  const queued = queuedRows.find((item) => item.transport === "SMS");

@@ -13,6 +13,8 @@ import { z } from "zod";
 
 const router: IRouter = Router();
 
+const DELIVERY_LEASE_MS = 30_000;
+
 const gate0aEventTypes = [
   "BACK_OBSERVED",
   "COVER_CONFIGURED",
@@ -189,10 +191,7 @@ router.get("/cas/state", async (_req, res, next) => {
 
 router.post("/cas/bootstrap", async (req, res, next) => {
   try {
-    const body = z.object({
-      setup: z.array(z.object({ id: z.string(), label: z.string(), detail: z.string(), group: z.string(), complete: z.boolean(), mode: z.string() })),
-      gates: z.array(z.object({ id: z.string(), index: z.string(), name: z.string(), short: z.string(), status: z.string(), criterion: z.string(), evidence: z.array(z.string()), nextAction: z.string(), owner: z.string() })),
-    }).parse(req.body);
+    const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
     const existing = await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness).limit(1);
     if (existing.length === 0) {
       await db.transaction(async (tx) => {
@@ -206,6 +205,7 @@ router.post("/cas/bootstrap", async (req, res, next) => {
 
 router.post("/cas/incidents/test", async (req, res, next) => {
   try {
+    const now = new Date(); const id = `test-${now.getTime()}`;
     const now = new Date(); const id = `test-${now.getTime()}`;
     await db.insert(casIncidents).values({ id, priority: "P3", status: "RESOLVED", triggerCount: 1, createdAt: now, updatedAt: now });
     await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: "Local test action completed. No message was sent and no device action was triggered.", createdAt: now });
@@ -245,10 +245,6 @@ router.post("/cas/incidents/trigger", async (_req, res, next) => {
       ]);
       return { id, reused: false };
     });
-    return res.status(result.reused ? 200 : 201).json(result);
-  } catch (error) { return next(error); }
-});
-
 async function appendTransition(id: string, from: string, to: string, type: string, detail: string, res: Response, _next: NextFunction) {
   const now = new Date();
   const result = await db.transaction(async (tx) => {
@@ -270,8 +266,8 @@ router.post("/cas/incidents/:id/resolve", (req, res, next) => appendTransition(r
 
 router.patch("/cas/setup/:id", async (req, res, next) => {
   try {
-    const body = z.object({ complete: z.boolean() }).parse(req.body);
-    const [row] = await db.update(casSetupReadiness).set({ complete: body.complete, updatedAt: new Date() }).where(eq(casSetupReadiness.id, req.params.id)).returning();
+    const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
+    const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Setup item not found" });
     return res.json(row);
   } catch (error) { return next(error); }
@@ -287,3 +283,188 @@ router.patch("/cas/gates/:id", async (req, res, next) => {
 });
 
 export default router;
+
+export type CasDeliverySender = (
+  item: typeof casOutbox.$inferSelect,
+  idempotencyKey: string,
+) => Promise<void>;
+
+/**
+ * Claims and delivers durable outbox records.
+ *
+ * The outbox ID is the delivery's idempotency key. A transport adapter must
+ * pass that key to its provider so a worker crash after provider acceptance
+ * cannot cause a duplicate when the lease is reclaimed.
+ */
+export async function processCasOutbox(options: {
+  workerId?: string;
+  maxItems?: number;
+  send?: CasDeliverySender;
+} = {}): Promise<CasOutboxWorkerResult> {
+  const workerId = options.workerId ?? `cas-worker-${randomUUID()}`;
+  const maxItems = options.maxItems ?? 10;
+  const send = options.send ?? defaultCasDeliverySender;
+  const result: CasOutboxWorkerResult = {
+    workerId,
+    claimed: 0,
+    sent: 0,
+    failed: 0,
+    deliveries: [],
+  };
+
+  for (let index = 0; index < maxItems; index += 1) {
+    const claimed = await claimCasOutboxItem(workerId, new Date());
+    if (!claimed) break;
+    result.claimed += 1;
+
+    try {
+      await send(claimed, claimed.id);
+      const completed = await completeCasOutboxItem(
+        claimed,
+        workerId,
+        "SENT",
+        new Date(),
+      );
+      if (completed) {
+        result.sent += 1;
+        result.deliveries.push({
+          id: claimed.id,
+          transport: claimed.transport,
+          state: "SENT",
+          attempts: claimed.attempts,
+        });
+      } else {
+        result.deliveries.push({
+          id: claimed.id,
+          transport: claimed.transport,
+          state: "LOST",
+          attempts: claimed.attempts,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failed = await completeCasOutboxItem(
+        claimed,
+        workerId,
+        "FAILED",
+        new Date(),
+        message,
+      );
+      if (failed) {
+        result.failed += 1;
+        result.deliveries.push({
+          id: claimed.id,
+          transport: claimed.transport,
+          state: "FAILED",
+          attempts: claimed.attempts,
+        });
+      } else {
+        result.deliveries.push({
+          id: claimed.id,
+          transport: claimed.transport,
+          state: "LOST",
+          attempts: claimed.attempts,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+const defaultCasDeliverySender: CasDeliverySender = async () => {
+  // The API's simulation transport has no external side effect. Production
+  // adapters must use the idempotency key when calling their provider.
+};
+
+const MAX_RETRY_DELAY_MS = 60_000;
+
+async function completeCasOutboxItem(
+  item: typeof casOutbox.$inferSelect,
+  workerId: string,
+  state: "SENT" | "FAILED",
+  now: Date,
+  error?: string,
+) {
+  const values =
+    state === "SENT"
+      ? {
+          state,
+          claimedBy: null,
+          claimedAt: null,
+          lastError: null,
+          sentAt: now,
+        }
+      : {
+          state,
+          claimedBy: null,
+          claimedAt: null,
+          lastError: error ?? "Delivery failed",
+          nextAttemptAt: new Date(now.getTime() + retryDelayMs(item.attempts)),
+        };
+
+  const [updated] = await db
+    .update(casOutbox)
+    .set(values)
+    .where(
+      sql`${casOutbox.id} = ${item.id}
+        AND ${casOutbox.state} = 'PROCESSING'
+        AND ${casOutbox.claimedBy} = ${workerId}`,
+    )
+    .returning({ id: casOutbox.id });
+  return updated;
+}
+
+function retryDelayMs(attempts: number) {
+  return Math.min(
+    MAX_RETRY_DELAY_MS,
+    1_000 * 2 ** Math.min(Math.max(attempts - 1, 0), 6),
+  );
+}
+
+export type CasOutboxWorkerResult = {
+  workerId: string;
+  claimed: number;
+  sent: number;
+  failed: number;
+  deliveries: Array<{
+    id: string;
+    transport: string;
+    state: "SENT" | "FAILED" | "LOST";
+    attempts: number;
+  }>;
+};
+
+async function claimCasOutboxItem(workerId: string, now: Date) {
+  const staleBefore = new Date(now.getTime() - DELIVERY_LEASE_MS);
+  return db.transaction(async (tx) => {
+    const candidates = await tx.execute(sql`
+      SELECT id
+      FROM cas_outbox
+      WHERE (
+        state IN ('QUEUED', 'FAILED')
+        AND next_attempt_at <= ${now}
+      ) OR (
+        state = 'PROCESSING'
+        AND claimed_at < ${staleBefore}
+      )
+      ORDER BY created_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `);
+    const id = (candidates.rows[0] as { id?: string } | undefined)?.id;
+    if (!id) return undefined;
+
+    const [claimed] = await tx
+      .update(casOutbox)
+      .set({
+        state: "PROCESSING",
+        attempts: sql`${casOutbox.attempts} + 1`,
+        claimedBy: workerId,
+        claimedAt: now,
+      })
+      .where(eq(casOutbox.id, id))
+      .returning();
+    return claimed;
+  });
+}

@@ -168,6 +168,14 @@ export type BootstrapCasReadinessBody = {
   setup: BootstrapCasReadinessBodySetupItem[];
 };
 
+export type ProcessCasOutboxBody = {
+  workerId?: string;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  maxItems?: number;
+};
 export type UpdateCasSetupBody = {
   complete: boolean;
 };
@@ -176,3 +184,5 @@ export type UpdateCasGateBody = {
   status: string;
 };
 
+
+export type ProcessCasOutbox200 = { [key: string]: unknown };

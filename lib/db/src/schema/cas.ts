@@ -25,6 +25,12 @@ export const casOutbox = pgTable("cas_outbox", {
   transport: text("transport").notNull(),
   state: text("state").notNull(),
   priority: text("priority").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  claimedBy: text("claimed_by"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  lastError: text("last_error"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
