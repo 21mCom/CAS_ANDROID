@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "Y4nOlG1Bx4r-Xtl7-JVRD"
+uri = "file://peer-review/CovertAlertSystem-peer-review-source.zip"
+type = "unspecified"
+title = "CovertAlertSystem peer-review source ZIP"
+description = "Self-contained source snapshot with reviewer README, manifest checksums, Gate 0A guide and harness, validation record, and handoff note alongside the archive."
+logical_id = "ddd6ea63-3919-4c15-86a2-ad936cdb1860"
+content_hash = "sha256:d7d05c5ab363158fb7885fcd2e95fa9607084ba1e860e2f060e0bd52816ef381"
+size = 313958
+mtime_ms = 1789232863683
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/ddd6ea63-3919-4c15-86a2-ad936cdb1860/f1ed9c50-a5dc-40e1-b38a-51c64dd5cfda"
+storage_version_token = "1789232887570242"
+content_type = "application/octet-stream"
