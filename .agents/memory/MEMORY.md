@@ -4,3 +4,4 @@
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
 - [API client generation](api-client-generation.md) — run typechecks after OpenAPI codegen; this workspace needs compatibility fixes for generated Zod schemas and barrels.
+- [Gate 0A print guide](gate0a-print-guide.md) — verify rendered PDF pagination, selectable commands, and served-file integrity after guide changes.

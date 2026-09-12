@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRight, Check, ChevronDown, CircleAlert, FileJson, RotateCcw, Save } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, CircleAlert, Download, FileJson, RotateCcw, Save } from 'lucide-react';
 import { Link } from 'wouter';
 import { useFieldTest, type GateStatus, type ObservationResult } from '@/hooks/use-field-test';
 import { EvidenceLabel, SectionKicker, StatusPill } from '@/components/field-ui';
@@ -46,7 +46,7 @@ export default function Gates() {
 
   return (
     <div className="mx-auto max-w-[1380px]">
-       <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker>Feasibility / 5 gates</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">The gates are the work.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">Record what was observed on the managed Pixel. Sample evidence is never treated as physical validation.</p></div><Link href="/setup" className="inline-flex items-center gap-2 self-start border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#203c49] hover:border-[#203c49]" data-testid="link-gates-setup">Open owner setup <ArrowRight size={14} /></Link></section>
+        <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker>Feasibility / 5 gates</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">The gates are the work.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">Record what was observed on the managed Pixel. Sample evidence is never treated as physical validation.</p></div><div className="flex flex-wrap gap-2 self-start"><a href="/gate0a-run-guide.pdf" download className="inline-flex items-center gap-2 border border-[#a06712] bg-[#fff8e7] px-3 py-2 text-xs font-bold text-[#765013] hover:border-[#765013]" data-testid="link-gate0a-run-guide"><Download size={14} />Print Gate 0A guide</a><Link href="/setup" className="inline-flex items-center gap-2 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#203c49] hover:border-[#203c49]" data-testid="link-gates-setup">Open owner setup <ArrowRight size={14} /></Link></div></section>
        <section className="fade-up fade-up-1 mt-5 border border-[#d7d8d0] bg-[#203c49] p-5 text-[#f2f0e6] sm:p-6" data-testid="panel-physical-run">
          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
            <div><SectionKicker>Physical validation run</SectionKicker><h2 className="mt-1 font-display text-xl font-extrabold">Managed Pixel record</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[#aec0b8]">Enter the device details before testing. Each gate below gets its own measured timestamp, result, and operator note.</p></div>
