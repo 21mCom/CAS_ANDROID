@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/routes/cas.test.ts"
+    "test": "node ../../scripts/run-cas-contract-tests.mjs",
+    "test:direct": "tsx --test src/routes/cas.test.ts"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

@@ -1,6 +1,7 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
+- [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
 - [API client generation](api-client-generation.md) — run typechecks after OpenAPI codegen; this workspace needs compatibility fixes for generated Zod schemas and barrels.

@@ -1,0 +1,135 @@
+import { createServer } from "node:net";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const postgresDataDirectory = mkdtempSync(join(tmpdir(), "cas-contract-pg-"));
+const postgresSocketDirectory = join(postgresDataDirectory, "socket");
+const databaseName = "cas_contract_test";
+const databaseRole = "cas_contract_runner";
+let postgresStarted = false;
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+    stdio: options.stdio ?? "inherit",
+    env: options.env,
+  });
+
+  if (result.error) {
+    throw new Error(
+      `Unable to run ${command}: ${result.error.message}. ` +
+      "Install PostgreSQL and ensure initdb, pg_ctl, and createdb are on PATH.",
+    );
+  }
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} exited with status ${result.status}`);
+  }
+  return result;
+}
+
+async function findAvailablePort() {
+  const server = createServer();
+  await new Promise((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Unable to reserve a local port for the disposable PostgreSQL server");
+  }
+  const port = address.port;
+  await new Promise((resolvePromise, reject) => {
+    server.close((error) => (error ? reject(error) : resolvePromise()));
+  });
+  return port;
+}
+
+function stopPostgres() {
+  if (!postgresStarted) return;
+  try {
+    run("pg_ctl", [
+      "-D",
+      postgresDataDirectory,
+      "-m",
+      "immediate",
+      "-w",
+      "stop",
+    ], { stdio: "ignore" });
+  } catch {
+    // Cleanup must continue even if PostgreSQL already stopped.
+  } finally {
+    postgresStarted = false;
+  }
+}
+
+const cleanup = () => {
+  stopPostgres();
+  rmSync(postgresDataDirectory, { recursive: true, force: true });
+};
+
+process.once("exit", cleanup);
+process.once("SIGINT", () => {
+  cleanup();
+  process.exit(130);
+});
+process.once("SIGTERM", () => {
+  cleanup();
+  process.exit(143);
+});
+
+try {
+  const port = await findAvailablePort();
+  const databaseUrl = `postgresql://${databaseRole}@127.0.0.1:${port}/${databaseName}`;
+
+  run("initdb", [
+    "--no-locale",
+    "--encoding=UTF8",
+    "--auth=trust",
+    "--username",
+    databaseRole,
+    "-D",
+    postgresDataDirectory,
+  ]);
+  mkdirSync(postgresSocketDirectory);
+  run("pg_ctl", [
+    "-D",
+    postgresDataDirectory,
+    "-o",
+    `-h 127.0.0.1 -k ${postgresSocketDirectory} -p ${port}`,
+    "-w",
+    "start",
+  ]);
+  postgresStarted = true;
+  run("createdb", [
+    "-h",
+    "127.0.0.1",
+    "-p",
+    String(port),
+    "-U",
+    databaseRole,
+    databaseName,
+  ]);
+
+  const isolatedEnvironment = {
+    ...process.env,
+    DATABASE_URL: databaseUrl,
+  };
+  run("pnpm", ["--filter", "@workspace/db", "run", "push-force"], {
+    env: isolatedEnvironment,
+  });
+  run("pnpm", ["--filter", "@workspace/api-server", "run", "test:direct"], {
+    env: isolatedEnvironment,
+  });
+} finally {
+  cleanup();
+}

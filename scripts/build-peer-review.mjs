@@ -41,6 +41,7 @@ const requiredSources = [
   "tsconfig.base.json",
   "tsconfig.json",
   "scripts/build-peer-review.mjs",
+  "scripts/run-cas-contract-tests.mjs",
   "attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md",
   "artifacts/api-server",
   "artifacts/covert-alert-system",
@@ -180,8 +181,9 @@ physical observations.
 Prerequisites:
 
 - Node.js 24 and pnpm compatible with the lockfile.
-- PostgreSQL and a \`DATABASE_URL\` environment variable for API/database
-  work. No credentials or database contents are included in this archive.
+- PostgreSQL with \`initdb\`, \`pg_ctl\`, and \`createdb\` on PATH. No
+  credentials, database contents, or pre-existing database are needed for the
+  contract checks.
 - A normal web review can use the console and API in separate processes.
 
 From the extracted archive root, enter the preserved workspace tree:
@@ -202,9 +204,16 @@ PORT=5173 BASE_PATH=/ pnpm --filter @workspace/covert-alert-system run dev
 \`\`\`
 
 The API serves under \`/api\`; the web console expects the API at the same
-origin through the configured preview/proxy. The API test suite requires a
-usable development PostgreSQL database and may mutate only the configured
-test database.
+origin through the configured preview/proxy. The API contract command above
+is isolated: it reserves a local port, creates a temporary PostgreSQL cluster
+under the operating system temporary directory, creates the
+\`cas_contract_test\` database, applies the Drizzle schema, and runs the Gate
+0A import plus incident/outbox/concurrency checks with a local
+\`DATABASE_URL\`. It does not read or mutate an inherited database URL.
+The cluster is stopped and its temporary directory is removed in a
+\`finally\` cleanup boundary after the test process exits. If PostgreSQL is
+not installed, the command stops before running tests and reports the
+prerequisite.
 
 To regenerate the printable guide, use:
 
@@ -246,8 +255,8 @@ before any physical run. The printable checklist is
    production covert behavior or automatic pass results.
 5. Confirm the web UI distinguishes sample data from measured physical
    evidence and prevents imported Gate 0A evidence from creating a GO result.
-6. Run typecheck/build/tests in an environment with the required dependencies
-   and development database; record any environment-blocked result separately.
+6. Run typecheck/build and the isolated API contract command with the required
+   dependencies; record any environment-blocked result separately.
 
 ## Explicit exclusions
 
@@ -435,6 +444,7 @@ function main() {
       ["tsconfig.base.json", "source/tsconfig.base.json"],
       ["tsconfig.json", "source/tsconfig.json"],
       ["scripts/build-peer-review.mjs", "source/scripts/build-peer-review.mjs"],
+      ["scripts/run-cas-contract-tests.mjs", "source/scripts/run-cas-contract-tests.mjs"],
       ["attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md", "source/attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md"],
       ["artifacts/api-server", "source/artifacts/api-server"],
       ["artifacts/covert-alert-system", "source/artifacts/covert-alert-system"],
