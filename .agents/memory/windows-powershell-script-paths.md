@@ -14,3 +14,9 @@ Wrap a PowerShell pipeline in `@(...)` whenever downstream code relies on `.Coun
 **Why:** The field workstation confirmed that an unwrapped single SDK-root result became a scalar string, so `[0]` returned the drive letter instead of the complete path.
 
 **How to apply:** Preserve environment-variable candidate collections explicitly and include one-value Windows drive-path cases in PowerShell 5.1 regression checks.
+
+Do not capture a native command's normal stderr with `2>&1` under Windows PowerShell 5.1 when the script uses `$ErrorActionPreference = 'Stop'`.
+
+**Why:** The field workstation confirmed that successful `java -version` stderr became a terminating `NativeCommandError`, producing the script's synthetic `-1` result despite Java exiting successfully.
+
+**How to apply:** Use `System.Diagnostics.Process` with both streams redirected, call `WaitForExit()`, and only then read the real exit code. Test a successful stderr-only command under Windows PowerShell 5.1.

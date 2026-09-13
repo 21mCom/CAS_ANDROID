@@ -113,6 +113,49 @@ function Invoke-Tool {
     }
 }
 
+function Invoke-CapturedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$Arguments = ''
+    )
+
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $Path
+        $startInfo.Arguments = $Arguments
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardError = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            return [pscustomobject]@{
+                started = $false
+                exitCode = $null
+                output = 'The process did not start.'
+            }
+        }
+
+        $standardError = $process.StandardError.ReadToEnd()
+        $standardOutput = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        $combinedOutput = ($standardError + [Environment]::NewLine + $standardOutput).Trim()
+        return [pscustomobject]@{
+            started = $true
+            exitCode = $process.ExitCode
+            output = $combinedOutput
+        }
+    } catch {
+        return [pscustomobject]@{
+            started = $false
+            exitCode = $null
+            output = $_.Exception.Message
+        }
+    }
+}
+
 function Get-JavaVersionInfo {
     param([string]$Text)
 
@@ -185,6 +228,26 @@ if ($ParserRegressionCheck) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
             throw ('Java invalid-output regression: expected no version for "{0}".' -f $invalidOutput)
         }
+    }
+
+    $javaShimDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-java-regression-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $javaShimDirectory | Out-Null
+    try {
+        $javaShim = Join-Path $javaShimDirectory 'java-version.cmd'
+        @(
+            '@echo off',
+            '>&2 echo openjdk version "25.0.4.1" 2026-08-18 LTS',
+            'exit /b 0'
+        ) | Set-Content -Path $javaShim -Encoding Ascii
+        $capturedJava = Invoke-CapturedProcess -Path $env:ComSpec -Arguments ('/d /c ""{0}""' -f $javaShim)
+        $capturedVersion = Get-JavaVersionInfo $capturedJava.output
+        if (-not $capturedJava.started -or $capturedJava.exitCode -ne 0 -or
+            $null -eq $capturedVersion -or $capturedVersion.version -ne '25.0.4.1') {
+            throw ('Java stderr-capture regression: started={0}, exit={1}, output={2}' -f
+                $capturedJava.started, $capturedJava.exitCode, $capturedJava.output)
+        }
+    } finally {
+        Remove-Item -Recurse -Force $javaShimDirectory -ErrorAction SilentlyContinue
     }
 
     Write-Output 'CAS_PARSER_REGRESSION_OK windows-preflight'
@@ -341,9 +404,18 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
         -Expected 'java.exe is available from JAVA_HOME\bin or PATH.' `
         -NextSteps @('Add the JDK bin folder to PATH, reopen this window, and rerun the preflight.')
 } else {
-    $javaResult = Invoke-Tool -Path $javaPath -Arguments @('-version')
+    $javaResult = Invoke-CapturedProcess -Path $javaPath -Arguments '-version'
     $javaVersion = Get-JavaVersionInfo $javaResult.output
-    if (-not $javaResult.succeeded) {
+    if (-not $javaResult.started) {
+        Add-Check `
+            -Id 'java.command' `
+            -Name 'Java command' `
+            -Status 'BLOCKED' `
+            -Required $true `
+            -Observed ('java.exe could not start. {0}' -f $javaResult.output) `
+            -Expected 'JDK 17 or newer.' `
+            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+    } elseif ($javaResult.exitCode -ne 0) {
         Add-Check `
             -Id 'java.command' `
             -Name 'Java command' `

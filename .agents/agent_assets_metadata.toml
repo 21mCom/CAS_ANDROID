@@ -70,3 +70,17 @@ mtime_ms = 1789289587667
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/fe81d70e-420e-4521-a41c-ccb822574d77/c1cc6922-f093-4859-8cd1-7a55d3d5c152"
 storage_version_token = "1789289602042227"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "V3EovXLucRu53Fv99T1z2"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit-v5.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit v5"
+description = "Corrected Windows PowerShell 5.1 kit that captures java -version stderr without NativeCommandError and preserves Java's real exit code."
+logical_id = "96438a9e-5707-4942-8947-5215154e9fcb"
+content_hash = "sha256:9fbdc613036be4cf4fe941963397b8aa2fdf74a68ea6ab95545f82ac9c6b4a95"
+size = 131244
+mtime_ms = 1789290170726
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/96438a9e-5707-4942-8947-5215154e9fcb/af28711e-19c6-4823-96cb-079429309e7f"
+storage_version_token = "1789290175234781"
+content_type = "application/octet-stream"

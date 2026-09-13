@@ -1,0 +1,78 @@
+Follow-up #2 on the CAS Pixel Gate 0A Windows preflight script
+("cas-windows-preflight-v1", Windows PowerShell 5.1 Desktop). The previous
+change to the "java.command" check did not fix it — it changed the failure
+mode. Latest report 20260913T085816Z attached; all other required checks
+PASS except device.physical (expected until the field site).
+
+BEFORE the change:
+  observed = 'java.exe did not report a version. openjdk version "25.0.4.1" 2026-08-18 LTS'
+AFTER the change:
+  observed = 'java.exe failed with exit code -1. openjdk version "25.0.4.1" 2026-08-18 LTS'
+
+DIAGNOSIS
+- java -version writes its output to STDERR and exits 0. The version text is
+  clearly being captured, so the process is running fine.
+- "-1" is not an exit code java returns. It is almost certainly the script's
+  own sentinel from a catch block (or an uninitialised/null ExitCode cast to
+  int). In Windows PowerShell 5.1, invoking a native command with `2>&1`
+  while $ErrorActionPreference = 'Stop' (or inside a try block with
+  -ErrorAction Stop) turns every stderr line into a NativeCommandError
+  record and THROWS — even though the command succeeded. The exception
+  message is the stderr line, which is why the version string appears in
+  the observed text. Alternatively, if Start-Process -PassThru is used
+  without -Wait / WaitForExit, .ExitCode is $null until the process exits.
+- Either way the check is failing on the mechanics of running java, not on
+  the version itself.
+
+FIX
+Run java in a way that captures stderr without triggering PowerShell's
+error stream, then evaluate the real exit code and parse the major version:
+
+  function Get-JavaVersion {
+      param([string]$JavaExe)
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $JavaExe
+      $psi.Arguments = '-version'
+      $psi.UseShellExecute = $false
+      $psi.RedirectStandardError = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.CreateNoWindow = $true
+      $p = [System.Diagnostics.Process]::Start($psi)
+      $err = $p.StandardError.ReadToEnd()
+      $out = $p.StandardOutput.ReadToEnd()
+      $p.WaitForExit()
+      $text = ($err + "`n" + $out).Trim()
+      $result = @{ ExitCode = $p.ExitCode; Text = $text; Major = $null }
+      if ($text -match 'version "(\d+)(?:\.(\d+))?') {
+          $major = [int]$Matches[1]
+          if ($major -eq 1 -and $Matches[2]) { $major = [int]$Matches[2] }  # legacy 1.8.0_xxx
+          $result.Major = $major
+      }
+      return $result
+  }
+
+  $jv = Get-JavaVersion (Join-Path $env:JAVA_HOME 'bin\java.exe')
+  if ($jv.ExitCode -ne 0)      { BLOCKED "java.exe failed with exit code $($jv.ExitCode). $($jv.Text)" }
+  elseif (-not $jv.Major)      { BLOCKED "java.exe did not report a version. $($jv.Text)" }
+  elseif ($jv.Major -lt 17)    { BLOCKED "JDK $($jv.Major) found; JDK 17 or newer required." }
+  else                         { PASS    "openjdk $($jv.Major) — $($jv.Text.Split("`n")[0])" }
+
+(A simpler alternative that also avoids the NativeCommandError problem:
+ $text = cmd /c "`"$javaExe`" -version 2>&1"; $code = $LASTEXITCODE — the
+ merge happens inside cmd, so PowerShell only ever sees stdout.)
+
+Do NOT rely on `& java -version 2>&1` under $ErrorActionPreference = 'Stop'
+in PS 5.1, and do not read Process.ExitCode before WaitForExit.
+
+ACCEPTANCE
+- On this workstation (JAVA_HOME = C:\Users\CAS_DEV\AppData\Local\Programs\
+  Eclipse Adoptium\jdk-25.0.4.101-hotspot, unchanged), "java.command"
+  PASSES with the version string in "observed".
+- Please verify on a real Windows PowerShell 5.1 host with
+  $ErrorActionPreference = 'Stop' set at script scope, not only in
+  PowerShell 7 — the behaviours differ.
+- Regression tests: version strings "17.0.2", "21.0.4", "25.0.4.1", "26"
+  parse and satisfy >= 17; "11.0.20" and "1.8.0_392" parse and fail it;
+  a non-zero exit code or empty output is reported as such, never as -1.
+- Safety-record behaviour unchanged: no device actions, no SDK preparation.
+- overallStatus should become PASS once the approved Pixel is connected.
