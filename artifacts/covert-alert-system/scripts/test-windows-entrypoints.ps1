@@ -64,7 +64,7 @@ try {
     }
     $wrapperText = ($wrapperOutput | Out-String).Trim()
     if ($wrapperExitCode -ne 0 -or $wrapperText -notmatch 'CAS_STARTUP_OK windows-preflight') {
-        throw ('CMD wrapper startup failed (exit {0}): {1}' -f $wrapperExitCode, $wrapperText)
+        throw ('CMD wrapper startup failed for {0} (exit {1}): {2}' -f $wrapper, $wrapperExitCode, $wrapperText)
     }
 
     $expectedOutput = [System.IO.Path]::GetFullPath((Join-Path $PackageRoot 'preflight-results'))
