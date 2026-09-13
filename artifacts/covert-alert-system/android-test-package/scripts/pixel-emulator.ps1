@@ -16,12 +16,22 @@ param(
     [ValidateSet('create', 'start', 'wait', 'reset', 'stop', 'status')]
     [string]$Action = 'start',
 
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\emulator-results'),
+    [string]$OutputDirectory = '',
 
     [int]$BootTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = 'Stop'
+$scriptDirectory = if ($PSScriptRoot) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    (Get-Location).Path
+}
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = Join-Path $scriptDirectory '..\emulator-results'
+}
 
 $script:AvdName = 'CAS_Pixel_8a_API_35'
 $script:ApiLevel = 35

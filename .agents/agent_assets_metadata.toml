@@ -28,3 +28,17 @@ mtime_ms = 1789282019171
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/bffd3e6f-e7a9-44ff-9d0d-9a0efb2151e8/c9486d6a-ea21-43a9-8c79-a6cdede1e199"
 storage_version_token = "1789282109944344"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "X6l4rL4RF4mNJUv8y9m2W"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit-v2.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit v2"
+description = "Corrected Windows kit. This version fixes the preflight crash caused by script-directory resolution during PowerShell parameter binding."
+logical_id = "57a83b2c-b583-403c-b5f6-0089cef2b94c"
+content_hash = "sha256:dbcea13f1d9ab9ce659a2e12d9865d0a956c6f628be46a6693605effaaa7c54d"
+size = 129584
+mtime_ms = 1789284582016
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/57a83b2c-b583-403c-b5f6-0089cef2b94c/cdb7c930-e89b-4e62-9066-df2205713a6b"
+storage_version_token = "1789284604899189"
+content_type = "application/octet-stream"

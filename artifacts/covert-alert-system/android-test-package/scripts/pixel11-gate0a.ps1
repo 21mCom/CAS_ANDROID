@@ -6,7 +6,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$packageRoot = Split-Path -Parent $PSScriptRoot
+$scriptDirectory = if ($PSScriptRoot) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    (Get-Location).Path
+}
+$packageRoot = Split-Path -Parent $scriptDirectory
 
 function Stop-Run {
     param([string]$Message)

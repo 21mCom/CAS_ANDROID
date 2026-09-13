@@ -18,7 +18,7 @@ param(
     [ValidateSet('physical', 'emulator', 'both')]
     [string]$Target = 'physical',
 
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\preflight-results'),
+    [string]$OutputDirectory = '',
 
     [switch]$PrepareSdk,
 
@@ -26,6 +26,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$scriptDirectory = if ($PSScriptRoot) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    (Get-Location).Path
+}
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = Join-Path $scriptDirectory '..\preflight-results'
+}
 $script:Checks = @()
 $script:Actions = @()
 

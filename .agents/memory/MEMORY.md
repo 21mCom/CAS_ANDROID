@@ -6,3 +6,4 @@
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
 - [API client generation](api-client-generation.md) — run typechecks after OpenAPI codegen; this workspace needs compatibility fixes for generated Zod schemas and barrels.
 - [Gate 0A print guide](gate0a-print-guide.md) — verify rendered PDF pagination, selectable commands, and served-file integrity after guide changes.
+- [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
