@@ -61,6 +61,11 @@ const requiredFiles = [
   "lib/db/src/schema/cas.ts",
 ];
 
+const apiSourcePreflightFiles = [
+  "artifacts/api-server/src/routes/cas.ts",
+  "artifacts/api-server/src/routes/cas.test.ts",
+];
+
 function archivePathFor(relativePath) {
   return relativePath.split(sep).join("/");
 }
@@ -127,6 +132,43 @@ function run(command, args) {
     command: [command, ...args].join(" "),
     status: result.status,
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(),
+  };
+}
+
+function runApiSourcePreflight() {
+  for (const sourceFile of apiSourcePreflightFiles) {
+    if (!existsSync(join(workspaceRoot, sourceFile))) {
+      throw new Error(`API source preflight cannot read required source: ${sourceFile}`);
+    }
+  }
+
+  const result = run("pnpm", [
+    "exec",
+    "tsc",
+    "--noEmit",
+    "--pretty",
+    "false",
+    "--incremental",
+    "false",
+    "--project",
+    "artifacts/api-server/tsconfig.json",
+  ]);
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        "API source preflight failed: TypeScript syntax/type check",
+        `Sources checked: ${apiSourcePreflightFiles.join(", ")}`,
+        `Command: ${result.command}`,
+        result.output || "(no diagnostics reported)",
+      ].join("\n"),
+    );
+  }
+
+  return {
+    check: "TypeScript syntax/type check",
+    command: result.command,
+    outcome: "passed",
+    files: apiSourcePreflightFiles,
   };
 }
 
@@ -288,9 +330,10 @@ function runValidation() {
   }));
 }
 
-function writeValidationRecord(commands) {
+function writeValidationRecord(commands, sourcePreflight) {
   const validation = {
     note: "These are package-time commands run against the source workspace; no database contents or credentials are included.",
+    sourcePreflight,
     commands,
     archiveChecks: "passed by this packaging command: stable listing, forbidden-path scan, extraction, and manifest checksum comparison",
     physicalValidation: "Not run. Gate 0A requires the approved Pixel 8a hardware workstation and authorized ADB device.",
@@ -467,9 +510,10 @@ function main() {
     if (!packageFiles.some((file) => file === "source/artifacts/covert-alert-system/public/gate0a-run-guide.pdf")) {
       throw new Error("Gate 0A PDF deliverable is unavailable; refusing incomplete package");
     }
+    const sourcePreflight = runApiSourcePreflight();
     writeReviewerReadme();
     const validation = runValidation();
-    writeValidationRecord(validation);
+    writeValidationRecord(validation, sourcePreflight);
     packageFiles.push("README.md", "validation.json");
     buildManifest(packageFiles);
     createArchive();
