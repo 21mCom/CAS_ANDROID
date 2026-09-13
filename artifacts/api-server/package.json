@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../scripts/run-cas-contract-tests.mjs",
+    "test:review-db-cleanup": "node ../../scripts/test-review-database-cleanup.mjs",
     "test:direct": "tsx --test src/routes/cas.test.ts"
   },
   "dependencies": {

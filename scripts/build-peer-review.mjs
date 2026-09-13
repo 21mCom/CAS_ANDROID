@@ -41,7 +41,9 @@ const requiredSources = [
   "tsconfig.base.json",
   "tsconfig.json",
   "scripts/build-peer-review.mjs",
+  "scripts/disposable-review-database.mjs",
   "scripts/run-cas-contract-tests.mjs",
+  "scripts/test-review-database-cleanup.mjs",
   "attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md",
   "artifacts/api-server",
   "artifacts/covert-alert-system",
@@ -236,6 +238,7 @@ pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm run build
 pnpm --filter @workspace/api-server run test
+pnpm --filter @workspace/api-server run test:review-db-cleanup
 \`\`\`
 
 To run the services in the workspace environment:
@@ -256,6 +259,9 @@ The cluster is stopped and its temporary directory is removed in a
 \`finally\` cleanup boundary after the test process exits. If PostgreSQL is
 not installed, the command stops before running tests and reports the
 prerequisite.
+The focused cleanup smoke check also runs the local setup through a successful
+contract command and an intentionally failing command, then verifies both the
+PostgreSQL process and temporary cluster directory are gone in each case.
 
 To regenerate the printable guide, use:
 
@@ -322,6 +328,7 @@ function runValidation() {
     run("pnpm", ["run", "typecheck"]),
     run("pnpm", ["run", "build"]),
     run("pnpm", ["--filter", "@workspace/api-server", "run", "test"]),
+    run("pnpm", ["--filter", "@workspace/api-server", "run", "test:review-db-cleanup"]),
   ].map((result) => ({
     command: result.command,
     exitCode: result.status,
@@ -487,7 +494,9 @@ function main() {
       ["tsconfig.base.json", "source/tsconfig.base.json"],
       ["tsconfig.json", "source/tsconfig.json"],
       ["scripts/build-peer-review.mjs", "source/scripts/build-peer-review.mjs"],
+      ["scripts/disposable-review-database.mjs", "source/scripts/disposable-review-database.mjs"],
       ["scripts/run-cas-contract-tests.mjs", "source/scripts/run-cas-contract-tests.mjs"],
+      ["scripts/test-review-database-cleanup.mjs", "source/scripts/test-review-database-cleanup.mjs"],
       ["attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md", "source/attached_assets/CovertAlertSystem_Pixel_MVP_Agentic_Handoff_1787405922227.md"],
       ["artifacts/api-server", "source/artifacts/api-server"],
       ["artifacts/covert-alert-system", "source/artifacts/covert-alert-system"],
