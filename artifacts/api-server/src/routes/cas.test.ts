@@ -79,12 +79,47 @@ beforeEach(async () => {
 
 const validGate0aReport = {
   schema: "cas-gate0a-report-v1",
+  reportType: "gate0a-run",
   runPurpose: "Disposable proxy-launch hardware measurement only",
-  target: { model: "Pixel 8a", androidApi: 35, stockAndroid: true },
+  evidenceClass: "physical-device-observation",
+  status: "complete",
+  startedAtUtc: "2024-08-26T14:00:00.000Z",
+  finishedAtUtc: "2024-08-26T14:10:00.000Z",
+  gate0aPassed: false,
+  physicalReadinessProof: "requires-managed-Pixel-observer-review",
+  target: {
+    model: "Pixel 8a",
+    serial: "ABC123",
+    device: "akita",
+    androidVersion: "15",
+    build: "AP3A.240905.015",
+    androidApi: 35,
+    stockAndroid: true,
+    isEmulator: false,
+    usbState: "device",
+    usbDebuggingEnabled: true,
+  },
+  preflight: {
+    status: "PASS",
+    checks: [{
+      id: "target.identity",
+      name: "Authorized target identity",
+      status: "PASS",
+      required: true,
+      observed: "Pixel 8a / akita / ABC123",
+      expected: "Approved Pixel 8a target in adb device state",
+      nextSteps: [],
+    }],
+    unresolvedWarnings: [],
+  },
   safety: {
     liveMessagingEnabled: false,
+    networkEnabled: false,
     evidenceCaptureEnabled: false,
     covertProductionBehaviorEnabled: false,
+    deviceOwnerPolicyChanged: false,
+    applicationDataCleared: false,
+    factoryResetPerformed: false,
   },
   coverPackage: "com.example.cover",
   deviceOwner: {
@@ -109,6 +144,12 @@ const validGate0aReport = {
     notificationsReviewRequired: true,
     coverAppBackHomeRecentsReviewRequired: true,
   },
+  evidence: {
+    logs: ["host.log"],
+    screenshots: ["screenshots/cold-launch.png"],
+    rawReferences: ["events.ndjson", "environment.tsv"],
+  },
+  warnings: [],
   events: [
     { type: "PROXY_TRIGGER", wallClockMs: 1724673600123, elapsedRealtimeMs: 987654 },
     {
@@ -141,6 +182,52 @@ test("Gate 0A import preserves raw timestamps and stays inconclusive", async () 
   assert.match(body.observation.notes, /outcome=STARTED/);
   assert.equal(body.summary.eventCount, 2);
   assert.equal(body.summary.coverLaunchOutcomeCount, 1);
+});
+
+test("Gate 0A import keeps emulator evidence distinct from physical evidence", async () => {
+  const emulatorReport = {
+    ...validGate0aReport,
+    evidenceClass: "simulated-emulator",
+    physicalReadinessProof: "simulated-emulator-not-proof",
+    target: {
+      ...validGate0aReport.target,
+      serial: "emulator-5554",
+      device: "generic_x86_64",
+      isEmulator: true,
+    },
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(emulatorReport),
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as {
+    observation: { notes: string };
+    summary: { evidenceClass: string; preflightStatus: string };
+  };
+  assert.equal(body.summary.evidenceClass, "simulated-emulator");
+  assert.equal(body.summary.preflightStatus, "PASS");
+  assert.match(body.observation.notes, /cannot establish physical Gate 0A readiness/);
+});
+
+test("Gate 0A import rejects blocked preflight reports", async () => {
+  const blocked = {
+    ...validGate0aReport,
+    status: "blocked",
+    preflight: { ...validGate0aReport.preflight, status: "BLOCKED" },
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(blocked),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Gate 0A report is blocked; resolve the preflight blockers and import the completed report.",
+  });
 });
 
 test("Gate 0A import rejects malformed reports", async () => {

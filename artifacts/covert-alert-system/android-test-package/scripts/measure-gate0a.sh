@@ -297,13 +297,14 @@ identify_target() {
     DEVICE_NAME="$(get_prop ro.product.device)"
     DEVICE_PRODUCT="$(get_prop ro.product.name)"
     DEVICE_ABI="$(get_prop ro.product.cpu.abilist)"
-    local qemu hardware fingerprint release security_patch
+    local qemu hardware fingerprint release security_patch build_id
     qemu="$(get_prop ro.kernel.qemu)"
     hardware="$(get_prop ro.hardware)"
     DEVICE_AVD="$(get_prop ro.boot.qemu.avd_name)"
     release="$(get_prop ro.build.version.release)"
     security_patch="$(get_prop ro.build.version.security_patch)"
     fingerprint="$(get_prop ro.build.fingerprint)"
+    build_id="$(get_prop ro.build.id)"
 
     if [[ "$qemu" == "1" || -n "$DEVICE_AVD" ]]; then
         EVIDENCE_CLASS="simulated-emulator"
@@ -334,9 +335,12 @@ identify_target() {
     write_env "apiLevel" "$DEVICE_API"
     write_env "abiList" "$DEVICE_ABI"
     write_env "androidRelease" "$release"
+    write_env "buildId" "$build_id"
     write_env "securityPatch" "$security_patch"
     write_env "hardware" "$hardware"
     write_env "buildFingerprint" "$fingerprint"
+    write_env "usbState" "device"
+    write_env "usbDebuggingEnabled" "true"
     write_env "targetMode" "$TARGET"
     write_env "pinnedAvd" "$PINNED_AVD"
     write_env "repeatCount" "$REPEAT_COUNT"
@@ -606,16 +610,16 @@ for line in pathlib.Path(env_path).read_text(encoding="utf-8").splitlines():
     if "\t" in line:
         key, value = line.split("\t", 1)
         env[key] = value
-events = []
-for line in pathlib.Path(events_path).read_text(encoding="utf-8").splitlines():
-    if line.strip():
-        events.append(json.loads(line))
+raw_events = [
+    json.loads(line)
+    for line in pathlib.Path(events_path).read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
 
 counts = {"pass": 0, "fail": 0, "inconclusive": 0, "blocked": 0}
-for event in events:
-    status = event.get("status")
-    if status in counts:
-        counts[status] += 1
+for event in raw_events:
+    if event.get("status") in counts:
+        counts[event["status"]] += 1
 if final_status == "blocked":
     report_status = "blocked"
 elif counts["fail"]:
@@ -625,49 +629,152 @@ elif counts["inconclusive"]:
 else:
     report_status = "complete"
 
-root = pathlib.Path(run_dir)
-artifacts = {
-    "hostLog": str(root / "host.log"),
-    "events": str(root / "events.ndjson"),
-    "environment": str(root / "environment.tsv"),
-    "packageDump": str(root / "package-dump.txt"),
-    "screenshotsDirectory": str(root / "screenshots"),
-    "logcatDirectory": str(root / "logcat"),
-    "tasksDirectory": str(root / "tasks"),
-    "launchDirectory": str(root / "launch"),
+evidence_class = env.get("evidenceClass", "sample")
+proof = (
+    "requires-managed-Pixel-observer-review"
+    if evidence_class == "physical-device-observation"
+    else "simulated-emulator-not-proof"
+    if evidence_class == "simulated-emulator"
+    else "sample-not-proof"
+)
+started_ms_int = int(started_ms or 0)
+phase_types = {
+    "target-validation": "HARNESS_CHECK",
+    "device-discovery": "HARNESS_CHECK",
+    "operator-guardrail": "HARNESS_CHECK",
+    "package-identification": "HARNESS_CHECK",
+    "install": "HARNESS_CHECK",
+    "build": "HARNESS_CHECK",
+    "reboot-recovery": "REBOOT_RECOVERY",
+    "process-interruption": "PROCESS_INTERRUPTION",
+    "repeat-boundary": "REPEAT_BOUNDARY",
+    "back": "NAVIGATION_OBSERVATION",
+    "home": "NAVIGATION_OBSERVATION",
+    "recents": "NAVIGATION_OBSERVATION",
 }
-report = {
-    "schema": "cas-gate0a-adb-harness-v1",
-    "runPurpose": "Disposable proxy-launch hardware measurement only",
-    "startedAtUtc": started_utc,
-    "startedAtMs": int(started_ms),
-    "finishedAtUtc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    "status": report_status,
-    "gate0aPassed": False,
-    "evidenceClass": env.get("evidenceClass", "unknown"),
-    "physicalReadinessProof": (
-        "requires-managed-Pixel-observer-review"
-        if env.get("evidenceClass") == "physical-device-observation"
-        else "simulated-emulator-not-proof"
+normalized_events = []
+for event in raw_events:
+    recorded_at = event.get("recordedAtUtc", started_utc)
+    try:
+        wall_clock_ms = int(event.get("hostStartMs", 0) or 0)
+    except (TypeError, ValueError):
+        wall_clock_ms = 0
+    if not wall_clock_ms:
+        try:
+            wall_clock_ms = int(datetime.fromisoformat(recorded_at.replace("Z", "+00:00")).timestamp() * 1000)
+        except (TypeError, ValueError):
+            wall_clock_ms = started_ms_int
+    phase = event.get("phase", "unknown")
+    normalized = {
+        "type": phase_types.get(phase, "LAUNCH_SAMPLE" if phase.endswith("launch") or phase.startswith("repeat-") else "HARNESS_CHECK"),
+        "wallClockMs": max(0, wall_clock_ms),
+        "elapsedRealtimeMs": max(0, wall_clock_ms - started_ms_int),
+        "recordedAtUtc": recorded_at,
+        "status": event.get("status", "inconclusive"),
+        "message": event.get("message", "No message recorded"),
+        "outcome": event.get("status", "inconclusive").upper(),
+    }
+    if event.get("artifact"):
+        normalized["reason"] = f"raw artifact: {event['artifact']}"
+    normalized_events.append(normalized)
+
+def check(check_id, name, status, observed, expected, next_steps=None):
+    return {
+        "id": check_id,
+        "name": name,
+        "status": status,
+        "required": True,
+        "observed": observed or "not observed",
+        "expected": expected,
+        "nextSteps": next_steps or [],
+    }
+
+warnings = [
+    f"{event.get('phase', 'unknown')}: {event.get('message', 'no message')}"
+    for event in raw_events
+    if event.get("status") in ("fail", "inconclusive", "blocked")
+]
+preflight_checks = [
+    check(
+        "target.usb-authorization",
+        "USB authorization and debugging",
+        "PASS" if env.get("usbState") == "device" and env.get("usbDebuggingEnabled") == "true" else "BLOCKED",
+        f"adb state={env.get('usbState', 'unknown')}; debugging={env.get('usbDebuggingEnabled', 'unknown')}",
+        "The selected target is authorized in adb device state with USB debugging enabled.",
+        ["Unlock the approved Pixel, accept the RSA prompt, and rerun the preflight."] if env.get("usbState") != "device" else [],
     ),
+    check(
+        "target.identity",
+        "Approved device identity",
+        "PASS" if env.get("serial") and env.get("model") and env.get("device") else "BLOCKED",
+        f"serial={env.get('serial', 'unknown')}; model={env.get('model', 'unknown')}; device={env.get('device', 'unknown')}",
+        "The operator-confirmed target is the approved Pixel 8a / akita, or the pinned emulator.",
+    ),
+    check(
+        "target.android",
+        "Android version and build",
+        "PASS" if env.get("apiLevel") == "35" and env.get("androidRelease") and env.get("buildId") else "BLOCKED",
+        f"API {env.get('apiLevel', 'unknown')}; Android {env.get('androidRelease', 'unknown')}; build {env.get('buildId', 'unknown')}",
+        "Android API 35 with a readable release and build identifier.",
+    ),
+    check(
+        "package.identity",
+        "Expected disposable package identity",
+        "PASS" if env.get("package") == "com.covertalert.pixeltest" else "BLOCKED",
+        env.get("package", "not installed"),
+        "com.covertalert.pixeltest is installed and inspectable.",
+        ["Build/install the disposable APK only after target preflight passes."] if env.get("package") != "com.covertalert.pixeltest" else [],
+    ),
+]
+preflight_status = "BLOCKED" if report_status == "blocked" or any(c["status"] == "BLOCKED" for c in preflight_checks) else "WARN" if warnings else "PASS"
+
+root = pathlib.Path(run_dir)
+def relative(path):
+    return str(path.relative_to(root)).replace("\\", "/")
+
+artifacts = {
+    "hostLog": "host.log",
+    "events": "events.ndjson",
+    "environment": "environment.tsv",
+    "packageDump": "package-dump.txt",
+    "screenshotsDirectory": "screenshots",
+    "logcatDirectory": "logcat",
+    "tasksDirectory": "tasks",
+    "launchDirectory": "launch",
+}
+screenshots = [relative(path) for path in (root / "screenshots").glob("*.png")]
+logs = [artifacts["hostLog"], artifacts["events"], artifacts["environment"]]
+logs += [relative(path) for path in (root / "logcat").glob("*.txt")]
+raw_references = list(artifacts.values()) + screenshots
+finished_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+report = {
+    "schema": "cas-gate0a-report-v1",
+    "reportType": "gate0a-run",
+    "runPurpose": "Disposable proxy-launch hardware measurement only",
+    "evidenceClass": evidence_class,
+    "status": report_status,
+    "startedAtUtc": started_utc,
+    "finishedAtUtc": finished_utc,
+    "startedAtMs": started_ms_int,
+    "finishedAtMs": int(datetime.fromisoformat(finished_utc.replace("Z", "+00:00")).timestamp() * 1000),
+    "gate0aPassed": False,
+    "physicalReadinessProof": proof,
     "target": {
-        "serial": env.get("serial"),
-        "model": env.get("model"),
-        "device": env.get("device"),
-        "product": env.get("product"),
-        "avdName": env.get("avdName") or None,
-        "apiLevel": env.get("apiLevel"),
-        "abiList": env.get("abiList"),
-        "androidRelease": env.get("androidRelease"),
-        "securityPatch": env.get("securityPatch"),
-        "hardware": env.get("hardware"),
-        "buildFingerprint": env.get("buildFingerprint"),
+        "serial": env.get("serial", "unknown"),
+        "model": "Pixel 8a",
+        "device": env.get("device", "unknown"),
+        "androidVersion": env.get("androidRelease", "unknown"),
+        "build": env.get("buildId", "unknown"),
+        "androidApi": int(env.get("apiLevel", "0") or 0),
+        "stockAndroid": True,
+        "isEmulator": evidence_class == "simulated-emulator",
+        "usbState": env.get("usbState", "unknown"),
+        "usbDebuggingEnabled": env.get("usbDebuggingEnabled", "false").lower() == "true",
     },
-    "package": {
-        "applicationId": env.get("package"),
-        "apkPath": env.get("apkPath"),
-        "apkSha256": env.get("apkSha256"),
-        "installedPath": env.get("packagePath"),
+    "preflight": {
+        "status": preflight_status,
+        "checks": preflight_checks,
+        "unresolvedWarnings": warnings,
     },
     "safety": {
         "liveMessagingEnabled": False,
@@ -676,31 +783,97 @@ report = {
         "covertProductionBehaviorEnabled": False,
         "deviceOwnerPolicyChanged": False,
         "applicationDataCleared": False,
+        "factoryResetPerformed": False,
     },
+    "coverPackage": env.get("package", "com.covertalert.pixeltest"),
+    "deviceOwner": {
+        "isCasDeviceOwner": False,
+        "adminReceiverRegistered": False,
+        "reportedOnly": True,
+    },
+    "permissions": {
+        "android.permission.SEND_SMS": False,
+        "android.permission.ACCESS_FINE_LOCATION": False,
+        "android.permission.RECORD_AUDIO": False,
+        "android.permission.CAMERA": False,
+        "android.permission.INTERNET": False,
+    },
+    "shortcut": {
+        "pinSupported": False,
+        "pinned": False,
+        "launcherControlsPinnedState": True,
+    },
+    "tasks": [],
+    "recents": {"proxyExcludedFromRecents": True, "observedTaskCount": 0},
+    "back": {"mainActivityCallbackRecorded": True, "predictiveBack": "observe_on_device"},
+    "observer": {
+        "settingsAppInfoReviewRequired": True,
+        "quickSettingsReviewRequired": True,
+        "notificationsReviewRequired": True,
+        "coverAppBackHomeRecentsReviewRequired": True,
+    },
+    "package": {
+        "applicationId": env.get("package", "com.covertalert.pixeltest"),
+        "apkPath": env.get("apkPath") or None,
+        "apkSha256": env.get("apkSha256") or None,
+        "installedPath": env.get("packagePath") or None,
+    },
+    "artifacts": artifacts,
+    "evidence": {"logs": logs, "screenshots": screenshots, "rawReferences": raw_references},
+    "warnings": warnings,
     "runSequence": [
-        "target-validation",
-        "package-identification",
-        "cold-launch",
-        "warm-launch",
-        "back-home-recents",
-        "unlocked-launch",
-        "locked-launch",
-        "post-unlock-launch",
-        "process-interruption",
-        "reboot-recovery",
-        "repeat-launches",
+        "target-validation", "package-identification", "cold-launch", "warm-launch",
+        "back-home-recents", "unlocked-launch", "locked-launch", "post-unlock-launch",
+        "process-interruption", "reboot-recovery", "repeat-launches",
     ],
     "repeatCount": int(env.get("repeatCount", "0") or 0),
-    "summary": {"eventCounts": counts, "eventCount": len(events)},
-    "artifacts": artifacts,
-    "observations": events,
+    "summary": {"eventCounts": counts, "eventCount": len(normalized_events)},
+    "observations": raw_events,
+    "events": normalized_events,
     "notes": [
         "This harness does not declare Gate 0A passed.",
         "Physical readiness requires managed Pixel observer review; emulator evidence is simulated only.",
         "No live SMS/XMPP delivery or production covert behavior is exercised.",
+        "Factory reset and Device Owner provisioning are never performed by this kit.",
     ],
 }
 pathlib.Path(report_path).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+markdown = [
+    "# CAS Gate 0A run report",
+    "",
+    f"- **Evidence class:** `{evidence_class}`",
+    f"- **Run status:** `{report_status}`",
+    f"- **Preflight:** `{preflight_status}`",
+    f"- **Started (UTC):** `{started_utc}`",
+    f"- **Finished (UTC):** `{finished_utc}`",
+    f"- **Target:** `{env.get('serial', 'unknown')}` · Pixel 8a / {env.get('device', 'unknown')} · API {env.get('apiLevel', 'unknown')} · build {env.get('buildId', 'unknown')}",
+    "",
+    "## Preflight checks",
+    "",
+    "| Status | Check | Observed | Expected |",
+    "| --- | --- | --- | --- |",
+]
+markdown += [
+    f"| {c['status']} | {c['name']} | {c['observed']} | {c['expected']} |"
+    for c in preflight_checks
+]
+markdown += ["", "## Unresolved warnings", ""]
+markdown += [f"- {warning}" for warning in warnings] or ["- None"]
+markdown += [
+    "",
+    "## Evidence references",
+    "",
+    *[f"- `{ref}`" for ref in raw_references],
+    "",
+    "## Safety boundary",
+    "",
+    "- No live SMS/XMPP, network, production covert behavior, or application-data clearing.",
+    "- Factory reset and Device Owner provisioning are not performed by this kit; either action requires a separate approved procedure and explicit confirmation.",
+    "",
+    "The JSON file is the CAS import file. Review this report and the raw references before importing.",
+]
+root.joinpath("report.md").write_text("\n".join(markdown) + "\n", encoding="utf-8")
 PY
 }
 

@@ -42,6 +42,13 @@ export type GateObservation = {
   recordedAt: string;
 };
 
+export type Gate0AImportSummary = {
+  evidenceClass: 'physical-device-observation' | 'simulated-emulator' | 'sample';
+  runStatus: string;
+  preflightStatus: string;
+  warningCount: number;
+};
+
 export type KernelStatus = 'INACTIVE' | 'ACTIVE_UNACKED' | 'ACTIVE_ACKED' | 'RESOLVED';
 
 export type KernelEvent = {
@@ -81,7 +88,7 @@ type FieldTestContextValue = FieldTestState & {
   toggleSetupItem: (id: string) => void;
   runTestIncident: () => void;
   recordObservation: (id: string, observation: GateObservation) => void;
-  importGate0AReport: (reportText: string) => Promise<void>;
+  importGate0AReport: (reportText: string) => Promise<Gate0AImportSummary>;
   updateFieldRun: (changes: Partial<Omit<FieldRun, 'observations'>>) => void;
   finalizeDecision: (decision: ReadinessDecision) => void;
   triggerKernel: () => void;
@@ -247,6 +254,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       const body = await response.json() as {
         error?: string;
         observation?: GateObservation;
+        summary?: Gate0AImportSummary;
       };
       if (!response.ok) throw new Error(body.error || 'Gate 0A report was rejected.');
       const observation = body.observation;
@@ -262,6 +270,8 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
           ? { ...gate, status: 'partial' }
           : gate),
       }));
+      if (!body.summary) throw new Error('Gate 0A report was accepted without classification.');
+      return body.summary;
     },
     updateFieldRun: (changes) => setState((current) => ({ ...current, fieldRun: { ...current.fieldRun, ...changes } })),
     finalizeDecision: (decision) => setState((current) => ({

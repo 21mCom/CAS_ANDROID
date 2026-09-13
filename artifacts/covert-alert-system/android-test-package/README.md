@@ -85,7 +85,8 @@ the first/last repeat) a screenshot. The bundle contains:
 
 | File or directory | Contents |
 | --- | --- |
-| `report.json` | `cas-gate0a-adb-harness-v1` report with target, safety, sequence, and observations |
+| `report.json` | CAS-importable `cas-gate0a-report-v1` report with target, preflight, safety, timestamps, normalized outcomes, and unresolved warnings |
+| `report.md` | Human-readable copy of the same run classification, preflight table, safety boundary, and evidence references |
 | `events.ndjson` | One structured pass/fail/inconclusive event per check |
 | `environment.tsv` | Device identity and evidence-class metadata |
 | `launch/` | Raw `am start -W` output for each launch |
@@ -97,6 +98,36 @@ the first/last repeat) a screenshot. The bundle contains:
 The harness stops with `BLOCKED` for a missing, unauthorized, offline, or
 unexpected target. Emulator output is labeled `simulated-emulator`; it is not
 physical Pixel evidence and cannot establish Gate 0A readiness.
+
+### CAS handoff
+
+After a completed run, use the files in the printed run directory:
+
+```text
+gate0a-results/<UTC timestamp>-<process id>/report.json
+gate0a-results/<UTC timestamp>-<process id>/report.md
+```
+
+Review `report.md`, the matching Windows preflight JSON/Markdown files, and the
+raw log, task, screenshot, and launch references before importing. In the CAS
+console open **Feasibility → Import Gate 0A report**, choose `report.json`, and
+select **Validate & import report**. The API accepts only the
+`cas-gate0a-report-v1` contract, requires the expected Pixel/API/ADB/package
+identity and safety flags, and records every import as INCONCLUSIVE.
+
+Review checklist:
+
+1. The evidence class is `physical-device-observation` for a managed Pixel, or
+   `simulated-emulator` for the pinned emulator rehearsal. Never import a
+   sample or emulator report as physical evidence.
+2. Preflight is `PASS`; resolve any `BLOCKED` or document every `WARN` before
+   continuing. Confirm serial, model, Android version/build, USB state, and
+   disposable package identity.
+3. Check the run status, per-check outcomes, timestamps, unresolved warnings,
+   and raw evidence references. Keep the complete run directory with the CAS
+   field record; do not upload it to a third-party service.
+4. Record the operator's physical Gate 0A observation separately. An imported
+   report never creates a Pass or GO decision.
 
 ## Pinned emulator rehearsal
 

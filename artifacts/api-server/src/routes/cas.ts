@@ -19,9 +19,15 @@ const gate0aEventTypes = [
   "BACK_OBSERVED",
   "COVER_CONFIGURED",
   "COVER_LAUNCH_OUTCOME",
+  "HARNESS_CHECK",
+  "LAUNCH_SAMPLE",
+  "NAVIGATION_OBSERVATION",
   "OBSERVER_SCREEN_OPENED",
+  "PROCESS_INTERRUPTION",
   "PROXY_TRIGGER",
   "REPORT_COPIED",
+  "REBOOT_RECOVERY",
+  "REPEAT_BOUNDARY",
   "SHORTCUT_OUTCOME",
 ] as const;
 
@@ -29,25 +35,63 @@ const gate0aEventSchema = z.object({
   type: z.enum(gate0aEventTypes),
   wallClockMs: z.number().int().nonnegative().safe(),
   elapsedRealtimeMs: z.number().int().nonnegative().safe(),
+  recordedAtUtc: z.string().datetime({ offset: true }).optional(),
+  status: z.enum(["pass", "fail", "inconclusive", "blocked"]).optional(),
+  message: z.string().max(1024).optional(),
   outcome: z.string().max(64).optional(),
   reason: z.string().max(512).optional(),
   coverPackage: z.string().max(255).optional(),
 }).passthrough();
 
+const gate0aPreflightCheckSchema = z.object({
+  id: z.string().min(1).max(128),
+  name: z.string().min(1).max(255),
+  status: z.enum(["PASS", "WARN", "BLOCKED", "SKIPPED"]),
+  required: z.boolean(),
+  observed: z.string().max(1024),
+  expected: z.string().max(1024),
+  nextSteps: z.array(z.string().max(512)).max(20),
+}).strict();
+
 export const gate0aReportSchema = z.object({
   schema: z.literal("cas-gate0a-report-v1"),
+  reportType: z.literal("gate0a-run"),
   runPurpose: z.literal("Disposable proxy-launch hardware measurement only"),
+  evidenceClass: z.enum(["physical-device-observation", "simulated-emulator", "sample"]),
+  status: z.enum(["blocked", "complete", "complete-with-failures", "complete-with-inconclusive"]),
+  startedAtUtc: z.string().datetime({ offset: true }),
+  finishedAtUtc: z.string().datetime({ offset: true }),
+  startedAtMs: z.number().int().nonnegative().safe().optional(),
+  finishedAtMs: z.number().int().nonnegative().safe().optional(),
+  gate0aPassed: z.literal(false),
+  physicalReadinessProof: z.enum(["requires-managed-Pixel-observer-review", "simulated-emulator-not-proof", "sample-not-proof"]),
   target: z.object({
     model: z.literal("Pixel 8a"),
+    serial: z.string().min(1).max(255),
+    device: z.string().min(1).max(255),
+    androidVersion: z.string().min(1).max(128),
+    build: z.string().min(1).max(255),
     androidApi: z.literal(35),
     stockAndroid: z.literal(true),
+    isEmulator: z.boolean(),
+    usbState: z.enum(["device", "not-observed"]),
+    usbDebuggingEnabled: z.boolean(),
+  }).strict(),
+  preflight: z.object({
+    status: z.enum(["PASS", "WARN", "BLOCKED"]),
+    checks: z.array(gate0aPreflightCheckSchema).min(1).max(100),
+    unresolvedWarnings: z.array(z.string().max(1024)).max(100),
   }).strict(),
   safety: z.object({
     liveMessagingEnabled: z.literal(false),
+    networkEnabled: z.literal(false),
     evidenceCaptureEnabled: z.literal(false),
     covertProductionBehaviorEnabled: z.literal(false),
+    deviceOwnerPolicyChanged: z.literal(false),
+    applicationDataCleared: z.literal(false),
+    factoryResetPerformed: z.literal(false),
   }).strict(),
-  coverPackage: z.string().max(255),
+  coverPackage: z.string().min(1).max(255),
   deviceOwner: z.object({
     isCasDeviceOwner: z.boolean(),
     adminReceiverRegistered: z.boolean(),
@@ -84,8 +128,45 @@ export const gate0aReportSchema = z.object({
     notificationsReviewRequired: z.literal(true),
     coverAppBackHomeRecentsReviewRequired: z.literal(true),
   }).strict(),
+  package: z.object({
+    applicationId: z.string().min(1).max(255),
+    apkPath: z.string().max(512).nullable(),
+    apkSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    installedPath: z.string().max(512).nullable(),
+  }).strict().optional(),
+  artifacts: z.record(z.string().max(512)).optional(),
+  evidence: z.object({
+    logs: z.array(z.string().max(512)).max(200),
+    screenshots: z.array(z.string().max(512)).max(200),
+    rawReferences: z.array(z.string().max(512)).max(500),
+  }).strict(),
+  warnings: z.array(z.string().max(1024)).max(100),
+  runSequence: z.array(z.string().max(128)).max(100).optional(),
+  repeatCount: z.number().int().nonnegative().safe().optional(),
+  summary: z.object({
+    eventCounts: z.record(z.number().int().nonnegative().safe()),
+    eventCount: z.number().int().nonnegative().safe(),
+  }).strict().optional(),
+  observations: z.array(z.record(z.unknown())).max(10_000).optional(),
+  notes: z.array(z.string().max(1024)).max(100).optional(),
   events: z.array(gate0aEventSchema).max(10_000),
-}).strict();
+}).strict().superRefine((report, context) => {
+  const shouldBeEmulator = report.evidenceClass === "simulated-emulator";
+  if (report.target.isEmulator !== shouldBeEmulator) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["target", "isEmulator"],
+      message: "Evidence class does not match target emulator identity",
+    });
+  }
+  if (report.evidenceClass !== "sample" && report.preflight.status === "PASS" && report.target.usbState !== "device") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["target", "usbState"],
+      message: "A runnable hardware or emulator report must include authorized adb state",
+    });
+  }
+});
 
 type Gate0aReport = z.infer<typeof gate0aReportSchema>;
 
@@ -117,10 +198,20 @@ function formatGate0aNotes(report: Gate0aReport): string {
     });
 
   return [
-    "Imported native Gate 0A report (cas-gate0a-report-v1).",
-    "This import is physical evidence for review only; it is recorded INCONCLUSIVE and never establishes Pass or production readiness.",
+    "Imported Gate 0A report (cas-gate0a-report-v1).",
+    `Evidence class: ${report.evidenceClass}. Run status: ${report.status}.`,
+    report.evidenceClass === "physical-device-observation"
+      ? "This import is hardware evidence for review only; it is recorded INCONCLUSIVE and never establishes Pass or production readiness."
+      : report.evidenceClass === "simulated-emulator"
+        ? "This import is emulator evidence; it is recorded INCONCLUSIVE and cannot establish physical Gate 0A readiness."
+        : "This import is sample evidence; it is recorded INCONCLUSIVE and cannot establish Gate 0A readiness.",
+    `Preflight status: ${report.preflight.status}.`,
     `Cover package reported: ${report.coverPackage || "(none)"}.`,
     `Cover-launch outcomes (raw): ${outcomes.length > 0 ? outcomes.join(" | ") : "none recorded"}.`,
+    report.warnings.length > 0 ? `Unresolved warnings: ${report.warnings.join(" | ")}.` : "Unresolved warnings: none.",
+    report.evidence.rawReferences.length > 0
+      ? `Raw evidence references: ${report.evidence.rawReferences.join(", ")}.`
+      : "Raw evidence references: none.",
     "Report event timestamps (raw device values):",
     timestampLines.length > 0 ? timestampLines.join("\n") : "none recorded",
   ].join("\n");
@@ -136,6 +227,11 @@ router.post("/cas/gate0a/import", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid cas-gate0a-report-v1 report" });
     }
     const report = parsed.data;
+    if (report.status === "blocked" || report.preflight.status === "BLOCKED") {
+      return res.status(400).json({
+        error: "Gate 0A report is blocked; resolve the preflight blockers and import the completed report.",
+      });
+    }
     const observation = {
       result: "inconclusive" as const,
       notes: formatGate0aNotes(report),
@@ -148,6 +244,10 @@ router.post("/cas/gate0a/import", async (req, res, next) => {
       summary: {
         eventCount: report.events.length,
         coverLaunchOutcomeCount: report.events.filter((event) => event.type === "COVER_LAUNCH_OUTCOME").length,
+      evidenceClass: report.evidenceClass,
+      runStatus: report.status,
+      preflightStatus: report.preflight.status,
+      warningCount: report.warnings.length + report.preflight.unresolvedWarnings.length,
       },
     });
   } catch (error) { return next(error); }
