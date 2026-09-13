@@ -9,14 +9,14 @@ $artifactRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..'))
 $packageRoot = Join-Path $artifactRoot 'android-test-package'
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $artifactRoot '..\..'))
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $workspaceRoot 'deliverables\CAS-Pixel11-Windows-Test-Kit-v3.zip'
+    $OutputPath = Join-Path $workspaceRoot 'deliverables\CAS-Pixel11-Windows-Test-Kit-v4.zip'
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 
 & (Join-Path $scriptDirectory 'test-windows-entrypoints.ps1') -PackageRoot $packageRoot
 
 $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-windows-package-' + [guid]::NewGuid().ToString('N'))
-$stagedPackage = Join-Path $stagingRoot 'CAS-Pixel11-Windows-Test-Kit-v3'
+$stagedPackage = Join-Path $stagingRoot 'CAS-Pixel11-Windows-Test-Kit-v4'
 try {
     New-Item -ItemType Directory -Path $stagedPackage -Force | Out-Null
     Copy-Item -Path (Join-Path $packageRoot '*') -Destination $stagedPackage -Recurse -Force

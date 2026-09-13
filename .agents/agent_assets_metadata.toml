@@ -56,3 +56,17 @@ mtime_ms = 1789288994108
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/2f707da2-e7ee-429c-8fbd-e3f514fe0415/febf2b54-cc35-4f45-9b21-42edfe49c7d7"
 storage_version_token = "1789289005795872"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "DSBhxdAvKrHxwV1nERiA1"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit-v4.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit v4"
+description = "Updated Windows kit with a structured Java version parser supporting Temurin 25.0.4.1, single-component versions, legacy Java 8 rejection, and distinct command/parse errors."
+logical_id = "fe81d70e-420e-4521-a41c-ccb822574d77"
+content_hash = "sha256:3c9c63cd07f2ded9a52461862b93db675fb9519fae9d4c11524d45b9fd4b1f44"
+size = 130544
+mtime_ms = 1789289587667
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/fe81d70e-420e-4521-a41c-ccb822574d77/c1cc6922-f093-4859-8cd1-7a55d3d5c152"
+storage_version_token = "1789289602042227"
+content_type = "application/octet-stream"

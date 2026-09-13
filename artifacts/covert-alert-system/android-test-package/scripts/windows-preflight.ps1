@@ -113,14 +113,24 @@ function Invoke-Tool {
     }
 }
 
-function Get-MajorVersion {
+function Get-JavaVersionInfo {
     param([string]$Text)
 
-    $match = [regex]::Match($Text, '\bversion\s+"(\d+)(?:\.\d+)*"')
-    if ($match.Success) {
-        return [int]$match.Groups[1].Value
+    if (-not $Text -or $Text -notmatch 'version\s+"(?<version>\d+(?:\.\d+)*(?:_\d+)?)"') {
+        return $null
     }
-    return $null
+
+    $version = $Matches['version']
+    $components = @($version -split '[._]')
+    $major = [int]$components[0]
+    if ($major -eq 1 -and $components.Count -gt 1) {
+        $major = [int]$components[1]
+    }
+
+    return [pscustomobject]@{
+        version = $version
+        major = $major
+    }
 }
 
 function Get-Version {
@@ -155,22 +165,26 @@ if ($ParserRegressionCheck) {
     }
 
     $javaCases = @(
-        @{ Version = '17.0.2'; Expected = 17 },
-        @{ Version = '21.0.4'; Expected = 21 },
-        @{ Version = '25.0.4.1'; Expected = 25 },
-        @{ Version = '11.0.20'; Expected = 11 }
+        @{ Version = '17.0.2'; ExpectedMajor = 17; ExpectedPass = $true },
+        @{ Version = '21.0.4'; ExpectedMajor = 21; ExpectedPass = $true },
+        @{ Version = '25.0.4.1'; ExpectedMajor = 25; ExpectedPass = $true },
+        @{ Version = '26'; ExpectedMajor = 26; ExpectedPass = $true },
+        @{ Version = '11.0.20'; ExpectedMajor = 11; ExpectedPass = $false },
+        @{ Version = '1.8.0_392'; ExpectedMajor = 8; ExpectedPass = $false }
     )
     foreach ($case in $javaCases) {
-        $actual = Get-MajorVersion ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
-        if ($actual -ne $case.Expected) {
-            throw ('Java version regression: {0} parsed as {1}, expected {2}' -f $case.Version, $actual, $case.Expected)
+        $actual = Get-JavaVersionInfo ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
+        if ($null -eq $actual -or $actual.version -ne $case.Version -or $actual.major -ne $case.ExpectedMajor) {
+            throw ('Java version regression: {0} was not parsed as major {1}' -f $case.Version, $case.ExpectedMajor)
+        }
+        if (($actual.major -ge 17) -ne $case.ExpectedPass) {
+            throw ('Java minimum-version regression: {0} produced the wrong JDK 17 decision.' -f $case.Version)
         }
     }
-    if ((Get-MajorVersion 'openjdk version "17.0.2"') -lt 17 -or
-        (Get-MajorVersion 'openjdk version "21.0.4"') -lt 17 -or
-        (Get-MajorVersion 'openjdk version "25.0.4.1"') -lt 17 -or
-        (Get-MajorVersion 'openjdk version "11.0.20"') -ge 17) {
-        throw 'Java minimum-version regression: the JDK 17 threshold was evaluated incorrectly.'
+    foreach ($invalidOutput in @('', 'garbage')) {
+        if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
+            throw ('Java invalid-output regression: expected no version for "{0}".' -f $invalidOutput)
+        }
     }
 
     Write-Output 'CAS_PARSER_REGRESSION_OK windows-preflight'
@@ -328,8 +342,17 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
         -NextSteps @('Add the JDK bin folder to PATH, reopen this window, and rerun the preflight.')
 } else {
     $javaResult = Invoke-Tool -Path $javaPath -Arguments @('-version')
-    $javaMajor = Get-MajorVersion $javaResult.output
-    if (-not $javaResult.succeeded -or $null -eq $javaMajor) {
+    $javaVersion = Get-JavaVersionInfo $javaResult.output
+    if (-not $javaResult.succeeded) {
+        Add-Check `
+            -Id 'java.command' `
+            -Name 'Java command' `
+            -Status 'BLOCKED' `
+            -Required $true `
+            -Observed ('java.exe failed with exit code {0}. {1}' -f $javaResult.exitCode, $javaResult.output) `
+            -Expected 'JDK 17 or newer.' `
+            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+    } elseif ($null -eq $javaVersion) {
         Add-Check `
             -Id 'java.command' `
             -Name 'Java command' `
@@ -338,13 +361,13 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Observed ('java.exe did not report a version. {0}' -f $javaResult.output) `
             -Expected 'JDK 17 or newer.' `
             -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
-    } elseif ($javaMajor -lt 17) {
+    } elseif ($javaVersion.major -lt 17) {
         Add-Check `
             -Id 'java.command' `
             -Name 'Java command' `
             -Status 'BLOCKED' `
             -Required $true `
-            -Observed ('Java major version {0}' -f $javaMajor) `
+            -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
             -Expected 'JDK 17 or newer.' `
             -NextSteps @('Install JDK 17 or newer and point JAVA_HOME and PATH to it.')
     } else {
@@ -353,7 +376,7 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Name 'Java command' `
             -Status 'PASS' `
             -Required $true `
-            -Observed ('Java major version {0} at {1}' -f $javaMajor, $javaPath) `
+            -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
             -Expected 'JDK 17 or newer.'
     }
 }

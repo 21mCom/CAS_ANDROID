@@ -8,3 +8,9 @@ Do not use `$PSScriptRoot` inside PowerShell parameter default expressions. Defa
 **Why:** On the field Windows machine, `$PSScriptRoot` was empty while a parameter default was evaluated, causing `Join-Path` to terminate the preflight before any checks ran.
 
 **How to apply:** For every downloadable PowerShell entry point, derive the directory in the script body from `$PSScriptRoot`, then `$MyInvocation.MyCommand.Path`, then the current location. Exercise startup under Windows PowerShell before shipping.
+
+Wrap a PowerShell pipeline in `@(...)` whenever downstream code relies on `.Count` or numeric indexing, even when the pipeline normally emits one path.
+
+**Why:** The field workstation confirmed that an unwrapped single SDK-root result became a scalar string, so `[0]` returned the drive letter instead of the complete path.
+
+**How to apply:** Preserve environment-variable candidate collections explicitly and include one-value Windows drive-path cases in PowerShell 5.1 regression checks.

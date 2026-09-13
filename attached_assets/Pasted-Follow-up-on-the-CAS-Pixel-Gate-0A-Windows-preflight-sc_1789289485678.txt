@@ -1,0 +1,36 @@
+Follow-up on the CAS Pixel Gate 0A Windows preflight script (schema
+"cas-windows-preflight-v1", PowerShell 5.1 Desktop). The Android SDK root
+truncation bug reported earlier is now resolved — the latest run
+(20260913T084628Z, attached) shows the full path and every SDK check PASSING.
+One bug remains and is the only thing keeping the workstation BLOCKED.
+
+BUG — Java version string not recognised (check id "java.command")
+- JAVA_HOME = C:\Users\CAS_DEV\AppData\Local\Programs\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+  Both "environment.java-home" and "path.java" PASS.
+- "java.command" reports BLOCKED with observed:
+  'java.exe did not report a version. openjdk version "25.0.4.1" 2026-08-18 LTS'
+  So java -version ran and its output was captured (stderr is being merged
+  correctly), but the version regex did not match.
+- Cause: the parser assumes a three-part version, e.g.
+  version "(\d+)\.(\d+)\.(\d+)", and fails on the four-part "25.0.4.1" that
+  current Temurin builds emit.
+
+FIX
+- Accept any number of dot-separated components and compare only the major
+  version against the JDK 17 minimum, e.g.
+    if ($out -match 'version "(\d+)(?:\.\d+)*') { $major = [int]$Matches[1] }
+    $ok = $major -ge 17
+- Report the full version string in "observed" on PASS (e.g. "25.0.4.1").
+- Also handle the legacy "1.8.0_xxx" form so JDK 8 is correctly rejected
+  (major = 8), rather than parsed as major 1 or treated as "no version".
+
+ACCEPTANCE
+- On this workstation, with JAVA_HOME and PATH unchanged, "java.command"
+  PASSES and overallStatus becomes PASS once the approved Pixel is connected
+  (device.physical is the only other BLOCKED line and is expected until the
+  field site).
+- Add regression tests for the version parser: "17.0.2", "21.0.4", "25.0.4.1"
+  and "26" all parse and satisfy >= 17; "11.0.20" and "1.8.0_392" parse and
+  fail it; garbage/empty output still yields "did not report a version".
+- No change to safety-record behaviour: the preflight must still perform no
+  device actions and no SDK preparation.
