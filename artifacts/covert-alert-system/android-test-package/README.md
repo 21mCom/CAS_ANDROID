@@ -28,6 +28,59 @@ The `adb install -r` command above is a separate, explicit operator action
 after the workstation preflight passes. The Windows preflight never runs it and
 never uninstalls an APK.
 
+## Pinned emulator rehearsal
+
+The approved emulator contract is deliberately separate from the managed
+physical run:
+
+| Setting | Pinned value |
+| --- | --- |
+| AVD name | `CAS_Pixel_8a_API_35` |
+| Device profile | `pixel_8a` |
+| Android image | `system-images;android-35;google_apis;x86_64` |
+| API level | 35 |
+| Architecture | x86_64 |
+| Repeatability settings | animation scales `0`; `stay_on_while_plugged_in=3` |
+| Evidence label | `simulated-emulator` |
+
+From the copied Windows test kit, the single lifecycle entry point is:
+
+```powershell
+scripts\run-pixel-emulator.cmd -Action start
+```
+
+`start` creates the pinned AVD when it does not exist, then reuses it for each
+rehearsal. The command waits for boot, verifies API 35, x86_64, the QEMU
+marker, the pinned AVD identity, the required settings, and a write/read/remove check under
+`/data/local/tmp`. It writes labeled JSON and Markdown records to
+`emulator-results`.
+
+Available lifecycle actions are:
+
+```powershell
+scripts\run-pixel-emulator.cmd -Action create
+scripts\run-pixel-emulator.cmd -Action start
+scripts\run-pixel-emulator.cmd -Action wait
+scripts\run-pixel-emulator.cmd -Action status
+scripts\run-pixel-emulator.cmd -Action reset
+scripts\run-pixel-emulator.cmd -Action stop
+```
+
+`reset` stops only the pinned emulator, starts it with `-wipe-data`, reapplies
+the repeatability settings, and reruns every validation check. It never
+selects a physical ADB serial. `status` and `wait` are validation-only; they
+do not change emulator settings. If the Android system image is missing,
+prepare it through the explicitly approved `-PrepareSdk` preflight path before
+creating the AVD.
+
+Emulator records are simulation evidence. They are useful for proxy-to-cover
+launch, task transitions, local journal behavior, cold/warm/reboot sequencing,
+and software regressions. They are not proof of carrier SMS, GPS, SystemUI,
+physical lock-screen behavior, managed Device Owner state, launcher behavior on
+the field Pixel, or production readiness. Keep the emulator JSON/Markdown
+record with the host timing log and mark the run as simulated when importing
+or reviewing it.
+
 ## Windows workstation preflight
 
 Use the Windows entry point before building or running the disposable package.
@@ -40,7 +93,9 @@ environment variables are missing:
 3. Leave the default target as `physical` for the managed Pixel field run.
    Use `scripts/run-windows-preflight.cmd -Target emulator` only when the
    approved emulator is the intended target. `-Target both` checks both paths.
-4. Review the plain-language `PASS`, `WARN`, and `BLOCKED` lines.
+4. Review the plain-language `PASS`, `WARN`, and `BLOCKED` lines. For an
+   emulator rehearsal, create/start the pinned AVD with
+   `scripts\run-pixel-emulator.cmd -Action start` after the preflight passes.
 5. Attach the matching JSON and Markdown files written to `preflight-results`
    to the CAS field-run record. Do not continue a Gate 0A run with a
    `BLOCKED` result.
@@ -62,7 +117,8 @@ The script prints the package list and waits for the operator to type
 `INSTALL`. Nothing is installed if that confirmation is not provided. The
 optional preparation only covers `platform-tools`, `platforms;android-35`, and
 `build-tools;35.0.0`; emulator mode also includes the official `emulator`
-package. It never installs an APK or changes the device.
+package and the pinned `system-images;android-35;google_apis;x86_64` package.
+It never installs an APK or changes the device.
 
 ### Local preflight contract
 
@@ -78,7 +134,7 @@ built or measured:
 | Build tools | Android Build-Tools 35.0.0 or newer exists |
 | Gradle | Gradle 8.9 or newer is available on `PATH`; this matches the Android Gradle Plugin 8.7.3 used by the package |
 | Physical target | An approved physical device appears as `device` in `adb devices -l`; `unauthorized` and `offline` are blocking states |
-| Emulator target | `emulator\emulator.exe` exists; a running authorized emulator is required when starting the emulator run |
+| Emulator target | `emulator\emulator.exe` exists; use the pinned lifecycle command to create/start and validate the emulator |
 
 The result JSON uses schema `cas-windows-preflight-v1`. It contains the target
 mode, host and tool observations, every check, next steps, the overall status,
@@ -107,8 +163,10 @@ commands can include the JSON alongside the in-app report and host timing log.
   or change Device Owner state.
 - **ADB says `offline` or no device is listed:** Check the USB cable, Windows
   Device Manager, the selected USB mode, and whether USB debugging is enabled.
-  For an emulator, start the approved AVD and wait for it to reach the home
-  screen. Do not treat a missing device as a physical Gate 0A pass.
+  For an emulator, run `scripts\run-pixel-emulator.cmd -Action start` and
+  review its API, architecture, boot, settings, and writable-state checks. Do
+  not treat a missing device or a passing emulator check as a physical Gate 0A
+  pass.
 - **Windows permission or antivirus blocks a tool:** Use an approved,
   administrator-reviewed installation location and allow the signed Android
   and Java tools through the organization's policy. Do not work around
@@ -144,6 +202,12 @@ change device-owner state.
 `NOT_LAUNCHED` is a recorded result when the cover package is missing or has no
 launcher intent. A failed cover launch never performs any other action.
 
+For a software rehearsal, start the pinned emulator first and run the same
+proxy flow. The host log begins with the emulator serial, AVD, API, ABI,
+fingerprint, image, and the `simulated-emulator` evidence label. Attach the
+matching `emulator-results` JSON/Markdown record as well. Do not import or
+describe emulator output as physical evidence.
+
 ## Measurement notes
 
 The package records trigger time immediately before forwarding and stores both
@@ -152,3 +216,8 @@ comparisons on the device. It does not claim a pass automatically: the
 operator must record the physical result in the CAS console's Gate 0A
 observation and document any abnormal transition, extra splash/frame, wrong
 task, broken Back behavior, or stray Recents card.
+
+The measurement script detects the QEMU marker and writes
+`evidenceClass=simulated-emulator` plus image metadata when it is run against
+the pinned AVD. This is a software rehearsal log, not a replacement for the
+managed Pixel run.

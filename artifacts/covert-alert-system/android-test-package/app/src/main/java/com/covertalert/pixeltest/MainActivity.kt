@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -47,7 +48,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Target: Pixel 8a · stock Android · API 35\nLocal-only test. No SMS, network, location, evidence capture, or production incident behavior."
+            text = "Reference target: Pixel 8a · stock Android · API 35\n${environmentLabel()}\nLocal-only test. No SMS, network, location, evidence capture, or production incident behavior."
             textSize = 13f
         })
         root.addView(coverInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
@@ -110,6 +111,20 @@ class MainActivity : Activity() {
 
     private fun isInstalled(packageName: String): Boolean =
         packageName.isNotBlank() && runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess
+
+    private fun environmentLabel(): String =
+        if (isEmulator()) {
+            "SIMULATED EMULATOR EVIDENCE · not proof of physical readiness"
+        } else {
+            "PHYSICAL DEVICE OBSERVATION · repeat emulator findings on the managed Pixel"
+        }
+
+    private fun isEmulator(): Boolean =
+        Build.FINGERPRINT.startsWith("generic") ||
+            Build.FINGERPRINT.contains("emulator") ||
+            Build.HARDWARE.contains("ranchu") ||
+            Build.HARDWARE.contains("goldfish") ||
+            Build.PRODUCT.contains("sdk")
 
     private fun buildReport(): JSONObject {
         val dpm = getSystemService<DevicePolicyManager>()

@@ -705,7 +705,10 @@ if ($PrepareSdk) {
     } else {
         $packages = @('platform-tools', 'platforms;android-35', 'build-tools;35.0.0')
         if ($Target -eq 'emulator' -or $Target -eq 'both') {
-            $packages += 'emulator'
+            $packages += @(
+                'emulator',
+                'system-images;android-35;google_apis;x86_64'
+            )
         }
 
         $approved = $false
