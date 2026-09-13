@@ -36,6 +36,18 @@ function Invoke-StartupCheck {
     return $text
 }
 
+function Invoke-ParserRegressionCheck {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+
+    $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -ParserRegressionCheck 2>&1)
+    $exitCode = $LASTEXITCODE
+    $text = ($output | Out-String).Trim()
+    if ($exitCode -ne 0 -or $text -notmatch 'CAS_PARSER_REGRESSION_OK windows-preflight') {
+        throw ('PowerShell parser regression check failed for {0} (exit {1}): {2}' -f $ScriptPath, $exitCode, $text)
+    }
+    return $text
+}
+
 $temporaryWorkingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-windows-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryWorkingDirectory | Out-Null
 try {
@@ -51,6 +63,9 @@ try {
         }
         Invoke-StartupCheck -ScriptPath $path -WorkingDirectory $temporaryWorkingDirectory -ExpectedMarker $entrypoint.Marker | Write-Host
     }
+
+    $preflightPath = Join-Path $entrypointDirectory 'windows-preflight.ps1'
+    Invoke-ParserRegressionCheck -ScriptPath $preflightPath | Write-Host
 
     $wrapper = Join-Path $entrypointDirectory 'run-windows-preflight.cmd'
     $env:CAS_NO_PAUSE = '1'

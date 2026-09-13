@@ -24,7 +24,9 @@ param(
 
     [switch]$ConfirmSdkInstall,
 
-    [switch]$StartupSmokeCheck
+    [switch]$StartupSmokeCheck,
+
+    [switch]$ParserRegressionCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,7 +116,7 @@ function Invoke-Tool {
 function Get-MajorVersion {
     param([string]$Text)
 
-    $match = [regex]::Match($Text, '(?<!\d)(\d+)(?:\.\d+)?(?:\.\d+)?')
+    $match = [regex]::Match($Text, '\bversion\s+"(\d+)(?:\.\d+)*"')
     if ($match.Success) {
         return [int]$match.Groups[1].Value
     }
@@ -138,6 +140,41 @@ function Get-Version {
     } catch {
         return $null
     }
+}
+
+if ($ParserRegressionCheck) {
+    $driveSdkRoot = 'C:\Users\CAS_DEV\AppData\Local\Android\Sdk'
+    $resolvedSdkRoots = @(
+        @($driveSdkRoot, '') |
+            Where-Object { $_ -and $_.Trim() } |
+            ForEach-Object { [System.IO.Path]::GetFullPath($_.Trim()) } |
+            Select-Object -Unique
+    )
+    if ($resolvedSdkRoots.Count -ne 1 -or $resolvedSdkRoots[0] -ne $driveSdkRoot) {
+        throw ('SDK root regression: expected {0}, received {1}' -f $driveSdkRoot, ($resolvedSdkRoots -join ', '))
+    }
+
+    $javaCases = @(
+        @{ Version = '17.0.2'; Expected = 17 },
+        @{ Version = '21.0.4'; Expected = 21 },
+        @{ Version = '25.0.4.1'; Expected = 25 },
+        @{ Version = '11.0.20'; Expected = 11 }
+    )
+    foreach ($case in $javaCases) {
+        $actual = Get-MajorVersion ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
+        if ($actual -ne $case.Expected) {
+            throw ('Java version regression: {0} parsed as {1}, expected {2}' -f $case.Version, $actual, $case.Expected)
+        }
+    }
+    if ((Get-MajorVersion 'openjdk version "17.0.2"') -lt 17 -or
+        (Get-MajorVersion 'openjdk version "21.0.4"') -lt 17 -or
+        (Get-MajorVersion 'openjdk version "25.0.4.1"') -lt 17 -or
+        (Get-MajorVersion 'openjdk version "11.0.20"') -ge 17) {
+        throw 'Java minimum-version regression: the JDK 17 threshold was evaluated incorrectly.'
+    }
+
+    Write-Output 'CAS_PARSER_REGRESSION_OK windows-preflight'
+    exit 0
 }
 
 function Test-PathEntry {
@@ -200,10 +237,12 @@ Write-Host 'Default behavior is read-only. No APK, device policy, reboot, messag
 Write-Host ''
 
 $sdkRoot = $null
-$sdkRootCandidates = @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME) |
-    Where-Object { $_ -and $_.Trim() } |
-    ForEach-Object { [System.IO.Path]::GetFullPath($_.Trim()) } |
-    Select-Object -Unique
+$sdkRootCandidates = @(
+    @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME) |
+        Where-Object { $_ -and $_.Trim() } |
+        ForEach-Object { [System.IO.Path]::GetFullPath($_.Trim()) } |
+        Select-Object -Unique
+)
 
 if ($sdkRootCandidates.Count -eq 0) {
     Add-Check `

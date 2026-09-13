@@ -42,3 +42,17 @@ mtime_ms = 1789284582016
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/57a83b2c-b583-403c-b5f6-0089cef2b94c/cdb7c930-e89b-4e62-9066-df2205713a6b"
 storage_version_token = "1789284604899189"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "FLYTnRbqrelTvWpg6lGDP"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit-v3.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit v3"
+description = "Corrected kit with full Windows SDK path preservation, Java 25 four-component version parsing, and parser regression checks."
+logical_id = "2f707da2-e7ee-429c-8fbd-e3f514fe0415"
+content_hash = "sha256:617c607b625d4fbe5daf0747febb074d8b8177126871162829f8f2fc122fe061"
+size = 130355
+mtime_ms = 1789288994108
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/2f707da2-e7ee-429c-8fbd-e3f514fe0415/febf2b54-cc35-4f45-9b21-42edfe49c7d7"
+storage_version_token = "1789289005795872"
+content_type = "application/octet-stream"
