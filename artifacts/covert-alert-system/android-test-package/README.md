@@ -28,6 +28,76 @@ The `adb install -r` command above is a separate, explicit operator action
 after the workstation preflight passes. The Windows preflight never runs it and
 never uninstalls an APK.
 
+## ADB measurement harness
+
+`scripts/measure-gate0a.sh` is the repeatable host-side runner for the
+disposable package. It validates the authorized ADB target before making any
+device change and writes a structured evidence bundle under
+`gate0a-results/<UTC timestamp>-<process id>/`.
+
+The harness requires an explicit identity confirmation. Full runs also require
+`--confirm-destructive`, because they force-stop the test package, exercise
+screen state, and reboot the target. It never clears app data, changes Device
+Owner policy, sends SMS/XMPP, or enables production behavior.
+
+For a pinned emulator rehearsal:
+
+```sh
+scripts/measure-gate0a.sh \
+  --target emulator \
+  --serial emulator-5554 \
+  --confirm-device CAS_Pixel_8a_API_35 \
+  --confirm-destructive
+```
+
+For a confirmed Pixel run that builds and installs the disposable APK:
+
+```sh
+scripts/measure-gate0a.sh \
+  --build \
+  --install \
+  --serial <authorized-serial> \
+  --confirm-device "Pixel 8a/akita" \
+  --confirm-destructive
+```
+
+Use `--repeat 200` (the default) for the required repeat-launch series.
+`--skip-reboot` is available when reboot is not approved and records reboot
+recovery as `inconclusive`; it does not claim that the reboot check passed.
+Even with `--skip-reboot`, `--confirm-destructive` is required because clean
+starts and the process-interruption check use `am force-stop`.
+`--non-interactive` skips the operator-controlled lock/unlock prompts and
+records those screen-state observations as `inconclusive`.
+
+The run sequence is explicit and ordered:
+
+1. Build (when `--build` is supplied), validate the target, confirm identity,
+   and optionally install/identify `com.covertalert.pixeltest`.
+2. Clean-start cold launch, warm launch, Back, Home, and Recents.
+3. Operator-confirmed unlocked, locked, and post-unlock launches.
+4. `am force-stop` process interruption and recovery launch.
+5. Confirmed reboot, boot-completion/package recovery, and recovery launch.
+6. A clean repeat-launch boundary followed by the requested number of launches.
+
+Each launch records host timestamps, `am start -W` status/timings, task and
+process observations, a filtered logcat snapshot, and (for named samples plus
+the first/last repeat) a screenshot. The bundle contains:
+
+| File or directory | Contents |
+| --- | --- |
+| `report.json` | `cas-gate0a-adb-harness-v1` report with target, safety, sequence, and observations |
+| `events.ndjson` | One structured pass/fail/inconclusive event per check |
+| `environment.tsv` | Device identity and evidence-class metadata |
+| `launch/` | Raw `am start -W` output for each launch |
+| `tasks/` | Activity, Recents, and package-process snapshots |
+| `screenshots/` | PNG screen observations retained by the run |
+| `logcat/` | Filtered ActivityManager and disposable-package logcat |
+| `host.log` | Operator-facing timestamps and command milestones |
+
+The harness stops with `BLOCKED` for a missing, unauthorized, offline, or
+unexpected target. Emulator output is labeled `simulated-emulator`; it is not
+physical Pixel evidence and cannot establish Gate 0A readiness.
+
 ## Pinned emulator rehearsal
 
 The approved emulator contract is deliberately separate from the managed
