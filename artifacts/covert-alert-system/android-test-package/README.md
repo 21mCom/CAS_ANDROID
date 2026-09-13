@@ -1,8 +1,9 @@
 # CAS Pixel Gate 0A test package
 
 Disposable native Android harness for the first physical run. It targets the
-pinned reference device (**Google Pixel 8a, stock Android, API 35**) and tests
-only the proxy-to-cover-app transition.
+approved physical device (**Google Pixel 11, stock Android, API 35 or newer**)
+while preserving the pinned **Pixel 8a/API 35 emulator** as simulation-only
+evidence. It tests only the proxy-to-cover-app transition.
 
 ## Safety boundary
 
@@ -57,9 +58,21 @@ scripts/measure-gate0a.sh \
   --build \
   --install \
   --serial <authorized-serial> \
-  --confirm-device "Pixel 8a/akita" \
+  --confirm-device "Pixel 11" \
   --confirm-destructive
 ```
+
+On Windows, prefer the guarded wrappers:
+
+```text
+scripts\run-pixel11-qualification.cmd
+scripts\run-pixel11-full.cmd
+```
+
+The qualification wrapper builds and installs the package and performs one
+repeat. Review its evidence before using the full wrapper, which performs the
+200-repeat run. Both wrappers verify the Pixel 11 model and API level, require
+exact operator confirmation, and stop when the ADB target is ambiguous.
 
 Use `--repeat 200` (the default) for the required repeat-launch series.
 `--skip-reboot` is available when reboot is not approved and records reboot
@@ -85,7 +98,7 @@ the first/last repeat) a screenshot. The bundle contains:
 
 | File or directory | Contents |
 | --- | --- |
-| `report.json` | CAS-importable `cas-gate0a-report-v1` report with target, preflight, safety, timestamps, normalized outcomes, and unresolved warnings |
+| `report.json` | CAS-importable `cas-gate0a-report-v2` report with target, preflight, safety, timestamps, normalized outcomes, and unresolved warnings |
 | `report.md` | Human-readable copy of the same run classification, preflight table, safety boundary, and evidence references |
 | `events.ndjson` | One structured pass/fail/inconclusive event per check |
 | `environment.tsv` | Device identity and evidence-class metadata |
@@ -112,7 +125,7 @@ Review `report.md`, the matching Windows preflight JSON/Markdown files, and the
 raw log, task, screenshot, and launch references before importing. In the CAS
 console open **Feasibility → Import Gate 0A report**, choose `report.json`, and
 select **Validate & import report**. The API accepts only the
-`cas-gate0a-report-v1` contract, requires the expected Pixel/API/ADB/package
+`cas-gate0a-report-v2` contract, requires the expected Pixel/API/ADB/package
 identity and safety flags, and records every import as INCONCLUSIVE.
 
 Review checklist:

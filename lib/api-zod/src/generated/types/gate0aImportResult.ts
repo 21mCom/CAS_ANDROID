@@ -10,7 +10,7 @@ import type { Gate0aImportResultSummary } from './gate0aImportResultSummary';
 
 export interface Gate0aImportResult {
   accepted: true;
-  schema: 'cas-gate0a-report-v1';
+  schema: 'cas-gate0a-report-v2';
   observation: Gate0aImportResultObservation;
   summary: Gate0aImportResultSummary;
 }

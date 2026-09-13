@@ -1,10 +1,10 @@
 ---
 name: Gate 0A hardware access
-description: Environment constraint for running the native CAS proxy harness on the reference Pixel.
+description: Physical and emulator target policy for running the native CAS proxy harness.
 ---
 
-The CAS Gate 0A native harness cannot be physically validated from the normal Replit workspace unless a hardware-run workstation is attached or exposed. Installing `adb`, Gradle, and JDK 17 is not sufficient: the workspace may still lack the Android API 35 SDK and an authorized Pixel ADB endpoint.
+The approved physical Gate 0A target is a stock Google Pixel 11 on API 35 or newer. The Pixel 8a/API 35 environment remains a pinned emulator baseline and can produce simulation evidence only. Physical validation still requires the separate Windows hardware-run workstation and an authorized Pixel ADB endpoint.
 
-**Why:** Gate 0A acceptance depends on physical launch, task, lock-screen, reboot, and observer evidence; emulator or source inspection cannot substitute for the pinned stock Pixel.
+**Why:** The project owner selected Pixel 11 as the durable field target. Gate 0A acceptance depends on its physical launch, task, lock-screen, reboot, and observer evidence; the older emulator cannot substitute for that run.
 
-**How to apply:** Before attempting a Gate 0A run, confirm both an API 35 SDK and a non-empty `adb devices -l` result for the managed Pixel. If either is absent, record a blocked/no-go outcome and do not create synthetic reports or timing samples.
+**How to apply:** Require an exact Pixel 11 model match for physical evidence, record its actual Android build/API, and require API 35 or newer. Keep Pixel 8a/API 35 checks exact for emulator evidence. If ADB identity or SDK prerequisites fail, record blocked/no-go.

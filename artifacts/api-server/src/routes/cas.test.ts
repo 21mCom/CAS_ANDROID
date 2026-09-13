@@ -78,7 +78,7 @@ beforeEach(async () => {
 });
 
 const validGate0aReport = {
-  schema: "cas-gate0a-report-v1",
+  schema: "cas-gate0a-report-v2",
   reportType: "gate0a-run",
   runPurpose: "Disposable proxy-launch hardware measurement only",
   evidenceClass: "physical-device-observation",
@@ -88,12 +88,12 @@ const validGate0aReport = {
   gate0aPassed: false,
   physicalReadinessProof: "requires-managed-Pixel-observer-review",
   target: {
-    model: "Pixel 8a",
+    model: "Pixel 11",
     serial: "ABC123",
-    device: "akita",
-    androidVersion: "15",
-    build: "AP3A.240905.015",
-    androidApi: 35,
+    device: "pixel11",
+    androidVersion: "17",
+    build: "BP1A.260805.001",
+    androidApi: 37,
     stockAndroid: true,
     isEmulator: false,
     usbState: "device",
@@ -106,8 +106,8 @@ const validGate0aReport = {
       name: "Authorized target identity",
       status: "PASS",
       required: true,
-      observed: "Pixel 8a / akita / ABC123",
-      expected: "Approved Pixel 8a target in adb device state",
+      observed: "Pixel 11 / pixel11 / ABC123",
+      expected: "Approved Pixel 11 target in adb device state",
       nextSteps: [],
     }],
     unresolvedWarnings: [],
@@ -191,8 +191,12 @@ test("Gate 0A import keeps emulator evidence distinct from physical evidence", a
     physicalReadinessProof: "simulated-emulator-not-proof",
     target: {
       ...validGate0aReport.target,
+      model: "Pixel 8a",
       serial: "emulator-5554",
       device: "generic_x86_64",
+      androidVersion: "15",
+      build: "AP3A.240905.015",
+      androidApi: 35,
       isEmulator: true,
     },
   };
@@ -239,7 +243,22 @@ test("Gate 0A import rejects malformed reports", async () => {
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v1 report" });
+  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
+});
+
+test("Gate 0A import rejects physical evidence from an unapproved Pixel model", async () => {
+  const wrongModel = {
+    ...validGate0aReport,
+    target: { ...validGate0aReport.target, model: "Pixel 8a", androidApi: 35 },
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(wrongModel),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
 });
 
 test("Gate 0A import rejects reports that cross the safety boundary", async () => {
@@ -254,7 +273,7 @@ test("Gate 0A import rejects reports that cross the safety boundary", async () =
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v1 report" });
+  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
 });
 
 test("Gate 0A import rejects unsafe JSON keys", async () => {

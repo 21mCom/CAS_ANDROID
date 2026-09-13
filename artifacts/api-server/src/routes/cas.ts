@@ -54,7 +54,7 @@ const gate0aPreflightCheckSchema = z.object({
 }).strict();
 
 export const gate0aReportSchema = z.object({
-  schema: z.literal("cas-gate0a-report-v1"),
+  schema: z.literal("cas-gate0a-report-v2"),
   reportType: z.literal("gate0a-run"),
   runPurpose: z.literal("Disposable proxy-launch hardware measurement only"),
   evidenceClass: z.enum(["physical-device-observation", "simulated-emulator", "sample"]),
@@ -66,12 +66,12 @@ export const gate0aReportSchema = z.object({
   gate0aPassed: z.literal(false),
   physicalReadinessProof: z.enum(["requires-managed-Pixel-observer-review", "simulated-emulator-not-proof", "sample-not-proof"]),
   target: z.object({
-    model: z.literal("Pixel 8a"),
+    model: z.string().min(1).max(128),
     serial: z.string().min(1).max(255),
     device: z.string().min(1).max(255),
     androidVersion: z.string().min(1).max(128),
     build: z.string().min(1).max(255),
-    androidApi: z.literal(35),
+    androidApi: z.number().int().min(35).max(100),
     stockAndroid: z.literal(true),
     isEmulator: z.boolean(),
     usbState: z.enum(["device", "not-observed"]),
@@ -166,6 +166,22 @@ export const gate0aReportSchema = z.object({
       message: "A runnable hardware or emulator report must include authorized adb state",
     });
   }
+  if (report.evidenceClass === "simulated-emulator" &&
+      (report.target.model !== "Pixel 8a" || report.target.androidApi !== 35)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["target"],
+      message: "Emulator evidence must come from the pinned Pixel 8a/API 35 baseline",
+    });
+  }
+  if (report.evidenceClass === "physical-device-observation" &&
+      report.target.model !== "Pixel 11") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["target", "model"],
+      message: "Physical evidence must come from the approved Pixel 11 target",
+    });
+  }
 });
 
 type Gate0aReport = z.infer<typeof gate0aReportSchema>;
@@ -198,8 +214,9 @@ function formatGate0aNotes(report: Gate0aReport): string {
     });
 
   return [
-    "Imported Gate 0A report (cas-gate0a-report-v1).",
+    `Imported Gate 0A report (${report.schema}).`,
     `Evidence class: ${report.evidenceClass}. Run status: ${report.status}.`,
+    `Target: ${report.target.model}; Android ${report.target.androidVersion}; API ${report.target.androidApi}; build ${report.target.build}.`,
     report.evidenceClass === "physical-device-observation"
       ? "This import is hardware evidence for review only; it is recorded INCONCLUSIVE and never establishes Pass or production readiness."
       : report.evidenceClass === "simulated-emulator"
@@ -224,7 +241,7 @@ router.post("/cas/gate0a/import", async (req, res, next) => {
     }
     const parsed = gate0aReportSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: "Invalid cas-gate0a-report-v1 report" });
+      return res.status(400).json({ error: "Invalid cas-gate0a-report-v2 report" });
     }
     const report = parsed.data;
     if (report.status === "blocked" || report.preflight.status === "BLOCKED") {

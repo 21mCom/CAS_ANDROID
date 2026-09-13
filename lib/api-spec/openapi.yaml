@@ -175,15 +175,20 @@ components:
       additionalProperties: false
       required: [schema, runPurpose, target, safety, coverPackage, deviceOwner, permissions, shortcut, tasks, recents, back, observer, events]
       properties:
-        schema: { type: string, const: cas-gate0a-report-v1 }
+        schema: { type: string, const: cas-gate0a-report-v2 }
         runPurpose: { type: string, const: Disposable proxy-launch hardware measurement only }
         target:
           type: object
           additionalProperties: false
           required: [model, androidApi, stockAndroid]
           properties:
-            model: { type: string, const: Pixel 8a }
-            androidApi: { type: integer, const: 35 }
+            model:
+              type: string
+              description: Pixel 11 for physical evidence; Pixel 8a for the pinned API 35 emulator baseline.
+            androidApi:
+              type: number
+              minimum: 35
+              description: Integer Android API level; integer semantics are enforced by the server validator.
             stockAndroid: { type: boolean, const: true }
         safety:
           type: object
@@ -272,7 +277,7 @@ components:
       required: [accepted, schema, observation, summary]
       properties:
         accepted: { type: boolean, const: true }
-        schema: { type: string, const: cas-gate0a-report-v1 }
+        schema: { type: string, const: cas-gate0a-report-v2 }
         observation:
           type: object
           required: [result, notes, recordedAt]

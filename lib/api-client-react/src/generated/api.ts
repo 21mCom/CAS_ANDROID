@@ -43,6 +43,7 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
+
 const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKey: K } => {
   const result = { queryKey } as T & { queryKey: K };
   for (const key of Object.keys(query)) {
@@ -59,6 +60,8 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
 };
 
 export const getHealthCheckUrl = () => {
+
+
 
 
   return `/api/healthz`
@@ -80,6 +83,9 @@ export const healthCheck = async ( options?: Parameters<typeof customFetch>[1]):
 );}
 
 
+
+
+
 export const getHealthCheckQueryKey = () => {
     return [
     `/api/healthz`
@@ -95,7 +101,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getHealthCheckQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({ signal }) => healthCheck({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData> & { queryKey: QueryKey }
@@ -122,7 +132,14 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 }
 
 
+
+
+
+
+
 export const getGetCasStateUrl = () => {
+
+
 
 
   return `/api/cas/state`
@@ -143,6 +160,9 @@ export const getCasState = async ( options?: Parameters<typeof customFetch>[1]):
 );}
 
 
+
+
+
 export const getGetCasStateQueryKey = () => {
     return [
     `/api/cas/state`
@@ -158,7 +178,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getGetCasStateQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getCasState>>> = ({ signal }) => getCasState({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCasState>>, TError, TData> & { queryKey: QueryKey }
@@ -185,7 +209,14 @@ export function useGetCasState<TData = Awaited<ReturnType<typeof getCasState>>, 
 }
 
 
+
+
+
+
+
 export const getRecordCasTestIncidentUrl = () => {
+
+
 
 
   return `/api/cas/incidents/test`
@@ -203,6 +234,9 @@ export const recordCasTestIncident = async ( options?: Parameters<typeof customF
 );}
 
 
+
+
+
 export const getRecordCasTestIncidentMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordCasTestIncident>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof recordCasTestIncident>>, TError,void, TContext> => {
@@ -215,11 +249,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordCasTestIncident>>, void> = () => {
 
 
           return  recordCasTestIncident(requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -242,6 +282,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getImportCasGate0aReportUrl = () => {
 
 
+
+
   return `/api/cas/gate0a/import`
 }
 
@@ -260,6 +302,9 @@ export const importCasGate0aReport = async (gate0aReport: Gate0aReport, options?
 );}
 
 
+
+
+
 export const getImportCasGate0aReportMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importCasGate0aReport>>, TError,{data: BodyType<Gate0aReport>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof importCasGate0aReport>>, TError,{data: BodyType<Gate0aReport>}, TContext> => {
@@ -272,11 +317,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof importCasGate0aReport>>, {data: BodyType<Gate0aReport>}> = (props) => {
           const {data} = props ?? {};
 
           return  importCasGate0aReport(data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -302,6 +353,8 @@ export const useImportCasGate0aReport = <TError = ErrorType<void>,
 export const getBootstrapCasReadinessUrl = () => {
 
 
+
+
   return `/api/cas/bootstrap`
 }
 
@@ -317,6 +370,9 @@ export const bootstrapCasReadiness = async (bootstrapCasReadinessBody: Bootstrap
 );}
 
 
+
+
+
 export const getBootstrapCasReadinessMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bootstrapCasReadiness>>, TError,{data: BodyType<BootstrapCasReadinessBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof bootstrapCasReadiness>>, TError,{data: BodyType<BootstrapCasReadinessBody>}, TContext> => {
@@ -329,11 +385,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof bootstrapCasReadiness>>, {data: BodyType<BootstrapCasReadinessBody>}> = (props) => {
           const {data} = props ?? {};
 
           return  bootstrapCasReadiness(data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -356,6 +418,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getTriggerCasIncidentUrl = () => {
 
 
+
+
   return `/api/cas/incidents/trigger`
 }
 
@@ -371,6 +435,9 @@ export const triggerCasIncident = async ( options?: Parameters<typeof customFetc
 );}
 
 
+
+
+
 export const getTriggerCasIncidentMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerCasIncident>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof triggerCasIncident>>, TError,void, TContext> => {
@@ -383,11 +450,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerCasIncident>>, void> = () => {
 
 
           return  triggerCasIncident(requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -410,9 +483,71 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getProcessCasOutboxUrl = () => {
 
 
+
+
   return `/api/cas/outbox/process`
 }
+
+export const processCasOutbox = async (processCasOutboxBody?: ProcessCasOutboxBody, options?: Parameters<typeof customFetch>[1]): Promise<ProcessCasOutbox200> => {
+
+  return customFetch<ProcessCasOutbox200>(getProcessCasOutboxUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(processCasOutboxBody)
+  }
+);}
+
+
+
+
+
+export const getProcessCasOutboxMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext> => {
+
+const mutationKey = ['processCasOutbox'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof processCasOutbox>>, {data?: BodyType<ProcessCasOutboxBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  processCasOutbox(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProcessCasOutboxMutationResult = NonNullable<Awaited<ReturnType<typeof processCasOutbox>>>
+    export type ProcessCasOutboxMutationBody = BodyType<ProcessCasOutboxBody> | undefined
+    export type ProcessCasOutboxMutationError = ErrorType<unknown>
+
+    export const useProcessCasOutbox = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof processCasOutbox>>,
+        TError,
+        {data?: BodyType<ProcessCasOutboxBody>},
+        TContext
+      > => {
+      return useMutation(getProcessCasOutboxMutationOptions(options));
+    }
+
 export const getAcknowledgeCasIncidentUrl = (id: string,) => {
+
+
 
 
   return `/api/cas/incidents/${id}/ack`
@@ -430,6 +565,9 @@ export const acknowledgeCasIncident = async (id: string, options?: Parameters<ty
 );}
 
 
+
+
+
 export const getAcknowledgeCasIncidentMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acknowledgeCasIncident>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof acknowledgeCasIncident>>, TError,{id: string}, TContext> => {
@@ -442,11 +580,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof acknowledgeCasIncident>>, {id: string}> = (props) => {
           const {id} = props ?? {};
 
           return  acknowledgeCasIncident(id,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -469,6 +613,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getResolveCasIncidentUrl = (id: string,) => {
 
 
+
+
   return `/api/cas/incidents/${id}/resolve`
 }
 
@@ -484,6 +630,9 @@ export const resolveCasIncident = async (id: string, options?: Parameters<typeof
 );}
 
 
+
+
+
 export const getResolveCasIncidentMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveCasIncident>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof resolveCasIncident>>, TError,{id: string}, TContext> => {
@@ -496,11 +645,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveCasIncident>>, {id: string}> = (props) => {
           const {id} = props ?? {};
 
           return  resolveCasIncident(id,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -523,6 +678,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getUpdateCasSetupUrl = (id: string,) => {
 
 
+
+
   return `/api/cas/setup/${id}`
 }
 
@@ -539,6 +696,9 @@ export const updateCasSetup = async (id: string,
 );}
 
 
+
+
+
 export const getUpdateCasSetupMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCasSetup>>, TError,{id: string;data: BodyType<UpdateCasSetupBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateCasSetup>>, TError,{id: string;data: BodyType<UpdateCasSetupBody>}, TContext> => {
@@ -551,11 +711,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCasSetup>>, {id: string;data: BodyType<UpdateCasSetupBody>}> = (props) => {
           const {id,data} = props ?? {};
 
           return  updateCasSetup(id,data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -578,6 +744,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 export const getUpdateCasGateUrl = (id: string,) => {
 
 
+
+
   return `/api/cas/gates/${id}`
 }
 
@@ -594,6 +762,9 @@ export const updateCasGate = async (id: string,
 );}
 
 
+
+
+
 export const getUpdateCasGateMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCasGate>>, TError,{id: string;data: BodyType<UpdateCasGateBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateCasGate>>, TError,{id: string;data: BodyType<UpdateCasGateBody>}, TContext> => {
@@ -606,11 +777,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCasGate>>, {id: string;data: BodyType<UpdateCasGateBody>}> = (props) => {
           const {id,data} = props ?? {};
 
           return  updateCasGate(id,data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -629,53 +806,3 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
       return useMutation(getUpdateCasGateMutationOptions(options));
     }
-
-
-export const processCasOutbox = async (processCasOutboxBody?: ProcessCasOutboxBody, options?: Parameters<typeof customFetch>[1]): Promise<ProcessCasOutbox200> => {
-
-  return customFetch<ProcessCasOutbox200>(getProcessCasOutboxUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(processCasOutboxBody)
-  }
-);}
-
-    export type ProcessCasOutboxMutationBody = BodyType<ProcessCasOutboxBody> | undefined
-
-    export type ProcessCasOutboxMutationResult = NonNullable<Awaited<ReturnType<typeof processCasOutbox>>>
-
-    export const useProcessCasOutbox = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof processCasOutbox>>,
-        TError,
-        {data?: BodyType<ProcessCasOutboxBody>},
-        TContext
-      > => {
-      return useMutation(getProcessCasOutboxMutationOptions(options));
-    }
-
-    export type ProcessCasOutboxMutationError = ErrorType<unknown>
-
-export const getProcessCasOutboxMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof processCasOutbox>>, TError,{data?: BodyType<ProcessCasOutboxBody>}, TContext> => {
-
-const mutationKey = ['processCasOutbox'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof processCasOutbox>>, {data?: BodyType<ProcessCasOutboxBody>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  processCasOutbox(data,requestOptions)
-        }
-
-
-  return  { mutationFn, ...mutationOptions }}

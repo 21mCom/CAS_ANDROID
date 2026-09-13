@@ -48,7 +48,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Reference target: Pixel 8a · stock Android · API 35\n${environmentLabel()}\nLocal-only test. No SMS, network, location, evidence capture, or production incident behavior."
+            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nLocal-only test. No SMS, network, location, evidence capture, or production incident behavior."
             textSize = 13f
         })
         root.addView(coverInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
@@ -145,7 +145,7 @@ class MainActivity : Activity() {
             "android.permission.INTERNET"
         )
         val report = JSONObject()
-            .put("schema", "cas-gate0a-report-v1")
+            .put("schema", "cas-gate0a-report-v2")
             .put("reportType", "gate0a-run")
             .put("runPurpose", "Disposable proxy-launch hardware measurement only")
             .put("evidenceClass", if (isEmulator()) "simulated-emulator" else "physical-device-observation")
@@ -155,12 +155,12 @@ class MainActivity : Activity() {
             .put("gate0aPassed", false)
             .put("physicalReadinessProof", if (isEmulator()) "simulated-emulator-not-proof" else "requires-managed-Pixel-observer-review")
             .put("target", JSONObject()
-                .put("model", "Pixel 8a")
+                .put("model", if (isEmulator()) "Pixel 8a" else Build.MODEL)
                 .put("serial", Build.SERIAL.ifBlank { "unknown" })
                 .put("device", Build.DEVICE)
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("build", Build.ID)
-                .put("androidApi", 35)
+                .put("androidApi", Build.VERSION.SDK_INT)
                 .put("stockAndroid", true)
                 .put("isEmulator", isEmulator())
                 .put("usbState", "not-observed")

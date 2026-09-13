@@ -3,7 +3,7 @@
     Read-only Windows preflight for the CAS Pixel Gate 0A workstation.
 
 .DESCRIPTION
-    Checks the local Java, Android SDK, ADB, and Gradle prerequisites and writes
+    Checks the local Java, Android SDK, ADB, Gradle, and Git Bash prerequisites and writes
     JSON and Markdown results that can be attached to a CAS field-run record.
     The default mode does not install software, change device state, or send
     messages. -PrepareSdk can install missing SDK packages only after an
@@ -477,6 +477,38 @@ if ($platform35Path -and (Test-Path $platform35Path -PathType Leaf)) {
         -Observed 'Android API 35 was not found in the selected SDK.' `
         -Expected 'platforms\android-35\android.jar exists.' `
         -NextSteps @('Install Android SDK Platform 35, then rerun the preflight.')
+}
+
+$bashCandidates = @(
+    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+    (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe')
+)
+if (${env:ProgramFiles(x86)}) {
+    $bashCandidates += Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe'
+}
+$bashPath = $bashCandidates |
+    Where-Object { $_ -and (Test-Path $_ -PathType Leaf) } |
+    Select-Object -First 1
+if (-not $bashPath) {
+    $bashPath = Find-CommandPath 'bash.exe'
+}
+if ($bashPath) {
+    Add-Check `
+        -Id 'git-bash.command' `
+        -Name 'Git Bash command' `
+        -Status 'PASS' `
+        -Required $true `
+        -Observed $bashPath `
+        -Expected 'Git Bash is available for the guarded Pixel 11 Gate 0A runner.'
+} else {
+    Add-Check `
+        -Id 'git-bash.command' `
+        -Name 'Git Bash command' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed 'Git Bash bash.exe was not found.' `
+        -Expected 'Git Bash is available for the guarded Pixel 11 Gate 0A runner.' `
+        -NextSteps @('Install approved Git for Windows, close and reopen this window, then rerun the preflight.')
 }
 
 $gradlePath = Find-CommandPath 'gradle.exe'

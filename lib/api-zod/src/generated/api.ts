@@ -38,6 +38,8 @@ export const RecordCasTestIncidentResponse = zod.object({
 /**
  * @summary Validate and import a native Gate 0A report
  */
+export const importCasGate0aReportBodyTargetAndroidApiMin = 35;
+
 export const importCasGate0aReportBodyCoverPackageMax = 255;
 
 export const importCasGate0aReportBodyTasksItemTaskIdMin = 0;
@@ -63,12 +65,13 @@ export const importCasGate0aReportBodyEventsItemCoverPackageMax = 255;
 export const importCasGate0aReportBodyEventsMax = 10000;
 
 
+
 export const ImportCasGate0aReportBody = zod.object({
-  "schema": zod.literal("cas-gate0a-report-v1"),
+  "schema": zod.literal("cas-gate0a-report-v2"),
   "runPurpose": zod.literal("Disposable proxy-launch hardware measurement only"),
   "target": zod.object({
-  "model": zod.literal("Pixel 8a"),
-  "androidApi": zod.literal(35),
+  "model": zod.string().describe('Pixel 11 for physical evidence; Pixel 8a for the pinned API 35 emulator baseline.'),
+  "androidApi": zod.number().min(importCasGate0aReportBodyTargetAndroidApiMin).describe('Integer Android API level; integer semantics are enforced by the server validator.'),
   "stockAndroid": zod.literal(true)
 }),
   "safety": zod.object({
@@ -125,7 +128,7 @@ export const ImportCasGate0aReportBody = zod.object({
 
 export const ImportCasGate0aReportResponse = zod.object({
   "accepted": zod.literal(true),
-  "schema": zod.literal("cas-gate0a-report-v1"),
+  "schema": zod.literal("cas-gate0a-report-v2"),
   "observation": zod.object({
   "result": zod.literal("inconclusive"),
   "notes": zod.string(),
@@ -152,7 +155,19 @@ export const TriggerCasIncidentResponse = zod.object({
   "status": zod.string().optional()
 })
 
+
 export const processCasOutboxBodyMaxItemsMax = 100;
+
+
+
+export const ProcessCasOutboxBody = zod.object({
+  "workerId": zod.string().optional(),
+  "maxItems": zod.number().int().min(1).max(processCasOutboxBodyMaxItemsMax).optional()
+})
+
+export const ProcessCasOutboxResponse = zod.record(zod.string(), zod.unknown())
+
+
 export const AcknowledgeCasIncidentParams = zod.object({
   "id": zod.coerce.string()
 })
@@ -187,11 +202,3 @@ export const UpdateCasGateBody = zod.object({
 })
 
 export const UpdateCasGateResponse = zod.unknown()
-
-
-export const ProcessCasOutboxBody = zod.object({
-  "workerId": zod.string().optional(),
-  "maxItems": zod.number().int().min(1).max(processCasOutboxBodyMaxItemsMax).optional()
-})
-
-export const ProcessCasOutboxResponse = zod.record(zod.string(), zod.unknown())

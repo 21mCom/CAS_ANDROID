@@ -76,7 +76,7 @@ const html = `<!doctype html>
   <div class="masthead"><div class="brand">CovertAlert / Gate 0A</div><div class="page-number">1 / 6</div></div>
   <div class="eyebrow">Operator guide · supervised physical run</div>
   <h1>Prepare the Pixel.<br>Measure the handoff.</h1>
-  <p class="intro">Use this guide with the technical helper and an ordinary observer. It covers the approved Google Pixel 8a, the disposable debug APK, and the workstation timing script. It does not authorize a Gate 0A pass.</p>
+  <p class="intro">Use this guide with the technical helper and an ordinary observer. It covers the approved Google Pixel 11 physical target, the disposable debug APK, and the workstation timing script. The Pixel 8a/API 35 emulator remains simulation-only evidence.</p>
   <div class="gold-rule"></div>
 
   <div class="box danger avoid">
@@ -93,15 +93,15 @@ const html = `<!doctype html>
       <div class="field"><span class="label">Run name or ID</span></div>
       <div class="field"><span class="label">Operator</span></div>
       <div class="field"><span class="label">Observer</span></div>
-      <div class="field"><span class="label">Required device</span><br>Google Pixel 8a</div>
-      <div class="field"><span class="label">Required platform</span><br>Stock Android · API 35</div>
+      <div class="field"><span class="label">Required device</span><br>Google Pixel 11</div>
+      <div class="field"><span class="label">Required platform</span><br>Stock Android · API 35 or newer</div>
     </div>
   </div>
 
   <div class="section avoid">
     <div class="section-heading"><span class="number">02</span><h2>Physical-run no-go conditions</h2></div>
     <ul class="checklist tight">
-      <li>The device is not the approved managed Google Pixel 8a, stock Android, API 35.</li>
+      <li>The physical device is not the approved managed Google Pixel 11 on stock Android API 35 or newer.</li>
       <li>ADB shows no device, more than one device, or a target marked <strong>unauthorized</strong> or <strong>offline</strong>.</li>
       <li>Only an emulator is available. Emulator output is not physical validation.</li>
       <li>The device owner cannot confirm the approved managed-device or device-owner procedure.</li>
@@ -144,7 +144,7 @@ Get-ChildItem "$Sdk\build-tools" | Sort-Object Name | Select-Object -Last 1</pre
 adb shell getprop ro.product.model
 adb shell getprop ro.build.version.sdk
 adb shell getprop ro.build.version.release</pre>
-    <p>In <code>adb devices -l</code>, there must be exactly one target row ending in <strong>device</strong>. On the phone, accept the USB-debugging RSA prompt only when the helper confirms this is the approved Pixel. The model check must read <strong>Pixel 8a</strong>; the SDK check must read <strong>35</strong>.</p>
+    <p>In <code>adb devices -l</code>, there must be exactly one target row ending in <strong>device</strong>. On the phone, accept the USB-debugging RSA prompt only when the helper confirms this is the approved Pixel. The model check must read <strong>Pixel 11</strong>. Record the exact SDK value; it must be <strong>35 or newer</strong>.</p>
     <div class="box warning"><strong>Do not continue on “unauthorized”, “offline”, a second target, or a different model/API.</strong> Stop and contact the device owner. Never use <code>adb -s</code> to hide an extra target or bypass the no-go decision.</div>
   </div>
 
@@ -195,7 +195,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk</pre>
 
   <div class="section avoid">
     <div class="section-heading"><span class="number">08</span><h2>Prepare the supported measurements</h2></div>
-    <p>Keep the technical helper beside the laptop. The observer watches the Pixel and writes what actually happens. The helper must explicitly supervise the script’s Enter prompt, power-key lock/unlock steps, and reboot. Do not run the reboot step unattended.</p>
+    <p>Keep the technical helper beside the laptop. First run a one-repeat qualification. Review it before running the full 200-repeat measurement. The helper must explicitly supervise the script’s prompts, power-key lock/unlock steps, and reboot.</p>
     <div class="two-col">
       <div class="box green"><p class="label">Device-side checks</p><ul class="checklist tight"><li>Cold / first launch</li><li>Warm launch</li><li>Locked-screen launch</li><li>Post-reboot launch</li></ul></div>
       <div class="box green"><p class="label">Observer checks</p><ul class="checklist tight"><li>Back, Home, and Recents</li><li>Settings → App info</li><li>Notifications and Quick Settings</li><li>Extra splash, frame, wrong task, or dead end</li></ul></div>
@@ -208,9 +208,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk</pre>
 <section class="page">
   <div class="masthead"><div class="brand">CovertAlert / Gate 0A</div><div class="page-number">5 / 6</div></div>
   <div class="section-heading"><span class="number">09</span><h2>Run the host timing script</h2></div>
-  <p>From the package directory on the workstation, give the log a run-specific name. The script waits for ADB, verifies the package, launches the local proxy with <code>am start -W</code>, and records host-side start/end/elapsed markers.</p>
-  <pre>cd artifacts/covert-alert-system/android-test-package
-bash scripts/measure-gate0a.sh gate0a-&lt;RUN-ID&gt;.log</pre>
+  <p>From the package directory, run the qualification command first. It builds, installs, validates the Pixel 11, and performs one repeat. Review its generated <code>report.md</code> before starting the full run.</p>
+  <pre>cd android-test-package
+bash scripts/measure-gate0a.sh --target physical --build --install \
+  --serial &lt;SERIAL&gt; --confirm-device "Pixel 11" \
+  --confirm-destructive --repeat 1
+
+# Only after the qualification report is acceptable:
+bash scripts/measure-gate0a.sh --target physical \
+  --serial &lt;SERIAL&gt; --confirm-device "Pixel 11" \
+  --confirm-destructive --repeat 200</pre>
   <div class="box helper avoid">
     <h3>What the helper must supervise</h3>
     <ol>
@@ -218,10 +225,10 @@ bash scripts/measure-gate0a.sh gate0a-&lt;RUN-ID&gt;.log</pre>
       <li>When it prints “Unlock the device if needed, then press Enter for locked-screen sample,” make the agreed device state ready and press Enter only with the helper present.</li>
       <li>The script sends a power key event, runs the <strong>locked</strong> sample, then sends another power key event.</li>
       <li>The script prints “Rebooting device for the post-reboot sample,” runs <code>adb reboot</code>, waits for <code>sys.boot_completed=1</code>, and runs <strong>after-reboot</strong>. The helper must supervise this reboot and wait.</li>
-      <li>At the end, confirm the host log is saved as <code>gate0a-&lt;RUN-ID&gt;.log</code> in the package directory, unless an explicit path was supplied.</li>
+      <li>At the end, the script prints its timestamped <code>gate0a-results</code> directory. Keep the entire directory; do not copy only <code>host.log</code>.</li>
     </ol>
   </div>
-  <div class="box warning avoid"><strong>Important:</strong> this script does not perform an automated 200-repeat run. Any repeat-launch sample required by the handoff is a supervised physical repetition using the pinned shortcut and the approved repeat procedure; record the count and first failure in the notes. A host log, emulator run, or local timing value never substitutes for physical observation.</div>
+  <div class="box warning avoid"><strong>Important:</strong> the current harness performs the requested repeat series and records each attempt. The operator and observer must still supervise the physical phone. A generated report, emulator run, or host timing value never substitutes for physical observation.</div>
 
   <div class="section avoid">
     <div class="section-heading"><span class="number">10</span><h2>Record the five launch rows</h2></div>
@@ -240,14 +247,14 @@ bash scripts/measure-gate0a.sh gate0a-&lt;RUN-ID&gt;.log</pre>
   <div class="section-heading"><span class="number">11</span><h2>Copy the report and preserve the handoff</h2></div>
   <ol>
     <li>On the Pixel’s <strong>CAS Pixel Gate 0A</strong> screen, press <strong>Copy JSON report</strong>. The app copies the current device-local report to the Android clipboard.</li>
-    <li>Using the approved workstation handoff, paste the clipboard text into <code>gate0a-&lt;RUN-ID&gt;-report.json</code>. Keep the file as JSON; do not edit or trim its contents.</li>
-    <li>Keep <code>gate0a-&lt;RUN-ID&gt;.log</code> from the workstation beside the JSON. Preserve the printed guide, repeat count, observer notes, and any NO-GO reason together.</li>
-    <li>In the CAS console, open <strong>Feasibility gates</strong>. In <strong>Import Gate 0A report</strong>, choose the JSON file and press <strong>Validate &amp; import report</strong>.</li>
+    <li>Prefer the workstation-generated <code>gate0a-results/.../report.json</code>. The in-app clipboard report is a secondary device-local record.</li>
+    <li>Keep the entire result directory, matching Windows preflight JSON/Markdown, printed guide, observer notes, and any NO-GO reason together.</li>
+    <li>In the CAS console, open <strong>Feasibility gates</strong>. Choose the workstation-generated <code>report.json</code> and press <strong>Validate &amp; import report</strong>.</li>
   </ol>
 
   <div class="box green avoid">
     <h3>Report contract to check before handoff</h3>
-    <p class="small">The report copied from the app is <code>cas-gate0a-report-v1</code>. It contains the target (Pixel 8a, API 35, stock Android), local-only safety flags, cover package, device-owner report, permissions, shortcut state, tasks, Recents, Back, observer review flags, and device-local <code>events</code> with <code>wallClockMs</code> and <code>elapsedRealtimeMs</code>.</p>
+    <p class="small">The import file is <code>cas-gate0a-report-v2</code>. A physical report must identify Pixel 11 on stock Android API 35 or newer. The pinned Pixel 8a/API 35 emulator is accepted only as <code>simulated-emulator</code> evidence.</p>
   </div>
 
   <div class="box warning avoid">

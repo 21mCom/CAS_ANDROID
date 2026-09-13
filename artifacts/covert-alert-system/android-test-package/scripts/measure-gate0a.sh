@@ -13,7 +13,9 @@ readonly PACKAGE_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 readonly PACKAGE="com.covertalert.pixeltest"
 readonly PROXY_ACTION="$PACKAGE.action.PROXY_TRIGGER"
 readonly PINNED_AVD="CAS_Pixel_8a_API_35"
-readonly EXPECTED_API="35"
+readonly EMULATOR_API="35"
+readonly PHYSICAL_MODEL="Pixel 11"
+readonly MIN_PHYSICAL_API="35"
 readonly DEFAULT_REPEAT_COUNT="200"
 
 TARGET="auto"
@@ -58,7 +60,7 @@ Build/install options:
 
 Device options:
   --serial SERIAL                 Select one authorized adb device.
-  --target auto|emulator|physical Require an emulator or Pixel 8a target.
+  --target auto|emulator|physical Require the pinned emulator or approved Pixel 11.
   --confirm-device TEXT           Confirm the displayed serial, model/device, or pinned AVD identity.
   --non-interactive               Do not wait for lock-screen/observer prompts; record those checks inconclusive.
 
@@ -76,7 +78,7 @@ Examples:
 
   # Build, install, and run on a confirmed test Pixel. Installation is explicit:
   scripts/measure-gate0a.sh --build --install --serial SERIAL \
-    --confirm-device "Pixel 8a/akita" --confirm-destructive
+    --confirm-device "Pixel 11" --confirm-destructive
 
 The run creates gate0a-results/<UTC timestamp>/ with report.json, events.ndjson,
 environment.tsv, screenshots/, logcat/, tasks/, launch/, and host.log.
@@ -311,18 +313,18 @@ identify_target() {
         [[ "$TARGET" != "physical" ]] || die "Physical target requested, but adb target reports an emulator."
         [[ "$DEVICE_AVD" == "$PINNED_AVD" ]] ||
             die "Unexpected emulator identity: expected $PINNED_AVD, found ${DEVICE_AVD:-unknown}"
-        [[ "$DEVICE_API" == "$EXPECTED_API" ]] ||
-            die "Unexpected emulator API: expected $EXPECTED_API, found ${DEVICE_API:-unknown}"
+        [[ "$DEVICE_API" == "$EMULATOR_API" ]] ||
+            die "Unexpected emulator API: expected $EMULATOR_API, found ${DEVICE_API:-unknown}"
         [[ ",$DEVICE_ABI," == *",x86_64,"* ]] ||
             die "Unexpected emulator ABI: expected x86_64, found ${DEVICE_ABI:-unknown}"
         log "Target is the pinned simulated emulator: $DEVICE_AVD"
     else
         EVIDENCE_CLASS="physical-device-observation"
         [[ "$TARGET" != "emulator" ]] || die "Emulator target requested, but adb target is not QEMU."
-        [[ "$DEVICE_API" == "$EXPECTED_API" ]] ||
-            die "Unexpected physical target API: expected $EXPECTED_API, found ${DEVICE_API:-unknown}"
-        [[ "$DEVICE_MODEL" == *"Pixel 8a"* || "$DEVICE_NAME" == "akita" ]] ||
-            die "Unexpected physical target: expected Pixel 8a/akita, found $DEVICE_MODEL/$DEVICE_NAME"
+        [[ "$DEVICE_API" =~ ^[0-9]+$ ]] && ((DEVICE_API >= MIN_PHYSICAL_API)) ||
+            die "Unexpected physical target API: expected API $MIN_PHYSICAL_API or newer, found ${DEVICE_API:-unknown}"
+        [[ "$DEVICE_MODEL" == "$PHYSICAL_MODEL" ]] ||
+            die "Unexpected physical target: expected $PHYSICAL_MODEL, found $DEVICE_MODEL/$DEVICE_NAME"
         log "Target is a physical Pixel observation: $DEVICE_MODEL/$DEVICE_NAME"
     fi
 
@@ -343,6 +345,8 @@ identify_target() {
     write_env "usbDebuggingEnabled" "true"
     write_env "targetMode" "$TARGET"
     write_env "pinnedAvd" "$PINNED_AVD"
+    write_env "approvedPhysicalModel" "$PHYSICAL_MODEL"
+    write_env "minimumPhysicalApi" "$MIN_PHYSICAL_API"
     write_env "repeatCount" "$REPEAT_COUNT"
     record_event "target-validation" "pass" "Expected Gate 0A target identified" \
         "evidenceClass=$EVIDENCE_CLASS" "model=$DEVICE_MODEL" "device=$DEVICE_NAME" \
@@ -351,7 +355,7 @@ identify_target() {
 
 confirm_identity() {
     local identity="$DEVICE_MODEL/$DEVICE_NAME"
-    local choices="$SERIAL $identity"
+    local choices="$SERIAL $DEVICE_MODEL $identity"
     [[ -n "$DEVICE_AVD" ]] && choices="$choices $DEVICE_AVD"
     log "Target identity: serial=$SERIAL model=$DEVICE_MODEL device=$DEVICE_NAME avd=${DEVICE_AVD:-none}"
     if [[ -n "$CONFIRM_DEVICE" ]]; then
@@ -708,14 +712,14 @@ preflight_checks = [
         "Approved device identity",
         "PASS" if env.get("serial") and env.get("model") and env.get("device") else "BLOCKED",
         f"serial={env.get('serial', 'unknown')}; model={env.get('model', 'unknown')}; device={env.get('device', 'unknown')}",
-        "The operator-confirmed target is the approved Pixel 8a / akita, or the pinned emulator.",
+        "The operator-confirmed target is the approved Pixel 11, or the pinned Pixel 8a/API 35 emulator.",
     ),
     check(
         "target.android",
         "Android version and build",
-        "PASS" if env.get("apiLevel") == "35" and env.get("androidRelease") and env.get("buildId") else "BLOCKED",
+        "PASS" if env.get("apiLevel") and int(env.get("apiLevel", "0")) >= 35 and env.get("androidRelease") and env.get("buildId") else "BLOCKED",
         f"API {env.get('apiLevel', 'unknown')}; Android {env.get('androidRelease', 'unknown')}; build {env.get('buildId', 'unknown')}",
-        "Android API 35 with a readable release and build identifier.",
+        "Pinned emulator API 35, or approved physical Pixel 11 on API 35 or newer, with a readable release and build identifier.",
     ),
     check(
         "package.identity",
@@ -747,8 +751,9 @@ logs = [artifacts["hostLog"], artifacts["events"], artifacts["environment"]]
 logs += [relative(path) for path in (root / "logcat").glob("*.txt")]
 raw_references = list(artifacts.values()) + screenshots
 finished_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+report_model = "Pixel 8a" if evidence_class == "simulated-emulator" else env.get("model", "unknown")
 report = {
-    "schema": "cas-gate0a-report-v1",
+    "schema": "cas-gate0a-report-v2",
     "reportType": "gate0a-run",
     "runPurpose": "Disposable proxy-launch hardware measurement only",
     "evidenceClass": evidence_class,
@@ -761,7 +766,7 @@ report = {
     "physicalReadinessProof": proof,
     "target": {
         "serial": env.get("serial", "unknown"),
-        "model": "Pixel 8a",
+        "model": report_model,
         "device": env.get("device", "unknown"),
         "androidVersion": env.get("androidRelease", "unknown"),
         "build": env.get("buildId", "unknown"),
@@ -847,7 +852,7 @@ markdown = [
     f"- **Preflight:** `{preflight_status}`",
     f"- **Started (UTC):** `{started_utc}`",
     f"- **Finished (UTC):** `{finished_utc}`",
-    f"- **Target:** `{env.get('serial', 'unknown')}` · Pixel 8a / {env.get('device', 'unknown')} · API {env.get('apiLevel', 'unknown')} · build {env.get('buildId', 'unknown')}",
+    f"- **Target:** `{env.get('serial', 'unknown')}` · {report_model} / {env.get('device', 'unknown')} · API {env.get('apiLevel', 'unknown')} · build {env.get('buildId', 'unknown')}",
     "",
     "## Preflight checks",
     "",

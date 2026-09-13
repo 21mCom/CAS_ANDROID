@@ -14,3 +14,17 @@ mtime_ms = 1789232863683
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/ddd6ea63-3919-4c15-86a2-ad936cdb1860/f1ed9c50-a5dc-40e1-b38a-51c64dd5cfda"
 storage_version_token = "1789232887570242"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "hOj1-y-OBCzLRWNiDddpT"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit"
+description = "Extract this ZIP on the Windows test machine, open START-HERE-WINDOWS.md, run the preflight, then use the guarded qualification and full Gate 0A wrappers."
+logical_id = "bffd3e6f-e7a9-44ff-9d0d-9a0efb2151e8"
+content_hash = "sha256:34945f8992a22c226fb7f0dd3e1a3bd5c7eb22486907975a4b242bf3c7913cfe"
+size = 129123
+mtime_ms = 1789282019171
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/bffd3e6f-e7a9-44ff-9d0d-9a0efb2151e8/c9486d6a-ea21-43a9-8c79-a6cdede1e199"
+storage_version_token = "1789282109944344"
+content_type = "application/octet-stream"

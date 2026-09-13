@@ -67,7 +67,7 @@ export default function Gates() {
        </section>
        <section className="fade-up fade-up-2 mt-5 border border-[#c7d7d2] bg-[#eef5f1] p-5 sm:p-6" data-testid="panel-gate0a-import">
          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div><div className="flex items-center gap-2"><FileJson size={17} className="text-[#236047]" /><SectionKicker>Native evidence import</SectionKicker></div><h2 className="mt-1 font-display text-xl font-extrabold text-[#203c49]">Import Gate 0A report</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[#43575a]">Load the JSON report from the disposable Pixel harness. The console validates <span className="font-mono-ui">cas-gate0a-report-v1</span>, checks target identity and preflight metadata, and maps it only to the Proxy Launch physical observation.</p></div>
+            <div><div className="flex items-center gap-2"><FileJson size={17} className="text-[#236047]" /><SectionKicker>Native evidence import</SectionKicker></div><h2 className="mt-1 font-display text-xl font-extrabold text-[#203c49]">Import Gate 0A report</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[#43575a]">Load the JSON report from the disposable Pixel harness. The console validates <span className="font-mono-ui">cas-gate0a-report-v2</span>, accepts the approved Pixel 11 physical target or pinned Pixel 8a/API 35 emulator, and maps the result only to the Proxy Launch observation.</p></div>
            <div className="border border-[#e8c880] bg-[#fff8e7] px-3 py-2 text-[11px] font-bold leading-4 text-[#765013]">Imported reports stay INCONCLUSIVE.<br />They never create a Pass or GO.</div>
          </div>
          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">

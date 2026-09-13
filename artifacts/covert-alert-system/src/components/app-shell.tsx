@@ -43,7 +43,7 @@ export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTe
           <div className="mb-4 flex items-center gap-2 text-[11px] text-[#aec0b8]"><span className="h-2 w-2 rounded-full bg-[#75b28f]" /> Local state enabled</div>
           <div className="border border-[#3a5962] bg-[#1b3440] p-3">
             <div className="flex items-center justify-between"><span className="font-mono-ui text-[9px] uppercase tracking-[0.13em] text-[#8ca69f]">Device under test</span><Activity size={13} className="text-[#e8a629]" /></div>
-            <p className="mt-2 font-display text-sm font-bold text-[#f2f0e6]">Google Pixel 8a</p>
+            <p className="mt-2 font-display text-sm font-bold text-[#f2f0e6]">Google Pixel 11</p>
             <p className="mt-1 font-mono-ui text-[10px] text-[#8ca69f]">stock Android · managed</p>
           </div>
           <p className="mt-5 font-mono-ui text-[9px] leading-4 text-[#79918b]">No live alerting. No remote actions.<br />Test records are stored by the local API.</p>

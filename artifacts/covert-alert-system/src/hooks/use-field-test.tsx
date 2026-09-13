@@ -104,7 +104,7 @@ const initialGates: Gate[] = [
     short: 'Cover app → alert surface',
     status: 'partial',
     criterion: 'A hardware shortcut or approved entry path must reach the alert surface on the stock Pixel without an observable dead end.',
-    evidence: ['Cover app opens from the launcher on Pixel 8a.', 'Shortcut path has not been exercised in this run.'],
+    evidence: ['Pixel 11 is the approved physical target; no physical launch has been recorded yet.', 'The Pixel 8a/API 35 emulator remains simulation-only evidence.'],
     nextAction: 'Exercise the chosen shortcut three times while the device is locked.',
     owner: 'Operator',
   },
@@ -172,7 +172,7 @@ const initialIncidents: Incident[] = [
 ];
 
 const initialFieldRun: FieldRun = {
-  deviceModel: 'Google Pixel 8a',
+  deviceModel: 'Google Pixel 11',
   androidVersion: 'Stock Android (enter version)',
   build: '',
   operator: '',

@@ -17,7 +17,7 @@ import type { Gate0aReportTarget } from './gate0aReportTarget';
 import type { Gate0aReportTasksItem } from './gate0aReportTasksItem';
 
 export interface Gate0aReport {
-  schema: 'cas-gate0a-report-v1';
+  schema: 'cas-gate0a-report-v2';
   runPurpose: 'Disposable proxy-launch hardware measurement only';
   target: Gate0aReportTarget;
   safety: Gate0aReportSafety;

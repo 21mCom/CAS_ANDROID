@@ -7,7 +7,12 @@
  */
 
 export type Gate0aReportTarget = {
-  model: 'Pixel 8a';
-  androidApi: 35;
+  /** Pixel 11 for physical evidence; Pixel 8a for the pinned API 35 emulator baseline. */
+  model: string;
+  /**
+     * Integer Android API level; integer semantics are enforced by the server validator.
+     * @minimum 35
+     */
+  androidApi: number;
   stockAndroid: true;
 };

@@ -31,8 +31,13 @@ export interface CasState {
 }
 
 export type Gate0aReportTarget = {
-  model: 'Pixel 8a';
-  androidApi: 35;
+  /** Pixel 11 for physical evidence; Pixel 8a for the pinned API 35 emulator baseline. */
+  model: string;
+  /**
+     * Integer Android API level; integer semantics are enforced by the server validator.
+     * @minimum 35
+     */
+  androidApi: number;
   stockAndroid: true;
 };
 
@@ -123,7 +128,7 @@ export type Gate0aReportEventsItem = {
 };
 
 export interface Gate0aReport {
-  schema: 'cas-gate0a-report-v1';
+  schema: 'cas-gate0a-report-v2';
   runPurpose: 'Disposable proxy-launch hardware measurement only';
   target: Gate0aReportTarget;
   safety: Gate0aReportSafety;
@@ -154,7 +159,7 @@ export type Gate0aImportResultSummary = {
 
 export interface Gate0aImportResult {
   accepted: true;
-  schema: 'cas-gate0a-report-v1';
+  schema: 'cas-gate0a-report-v2';
   observation: Gate0aImportResultObservation;
   summary: Gate0aImportResultSummary;
 }
@@ -176,6 +181,9 @@ export type ProcessCasOutboxBody = {
      */
   maxItems?: number;
 };
+
+export type ProcessCasOutbox200 = { [key: string]: unknown };
+
 export type UpdateCasSetupBody = {
   complete: boolean;
 };
@@ -183,6 +191,3 @@ export type UpdateCasSetupBody = {
 export type UpdateCasGateBody = {
   status: string;
 };
-
-
-export type ProcessCasOutbox200 = { [key: string]: unknown };
