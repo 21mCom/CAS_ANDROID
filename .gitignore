@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# CAS field-run attachments are generated on the Windows workstation.
+/artifacts/covert-alert-system/android-test-package/preflight-results/
