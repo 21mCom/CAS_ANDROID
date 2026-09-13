@@ -18,7 +18,9 @@ param(
 
     [string]$OutputDirectory = '',
 
-    [int]$BootTimeoutSeconds = 180
+    [int]$BootTimeoutSeconds = 180,
+
+    [switch]$StartupSmokeCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +33,10 @@ $scriptDirectory = if ($PSScriptRoot) {
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $scriptDirectory '..\emulator-results'
+}
+if ($StartupSmokeCheck) {
+    Write-Output ('CAS_STARTUP_OK pixel-emulator OutputDirectory={0}' -f [System.IO.Path]::GetFullPath($OutputDirectory))
+    exit 0
 }
 
 $script:AvdName = 'CAS_Pixel_8a_API_35'

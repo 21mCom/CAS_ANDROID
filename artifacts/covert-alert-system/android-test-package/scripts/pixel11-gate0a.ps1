@@ -2,7 +2,8 @@
 param(
     [ValidateSet('qualification', 'full')]
     [string]$Action = 'qualification',
-    [string]$Serial = ''
+    [string]$Serial = '',
+    [switch]$StartupSmokeCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,10 @@ $scriptDirectory = if ($PSScriptRoot) {
     (Get-Location).Path
 }
 $packageRoot = Split-Path -Parent $scriptDirectory
+if ($StartupSmokeCheck) {
+    Write-Output ('CAS_STARTUP_OK pixel11-gate0a PackageRoot={0}' -f [System.IO.Path]::GetFullPath($packageRoot))
+    exit 0
+}
 
 function Stop-Run {
     param([string]$Message)

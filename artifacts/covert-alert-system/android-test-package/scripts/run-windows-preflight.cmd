@@ -15,5 +15,5 @@ if "%EXIT_CODE%"=="0" (
   echo Preflight is blocked. Do not continue to the Gate 0A run until the blocking checks pass.
 )
 echo.
-pause
+if not defined CAS_NO_PAUSE pause
 exit /b %EXIT_CODE%

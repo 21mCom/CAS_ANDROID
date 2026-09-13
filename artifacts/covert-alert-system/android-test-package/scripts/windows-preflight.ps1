@@ -22,7 +22,9 @@ param(
 
     [switch]$PrepareSdk,
 
-    [switch]$ConfirmSdkInstall
+    [switch]$ConfirmSdkInstall,
+
+    [switch]$StartupSmokeCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +37,10 @@ $scriptDirectory = if ($PSScriptRoot) {
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $scriptDirectory '..\preflight-results'
+}
+if ($StartupSmokeCheck) {
+    Write-Output ('CAS_STARTUP_OK windows-preflight OutputDirectory={0}' -f [System.IO.Path]::GetFullPath($OutputDirectory))
+    exit 0
 }
 $script:Checks = @()
 $script:Actions = @()

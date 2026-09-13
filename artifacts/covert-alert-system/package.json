@@ -8,7 +8,9 @@
     "build": "PORT=\"${WEB_PORT:-${PORT:-5173}}\" BASE_PATH=\"${WEB_BASE_PATH:-${BASE_PATH:-/}}\" vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "generate:gate0a": "node scripts/generate-gate0a-guide-readable.mjs"
+    "generate:gate0a": "node scripts/generate-gate0a-guide-readable.mjs",
+    "test:windows-entrypoints": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-entrypoints.ps1",
+    "package:windows-test-kit": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-test-kit.ps1"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",
