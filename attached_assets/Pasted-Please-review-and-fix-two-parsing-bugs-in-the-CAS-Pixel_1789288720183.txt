@@ -1,0 +1,53 @@
+Please review and fix two parsing bugs in the CAS Pixel Gate 0A Windows preflight
+script (schema "cas-windows-preflight-v1", PowerShell 5.1 Desktop). Both cause
+false BLOCKED results on a correctly configured workstation. Reports from three
+runs on host CORDINATOR (20260913T074055Z, 082013Z, 083454Z) are attached.
+
+BUG 1 — Android SDK root is truncated to the drive letter
+- ANDROID_SDK_ROOT is set as a user environment variable to
+  C:\Users\CAS_DEV\AppData\Local\Android\Sdk (verified in the Windows
+  Environment Variables dialog; screenshot available).
+- Check "environment.android-sdk" reports PASS with observed "Using C".
+- Check "android.sdk-folder" then reports "SDK folder does not exist: C".
+- Every downstream SDK check (android.platform-tools, path.platform-tools,
+  android.build-tools, android.api-35) fails as a consequence, because they
+  search under "C" instead of the real path.
+- Likely cause: the value is being split on ':' (e.g. -split ':' or
+  .Split(':')) or otherwise truncated when the script resolves
+  ANDROID_SDK_ROOT / ANDROID_HOME. Please find where the SDK root is read and
+  make sure the full path survives, including the "C:" drive prefix. Also
+  confirm "Using ..." prints the resolved path, not a fragment, and that
+  path.platform-tools compares against the resolved path rather than the
+  truncated one.
+
+BUG 2 — Java version string not recognised
+- JAVA_HOME = C:\Users\CAS_DEV\AppData\Local\Programs\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+  (check environment.java-home PASSES; path.java PASSES).
+- Check "java.command" reports BLOCKED with observed:
+  'java.exe did not report a version. openjdk version "25.0.4.1" 2026-08-18 LTS'
+  i.e. java -version ran successfully and the output was captured, but the
+  version regex did not match.
+- Likely cause: the regex assumes a three-part version (e.g.
+  version "(\d+)\.(\d+)\.(\d+)") and fails on the four-part "25.0.4.1".
+  Please make the parser accept any number of dot-separated components and
+  compare only the major version against the JDK 17 minimum, e.g.
+  'version "(\d+)(?:\.\d+)*' and then [int]$Matches[1] -ge 17. Note that
+  java -version writes to stderr, so make sure the capture uses 2>&1 (it
+  appears to already, since the text was captured).
+
+ACCEPTANCE
+- On this workstation, with the environment variables above unchanged, a
+  fresh run should PASS: environment.android-sdk (showing the full path),
+  android.sdk-folder, android.platform-tools, path.platform-tools,
+  java.command, plus the already-passing checks (java-home, path.java,
+  adb.command, gradle.command, git-bash.command).
+- android.build-tools and android.api-35 should evaluate against the real SDK
+  folder and report accurately.
+- Add a unit/regression test for each bug: (a) an SDK root containing a drive
+  letter and colon is preserved intact; (b) Java version strings "17.0.2",
+  "21.0.4", "25.0.4.1" all parse and satisfy the >= 17 rule, while "11.0.20"
+  fails it.
+- Do not change the safety record behaviour: the preflight must still perform
+  no device actions and no SDK preparation.
+- Please also double-check that "Using C" style messages elsewhere in the
+  script (e.g. ANDROID_HOME fallback) do not share the same truncation logic.
