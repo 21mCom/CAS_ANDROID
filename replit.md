@@ -6,10 +6,18 @@ _Replace the heading above with the project's name, and this line with one sente
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
+- `pnpm run build` — typecheck + build all packages with the web console at `/` and the mockup Canvas at `/__mockup`
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+
+The workspace build supplies the preview defaults required by both Vite
+artifacts: `PORT=5173 BASE_PATH=/` for the web console and
+`PORT=5174 BASE_PATH=/__mockup` for the mockup Canvas. To build an artifact
+directly with a different preview configuration, set `PORT` and `BASE_PATH`
+for that package; the workspace command also accepts `WEB_PORT`,
+`WEB_BASE_PATH`, `MOCKUP_PORT`, and `MOCKUP_BASE_PATH` when its defaults need
+to be changed.
 
 ## Stack
 

@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "PORT=\"${MOCKUP_PORT:-${PORT:-5174}}\" BASE_PATH=\"${MOCKUP_BASE_PATH:-${BASE_PATH:-/__mockup}}\" vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
