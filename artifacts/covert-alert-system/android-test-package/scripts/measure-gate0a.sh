@@ -29,6 +29,7 @@ NON_INTERACTIVE=false
 SKIP_REBOOT=false
 REPEAT_COUNT="$DEFAULT_REPEAT_COUNT"
 OUT_DIR=""
+REPORT_SELF_TEST=false
 ADB_BIN="${ADB:-adb}"
 GRADLE_BIN="${GRADLE:-gradle}"
 
@@ -69,6 +70,9 @@ Run options:
   --repeat COUNT                 Repeated launches after recovery (default: 200).
   --skip-reboot                   Record reboot recovery as inconclusive instead of rebooting.
   --confirm-destructive           Allow APK installation, force-stop interruption, sleep/wake, and reboot.
+  --report-self-test              No device: write report.json/report.md from synthetic events and
+                                  verify they exist. Used by Windows CI to prove a failed report
+                                  write cannot look successful.
   --help                          Show this help.
 
 Examples:
@@ -201,6 +205,7 @@ parse_args() {
                 ;;
             --skip-reboot) SKIP_REBOOT=true ;;
             --confirm-destructive) CONFIRM_DESTRUCTIVE=true ;;
+            --report-self-test) REPORT_SELF_TEST=true ;;
             --help|-h)
                 usage
                 exit 0
@@ -213,6 +218,11 @@ parse_args() {
     [[ "$TARGET" == "auto" || "$TARGET" == "emulator" || "$TARGET" == "physical" ]] ||
         die "--target must be auto, emulator, or physical"
     [[ "$REPEAT_COUNT" =~ ^[1-9][0-9]*$ ]] || die "--repeat must be a positive integer"
+    if [[ "$REPORT_SELF_TEST" == true ]]; then
+        # The report self-test never touches a device, so the destructive-action
+        # guardrails do not apply to it.
+        return 0
+    fi
     if [[ "$CONFIRM_DESTRUCTIVE" == false ]]; then
         die "The harness force-stops the test package for clean starts and process interruption; pass --confirm-destructive"
     fi
@@ -888,8 +898,46 @@ root.joinpath("report.md").write_text("\n".join(markdown) + "\n", encoding="utf-
 PY
 }
 
+seed_report_self_test() {
+    # Device-free report-path check. Seeds synthetic environment.tsv and
+    # events.ndjson content, then lets the shared finalize() EXIT trap run the
+    # same write_report() used by real runs so Windows CI proves the Git Bash
+    # -> native python3 path works and that a failed report write cannot exit
+    # successfully.
+    log "Report self-test: generating report.json/report.md from synthetic events without a device."
+    write_env "serial" "GIT-BASH-SELFTEST"
+    write_env "evidenceClass" "sample"
+    write_env "model" "self-test"
+    write_env "device" "self-test"
+    write_env "product" "self-test"
+    write_env "avdName" ""
+    write_env "apiLevel" "35"
+    write_env "abiList" "x86_64"
+    write_env "androidRelease" "15"
+    write_env "buildId" "SELFTEST"
+    write_env "securityPatch" "2026-01-01"
+    write_env "hardware" "selftest"
+    write_env "buildFingerprint" "selftest/fingerprint"
+    write_env "usbState" "device"
+    write_env "usbDebuggingEnabled" "true"
+    write_env "targetMode" "self-test"
+    write_env "repeatCount" "0"
+    write_env "package" "$PACKAGE"
+    write_env "packagePath" "package:/data/app/$PACKAGE/base.apk"
+    record_event "device-discovery" "pass" "Synthetic self-test discovery event" "serial=GIT-BASH-SELFTEST"
+    record_event "target-validation" "pass" "Synthetic self-test target validation"
+    record_event "cold-launch" "pass" "Synthetic launch sample" \
+        "hostStartMs=$STARTED_AT_MS" "hostEndMs=$STARTED_AT_MS" "artifact=launch/cold-launch.txt"
+    record_event "locked-launch" "inconclusive" "Synthetic inconclusive screen-state observation"
+    record_event "repeat-boundary" "fail" "Synthetic failure to exercise report warning paths"
+}
+
 finalize() {
     local exit_code=$?
+    # This is the EXIT trap; clear it and exit explicitly so a failed report
+    # write overrides an otherwise-successful run instead of preserving the
+    # status that triggered the trap.
+    trap - EXIT
     if [[ -n "$RUN_DIR" && -f "$EVENTS_FILE" ]]; then
         if ((exit_code == 0)); then
             FINAL_STATUS="complete"
@@ -898,12 +946,20 @@ finalize() {
         fi
         if write_report; then
             log "Run record written: $RUN_DIR/report.json"
+            if [[ "$REPORT_SELF_TEST" == true ]]; then
+                if [[ ! -s "$RUN_DIR/report.json" || ! -s "$RUN_DIR/report.md" ]]; then
+                    log "ERROR: report self-test: report.json/report.md missing after a reported-successful write."
+                    exit_code=1
+                else
+                    log "CAS_GATE0A_REPORT_SELF_TEST_OK runDir=$RUN_DIR"
+                fi
+            fi
         else
             log "ERROR: report generation failed; $RUN_DIR/report.json may be missing. Regenerate it from $EVENTS_FILE and $ENV_FILE before importing."
             [[ $exit_code -eq 0 ]] && exit_code=1
         fi
     fi
-    return "$exit_code"
+    exit "$exit_code"
 }
 
 main() {
@@ -911,6 +967,10 @@ main() {
     require_command python3
     initialize_run
     trap finalize EXIT
+    if [[ "$REPORT_SELF_TEST" == true ]]; then
+        seed_report_self_test
+        return
+    fi
     build_apk
     discover_device
     identify_target

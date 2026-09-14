@@ -33,3 +33,86 @@ jobs:
 
       - name: Run Windows PowerShell and CMD entry-point checks
         run: pnpm --filter @workspace/covert-alert-system run test:windows-entrypoints
+
+  git-bash-report:
+    name: Gate 0A report generation under Git Bash
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate a Gate 0A report from synthetic events in Git Bash
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Native Windows Python cannot read MSYS /c/... paths; the harness must
+          # convert via cygpath. Ensure a python3 command exists for Git Bash.
+          if ! command -v python3 >/dev/null 2>&1; then
+            shim_dir="$RUNNER_TEMP/python3-shim"
+            mkdir -p "$shim_dir"
+            printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$shim_dir/python3"
+            chmod +x "$shim_dir/python3"
+            export PATH="$shim_dir:$PATH"
+          fi
+          harness="artifacts/covert-alert-system/android-test-package/scripts/measure-gate0a.sh"
+          out_parent="$RUNNER_TEMP/gate0a-report-selftest"
+          rm -rf "$out_parent"
+          set +e
+          output="$("$harness" --report-self-test --out-dir "$out_parent" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -ne 0 ]]; then
+            echo "Report self-test exited $code." >&2
+            exit 1
+          fi
+          run_dir="$(printf '%s\n' "$output" | sed -n 's/.*CAS_GATE0A_REPORT_SELF_TEST_OK runDir=//p' | tail -n 1 | tr -d '\r')"
+          if [[ -z "$run_dir" ]]; then
+            echo "The harness exited 0 but did not report a successful report self-test." >&2
+            exit 1
+          fi
+          # Independent verification: never trust the exit code or log alone.
+          test -s "$run_dir/report.json" || { echo "report.json is missing from $run_dir" >&2; exit 1; }
+          test -s "$run_dir/report.md" || { echo "report.md is missing from $run_dir" >&2; exit 1; }
+          python - "$(cygpath -w "$run_dir/report.json")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              report = json.load(handle)
+          assert report["schema"] == "cas-gate0a-report-v2", report["schema"]
+          assert report["status"] == "complete-with-failures", report["status"]
+          print("report.json parsed; status:", report["status"])
+          PYEOF
+
+      - name: A failed report write must not exit successfully
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Force write_report() to fail by shadowing python3 with a broken shim.
+          shim_dir="$RUNNER_TEMP/broken-python3"
+          mkdir -p "$shim_dir"
+          printf '#!/usr/bin/env bash\nexit 1\n' > "$shim_dir/python3"
+          chmod +x "$shim_dir/python3"
+          harness="artifacts/covert-alert-system/android-test-package/scripts/measure-gate0a.sh"
+          out_parent="$RUNNER_TEMP/gate0a-report-negative"
+          rm -rf "$out_parent"
+          set +e
+          PATH="$shim_dir:$PATH" "$harness" --report-self-test --out-dir "$out_parent" > "$RUNNER_TEMP/gate0a-negative.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/gate0a-negative.log"
+          if [[ $code -eq 0 ]]; then
+            echo "The harness exited 0 although python3 failed and no report could be written." >&2
+            exit 1
+          fi
+          if find "$out_parent" \( -name report.json -o -name report.md \) 2>/dev/null | grep -q .; then
+            echo "A report file exists even though the report write failed." >&2
+            exit 1
+          fi
+          echo "Blocked report write produced a non-zero exit and no report files."
