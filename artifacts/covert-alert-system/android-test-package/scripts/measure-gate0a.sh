@@ -602,7 +602,13 @@ repeat_launches() {
 
 write_report() {
     local report="$RUN_DIR/report.json"
-    python3 - "$report" "$EVENTS_FILE" "$ENV_FILE" "$RUN_DIR" "$STARTED_AT_UTC" "$STARTED_AT_MS" "$FINAL_STATUS" <<'PY'
+    # Native Windows python3 cannot read Git-Bash/MSYS POSIX paths (/c/Users/...).
+    # Convert path arguments to native form via cygpath when available; no-op elsewhere.
+    local to_native
+    to_native() {
+        if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+    }
+    python3 - "$(to_native "$report")" "$(to_native "$EVENTS_FILE")" "$(to_native "$ENV_FILE")" "$(to_native "$RUN_DIR")" "$STARTED_AT_UTC" "$STARTED_AT_MS" "$FINAL_STATUS" <<'PY'
 import json
 import pathlib
 import sys
@@ -890,8 +896,12 @@ finalize() {
         elif [[ "$FINAL_STATUS" == "inconclusive" ]]; then
             FINAL_STATUS="blocked"
         fi
-        write_report || true
-        log "Run record written: $RUN_DIR/report.json"
+        if write_report; then
+            log "Run record written: $RUN_DIR/report.json"
+        else
+            log "ERROR: report generation failed; $RUN_DIR/report.json may be missing. Regenerate it from $EVENTS_FILE and $ENV_FILE before importing."
+            [[ $exit_code -eq 0 ]] && exit_code=1
+        fi
     fi
     return "$exit_code"
 }

@@ -84,3 +84,17 @@ mtime_ms = 1789290170726
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/96438a9e-5707-4942-8947-5215154e9fcb/af28711e-19c6-4823-96cb-079429309e7f"
 storage_version_token = "1789290175234781"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "z7dzWLfgb4OM7PpxDFFRX"
+uri = "file://deliverables/CAS-Pixel11-Windows-Test-Kit-v6.zip"
+type = "unspecified"
+title = "CAS Pixel 11 Windows Test Kit v6"
+description = "Kit with all three fixes discovered during the 2026-09-14 physical Pixel 11 Gate 0A run: Kotlin compile fix, PROXY_TRIGGER intent category fix, and MSYS-to-native path conversion with hardened report-write failure handling."
+logical_id = "4e27c933-7db9-45eb-8989-df71b7da6859"
+content_hash = "sha256:55fd546d4458d9acf4142fa26a59419bbbdfb71be8236356d35bb341ba2012e3"
+size = 131526
+mtime_ms = 1789399840005
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/4e27c933-7db9-45eb-8989-df71b7da6859/43bc3375-df49-489f-a99b-6f30e38857d7"
+storage_version_token = "1789399890362711"
+content_type = "application/octet-stream"

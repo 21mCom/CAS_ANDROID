@@ -20,3 +20,9 @@ Do not capture a native command's normal stderr with `2>&1` under Windows PowerS
 **Why:** The field workstation confirmed that successful `java -version` stderr became a terminating `NativeCommandError`, producing the script's synthetic `-1` result despite Java exiting successfully.
 
 **How to apply:** Use `System.Diagnostics.Process` with both streams redirected, call `WaitForExit()`, and only then read the real exit code. Test a successful stderr-only command under Windows PowerShell 5.1.
+
+Do not pass Git-Bash/MSYS paths (`/c/Users/...`) to native Windows programs, and never mask evidence-file generation with `|| true`.
+
+**Why:** On the field machine, the harness called native `python3` with MSYS paths; Windows Python treated `/c/...` as drive-relative, the report was written to a bogus tree, and the wrapping `|| true` let the run exit 0 while logging success.
+
+**How to apply:** Convert path arguments with `cygpath -w` when available, and make report-generation failure change the run's exit status so a missing report cannot masquerade as a successful run.

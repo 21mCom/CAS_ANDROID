@@ -24,6 +24,7 @@
             android:theme="@style/Theme.CasPixelTest.Proxy">
             <intent-filter>
                 <action android:name="com.covertalert.pixeltest.action.PROXY_TRIGGER" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
         <receiver

@@ -30,7 +30,7 @@ class MainActivity : Activity() {
         coverInput = EditText(this).apply {
             hint = "Cover package, e.g. com.google.android.apps.maps"
             setText(TestStore.coverPackage(this@MainActivity))
-            singleLine = true
+            isSingleLine = true
         }
         reportView = TextView(this).apply {
             textSize = 12f
