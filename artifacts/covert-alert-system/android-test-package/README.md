@@ -25,6 +25,19 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 There is intentionally no Gradle wrapper checked in; use the Android toolchain
 provided by the hardware-run workstation.
 
+Two build gates protect this package after the 2026-09-14 field run shipped
+Kotlin that had never compiled:
+
+- The GitHub Actions workflow `Android test package build`
+  (`.github/workflows/android-test-package-build.yml`) runs
+  `gradle :app:assembleDebug` on every change under this directory and
+  verifies the built APK's `PROXY_TRIGGER` filter declares
+  `CATEGORY_DEFAULT`.
+- `scripts/package-windows-test-kit.ps1` builds the debug APK before staging
+  the ZIP and refuses to package when the build fails (or when Gradle is not
+  available). Pass `-SkipApkBuild` only when CI has already passed on the
+  exact revision being packaged.
+
 The `adb install -r` command above is a separate, explicit operator action
 after the workstation preflight passes. The Windows preflight never runs it and
 never uninstalls an APK.

@@ -6,12 +6,16 @@ on:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
+      - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
+      - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
   push:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
+      - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
+      - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
   workflow_dispatch:
 

@@ -1,0 +1,62 @@
+name: Android test package build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/android-test-package-build.yml"
+      - ".github/scripts/check-apk-manifest.py"
+      - "artifacts/covert-alert-system/android-test-package/**"
+  push:
+    paths:
+      - ".github/workflows/android-test-package-build.yml"
+      - ".github/scripts/check-apk-manifest.py"
+      - "artifacts/covert-alert-system/android-test-package/**"
+  workflow_dispatch:
+
+jobs:
+  assemble-debug:
+    name: Compile Gate 0A debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compile debug APK
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK output exists
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$apk" ]; then
+            echo "::error::Gradle reported success but $apk is missing."
+            exit 1
+          fi
+          echo "APK built: $apk ($(stat -c%s "$apk") bytes)"
+
+      - name: Verify PROXY_TRIGGER filter declares CATEGORY_DEFAULT
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          aapt="$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)"
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          "$aapt" dump xmltree "$apk" AndroidManifest.xml > /tmp/apk-manifest.txt
+          python3 "$GITHUB_WORKSPACE/.github/scripts/check-apk-manifest.py" /tmp/apk-manifest.txt
