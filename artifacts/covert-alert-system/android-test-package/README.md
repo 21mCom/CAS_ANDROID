@@ -23,7 +23,11 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 There is intentionally no Gradle wrapper checked in; use the Android toolchain
-provided by the hardware-run workstation.
+provided by the hardware-run workstation. The expected Gradle release is
+declared once in `gradle-version.txt` in this directory: the GitHub Actions
+build reads it to install Gradle, and the Windows preflight reads it to warn
+when the workstation Gradle major.minor differs from the release CI builds
+with. Update that one file to move both sides to a new Gradle release.
 
 Two build gates protect this package after the 2026-09-14 field run shipped
 Kotlin that had never compiled:
@@ -259,7 +263,7 @@ built or measured:
 | Platform tools | `platform-tools\adb.exe` exists and `platform-tools` is on `PATH`; `adb version` succeeds |
 | Android platform | `platforms\android-35\android.jar` exists |
 | Build tools | Android Build-Tools 35.0.0 or newer exists |
-| Gradle | Gradle 8.9 or newer is available on `PATH`; this matches the Android Gradle Plugin 8.7.3 used by the package |
+| Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release |
 | Physical target | An approved physical device appears as `device` in `adb devices -l`; `unauthorized` and `offline` are blocking states |
 | Emulator target | `emulator\emulator.exe` exists; use the pinned lifecycle command to create/start and validate the emulator |
 
@@ -298,10 +302,12 @@ commands can include the JSON alongside the in-app report and host timing log.
   administrator-reviewed installation location and allow the signed Android
   and Java tools through the organization's policy. Do not work around
   Windows security by downloading replacement binaries or disabling protection.
-- **Gradle cannot run:** Confirm the `gradle` executable on PATH is 8.9 or
-  newer and that Java points to the same JDK 17+ installation. The package has
-  no checked-in Gradle wrapper, so the workstation's approved Gradle
-  installation is intentional.
+- **Gradle cannot run or warns about a version mismatch:** Confirm the `gradle`
+  executable on PATH matches the release declared in `gradle-version.txt` and
+  that Java points to the same JDK 17+ installation. The package has no
+  checked-in Gradle wrapper, so the workstation's approved Gradle installation
+  is intentional; `gradle-version.txt` keeps it aligned with the release CI
+  builds with.
 
 The preflight does not provision Device Owner mode, install or uninstall an
 APK, factory-reset a device, send SMS/XMPP, or collect evidence. Those actions,

@@ -32,10 +32,24 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Read pinned Gradle version
+        id: gradle-version
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # gradle-version.txt is the single source of truth shared with the
+          # Windows workstation preflight (scripts/windows-preflight.ps1).
+          version="$(tr -d '[:space:]' < gradle-version.txt)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::gradle-version.txt does not contain a Gradle version: '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: ${{ steps.gradle-version.outputs.version }}
 
       - name: Compile debug APK
         working-directory: artifacts/covert-alert-system/android-test-package

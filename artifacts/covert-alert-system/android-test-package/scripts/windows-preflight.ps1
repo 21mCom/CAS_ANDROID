@@ -195,6 +195,32 @@ function Get-Version {
     }
 }
 
+function Get-ExpectedGradleVersion {
+    # gradle-version.txt is the single source of truth for the Gradle release
+    # that CI builds with; the preflight compares the workstation against it.
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path $Path -PathType Leaf)) {
+        return $null
+    }
+    return Get-Version ((Get-Content -Path $Path -Raw).Trim())
+}
+
+function Test-GradleVersionAlignment {
+    param(
+        [Parameter(Mandatory = $true)][version]$Actual,
+        [Parameter(Mandatory = $true)][version]$Expected
+    )
+
+    if ($Actual -lt $Expected) {
+        return 'older'
+    }
+    if ($Actual.Major -ne $Expected.Major -or $Actual.Minor -ne $Expected.Minor) {
+        return 'different'
+    }
+    return 'aligned'
+}
+
 if ($ParserRegressionCheck) {
     $driveSdkRoot = 'C:\Users\CAS_DEV\AppData\Local\Android\Sdk'
     $resolvedSdkRoots = @(
@@ -228,6 +254,28 @@ if ($ParserRegressionCheck) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
             throw ('Java invalid-output regression: expected no version for "{0}".' -f $invalidOutput)
         }
+    }
+
+    $gradleAlignmentCases = @(
+        @{ Actual = '8.9.0'; Expected = '8.9'; Alignment = 'aligned' },
+        @{ Actual = '8.9.1'; Expected = '8.9'; Alignment = 'aligned' },
+        @{ Actual = '8.8.0'; Expected = '8.9'; Alignment = 'older' },
+        @{ Actual = '8.10.2'; Expected = '8.9'; Alignment = 'different' },
+        @{ Actual = '9.0.0'; Expected = '8.9'; Alignment = 'different' }
+    )
+    foreach ($case in $gradleAlignmentCases) {
+        $actualAlignment = Test-GradleVersionAlignment -Actual ([version]$case.Actual) -Expected ([version]$case.Expected)
+        if ($actualAlignment -ne $case.Alignment) {
+            throw ('Gradle alignment regression: {0} vs {1} was {2}, expected {3}.' -f
+                $case.Actual, $case.Expected, $actualAlignment, $case.Alignment)
+        }
+    }
+    $declaredGradle = Get-ExpectedGradleVersion (Join-Path $scriptDirectory '..\gradle-version.txt')
+    if ($null -eq $declaredGradle) {
+        throw 'Gradle version-file regression: gradle-version.txt next to the package root was not parsed.'
+    }
+    if ($null -ne (Get-ExpectedGradleVersion (Join-Path $scriptDirectory '..\does-not-exist.txt'))) {
+        throw 'Gradle version-file regression: a missing version file must not produce a version.'
     }
 
     $javaShimDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-java-regression-' + [guid]::NewGuid().ToString('N'))
@@ -661,6 +709,23 @@ if ($bashPath) {
         -NextSteps @('Install approved Git for Windows, close and reopen this window, then rerun the preflight.')
 }
 
+$gradleVersionFile = Join-Path $scriptDirectory '..\gradle-version.txt'
+$expectedGradle = Get-ExpectedGradleVersion $gradleVersionFile
+if ($null -eq $expectedGradle) {
+    Add-Check `
+        -Id 'gradle.expected-version' `
+        -Name 'Gradle version declaration' `
+        -Status 'WARN' `
+        -Required $false `
+        -Observed ('{0} is missing or does not contain a version.' -f $gradleVersionFile) `
+        -Expected 'gradle-version.txt declares the Gradle release CI builds with.' `
+        -NextSteps @('Restore the complete, unmodified test kit; the Gradle version cannot be compared against CI without this file.')
+    $expectedGradleText = 'Gradle 8.9 or newer'
+    $expectedGradle = [version]'8.9.0'
+} else {
+    $expectedGradleText = ('Gradle {0} (the release CI builds with)' -f $expectedGradle)
+}
+
 $gradlePath = Find-CommandPath 'gradle.exe'
 if (-not $gradlePath) {
     $gradlePath = Find-CommandPath 'gradle'
@@ -672,15 +737,14 @@ if (-not $gradlePath) {
         -Status 'BLOCKED' `
         -Required $true `
         -Observed 'gradle was not found on PATH.' `
-        -Expected 'Gradle 8.9 or newer is available on PATH.' `
+        -Expected ('{0} is available on PATH.' -f $expectedGradleText) `
         -NextSteps @(
-            'Install the approved Gradle 8.9 or newer distribution with user consent.',
+            ('Install the approved {0} distribution with user consent.' -f $expectedGradleText),
             'Add its bin folder to PATH, close and reopen this window, then rerun the preflight.'
         )
 } else {
     $gradleResult = Invoke-Tool -Path $gradlePath -Arguments @('--version')
     $gradleVersion = Get-Version $gradleResult.output
-    $minimumGradle = [version]'8.9.0'
     if (-not $gradleResult.succeeded -or $null -eq $gradleVersion) {
         Add-Check `
             -Id 'gradle.command' `
@@ -688,25 +752,40 @@ if (-not $gradlePath) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('Gradle did not report a version. {0}' -f $gradleResult.output) `
-            -Expected 'Gradle 8.9 or newer.' `
-            -NextSteps @('Install or select a working Gradle 8.9 or newer distribution, then rerun the preflight.')
-    } elseif ($gradleVersion -lt $minimumGradle) {
-        Add-Check `
-            -Id 'gradle.command' `
-            -Name 'Gradle command' `
-            -Status 'BLOCKED' `
-            -Required $true `
-            -Observed ('Gradle {0}' -f $gradleVersion) `
-            -Expected 'Gradle 8.9 or newer.' `
-            -NextSteps @('Upgrade Gradle to 8.9 or newer, then rerun the preflight.')
+            -Expected $expectedGradleText `
+            -NextSteps @('Install or select a working Gradle distribution matching the declared version, then rerun the preflight.')
     } else {
-        Add-Check `
-            -Id 'gradle.command' `
-            -Name 'Gradle command' `
-            -Status 'PASS' `
-            -Required $true `
-            -Observed ('Gradle {0} at {1}' -f $gradleVersion, $gradlePath) `
-            -Expected 'Gradle 8.9 or newer.'
+        $gradleAlignment = Test-GradleVersionAlignment -Actual $gradleVersion -Expected $expectedGradle
+        if ($gradleAlignment -eq 'older') {
+            Add-Check `
+                -Id 'gradle.command' `
+                -Name 'Gradle command' `
+                -Status 'BLOCKED' `
+                -Required $true `
+                -Observed ('Gradle {0}' -f $gradleVersion) `
+                -Expected $expectedGradleText `
+                -NextSteps @(('Upgrade Gradle to {0} or newer, then rerun the preflight.' -f $expectedGradle))
+        } elseif ($gradleAlignment -eq 'different') {
+            Add-Check `
+                -Id 'gradle.command' `
+                -Name 'Gradle command' `
+                -Status 'WARN' `
+                -Required $true `
+                -Observed ('Gradle {0} at {1}' -f $gradleVersion, $gradlePath) `
+                -Expected ('Gradle {0}.x, matching the CI-pinned release in gradle-version.txt.' -f $expectedGradle) `
+                -NextSteps @(
+                    ('CI builds this package with Gradle {0}; a different major.minor on this workstation was never exercised by CI.' -f $expectedGradle),
+                    ('Install the approved Gradle {0} distribution, or document this WARN in the field-run record before building.' -f $expectedGradle)
+                )
+        } else {
+            Add-Check `
+                -Id 'gradle.command' `
+                -Name 'Gradle command' `
+                -Status 'PASS' `
+                -Required $true `
+                -Observed ('Gradle {0} at {1}' -f $gradleVersion, $gradlePath) `
+                -Expected $expectedGradleText
+        }
     }
 }
 
