@@ -113,7 +113,10 @@ jobs:
         with:
           api-level: 35
           target: google_apis
-          arch: x86_64
+          # macos-latest runners are Apple Silicon (arm64). Google does not
+          # publish x86_64 system images for darwin-arm64 hosts, so arch must
+          # be arm64-v8a — x86_64 fails AVD creation on the runner image.
+          arch: arm64-v8a
           profile: pixel_6
           force-avd-creation: false
           disable-animations: true
