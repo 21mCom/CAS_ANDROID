@@ -9,6 +9,9 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
+      - "artifacts/api-server/package.json"
+      - "artifacts/api-server/src/lib/gate0a-report.ts"
+      - "artifacts/api-server/scripts/validate-gate0a-report.ts"
   push:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
@@ -17,6 +20,9 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
+      - "artifacts/api-server/package.json"
+      - "artifacts/api-server/src/lib/gate0a-report.ts"
+      - "artifacts/api-server/scripts/validate-gate0a-report.ts"
   workflow_dispatch:
 
 # Field operators run the ZIP produced by package-windows-test-kit.ps1, not the
@@ -179,6 +185,7 @@ jobs:
             echo "The harness exited 0 but did not report a successful report self-test." >&2
             exit 1
           fi
+          echo "GATE0A_RUN_DIR=$run_dir" >> "$GITHUB_ENV"
           # Independent verification: never trust the exit code or log alone.
           test -s "$run_dir/report.json" || { echo "report.json is missing from $run_dir" >&2; exit 1; }
           test -s "$run_dir/report.md" || { echo "report.md is missing from $run_dir" >&2; exit 1; }
@@ -190,6 +197,52 @@ jobs:
           assert report["status"] == "complete-with-failures", report["status"]
           print("report.json parsed; status:", report["status"])
           PYEOF
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install API server dependencies
+        run: pnpm install --filter @workspace/api-server...
+
+      - name: The self-test report must pass the web app's import validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Runs the same validateGate0aImport rules as POST /api/cas/gate0a/import,
+          # so a harness/app schema drift fails here instead of in the field.
+          pnpm --filter @workspace/api-server run validate:gate0a-report \
+            "$(cygpath -w "$GATE0A_RUN_DIR/report.json")"
+
+      - name: A report the app would reject must fail validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          drifted="$RUNNER_TEMP/gate0a-report-drifted.json"
+          python - "$(cygpath -w "$GATE0A_RUN_DIR/report.json")" "$(cygpath -w "$drifted")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              report = json.load(handle)
+          report["schema"] = "cas-gate0a-report-v1"
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              json.dump(report, handle)
+          PYEOF
+          set +e
+          output="$(pnpm --filter @workspace/api-server run validate:gate0a-report "$(cygpath -w "$drifted")" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The validator accepted a report the web app would reject." >&2
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -q "REJECTED" || {
+            echo "The validator failed without reporting a rejection reason." >&2
+            exit 1
+          }
+          echo "Drifted report rejected by the app's import validation, as required."
 
       - name: A failed report write must not exit successfully
         shell: bash

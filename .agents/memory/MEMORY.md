@@ -8,3 +8,4 @@
 - [Gate 0A print guide](gate0a-print-guide.md) — verify rendered PDF pagination, selectable commands, and served-file integrity after guide changes.
 - [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
+- [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
