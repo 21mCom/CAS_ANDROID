@@ -1083,8 +1083,9 @@ if ($PrepareSdk) {
             $packages += @(
                 'emulator',
                 # The system image follows the pinned emulator contract owned by
-                # pixel-emulator.ps1, not the workstation platform declaration.
-                'system-images;android-35;google_apis;x86_64'
+                # pixel-emulator.ps1, which tracks the SDK platform declared in
+                # tool-requirements.json.
+                ('system-images;{0};google_apis;x86_64' -f $toolRequirements.sdkPlatform)
             )
         }
 

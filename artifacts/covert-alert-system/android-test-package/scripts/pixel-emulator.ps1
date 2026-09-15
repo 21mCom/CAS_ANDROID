@@ -39,10 +39,39 @@ if ($StartupSmokeCheck) {
     exit 0
 }
 
-$script:AvdName = 'CAS_Pixel_8a_API_35'
-$script:ApiLevel = 35
+# The pinned emulator contract derives its API level, system image, and AVD
+# name from tool-requirements.json at the package root (the same declaration
+# the Windows preflight, the Gradle build, and GitHub Actions read) so the
+# pinned-device checks move with the declared Android SDK platform instead of
+# drifting from it. Only the device profile and architecture are fixed here.
+$script:ToolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
+$script:ToolRequirements = $null
+try {
+    $parsedRequirements = Get-Content -Path $script:ToolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
+    $declaredSdkPlatform = [string]$parsedRequirements.androidSdk.platform
+    if ($declaredApiLevel -ge 1 -and $declaredSdkPlatform -ceq ('android-{0}' -f $declaredApiLevel)) {
+        $script:ToolRequirements = [pscustomobject]@{
+            apiLevel = $declaredApiLevel
+            sdkPlatform = $declaredSdkPlatform
+        }
+    }
+} catch {
+    $script:ToolRequirements = $null
+}
+if ($null -eq $script:ToolRequirements) {
+    # Not Write-Error: with $ErrorActionPreference = 'Stop' it would terminate
+    # the script with exit 1 before this block's exit 2 runs.
+    Write-Host ('BLOCKED: tool-requirements.json is missing or invalid at {0}; restore the complete, unmodified test kit before using the pinned emulator.' -f $script:ToolRequirementsPath) -ForegroundColor Red
+    exit 2
+}
+
+$script:AvdName = 'CAS_Pixel_8a_API_{0}' -f $script:ToolRequirements.apiLevel
+$script:ApiLevel = $script:ToolRequirements.apiLevel
+$script:SdkPlatform = $script:ToolRequirements.sdkPlatform
 $script:Abi = 'x86_64'
-$script:SystemImage = 'system-images;android-35;google_apis;x86_64'
+$script:SystemImage = 'system-images;{0};google_apis;x86_64' -f $script:SdkPlatform
+$script:SystemImageSysdir = 'system-images\{0}\google_apis\x86_64\' -f $script:SdkPlatform
 $script:DeviceProfile = 'pixel_8a'
 $script:EvidenceClass = 'simulated-emulator'
 $script:OutputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -177,7 +206,7 @@ function Assert-PinnedAvd {
     }
 
     $imageSysdir = (Get-ConfigValue -Config $config -Name 'image.sysdir.1').Replace('/', '\').TrimStart('\')
-    $expectedSysdir = 'system-images\android-35\google_apis\x86_64\'
+    $expectedSysdir = $script:SystemImageSysdir
     $abiType = Get-ConfigValue -Config $config -Name 'abi.type'
     $deviceName = Get-ConfigValue -Config $config -Name 'hw.device.name'
 
@@ -206,7 +235,7 @@ function Ensure-PinnedAvd {
         return
     }
 
-    $imageDir = Join-Path $Tools.sdkRoot 'system-images\android-35\google_apis\x86_64'
+    $imageDir = Join-Path $Tools.sdkRoot $script:SystemImageSysdir.TrimEnd('\')
     if (-not (Test-Path $imageDir -PathType Container)) {
         Fail ('Pinned system image is missing: {0}. Run the approved SDK preparation with explicit operator approval, then retry.' -f $script:SystemImage)
     }

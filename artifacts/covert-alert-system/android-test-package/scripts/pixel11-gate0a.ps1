@@ -110,13 +110,32 @@ if ($HarnessFailureSimulation) {
         $Serial = $authorized[0]
     }
 
+    # The minimum API level derives from the Android SDK platform declared in
+    # tool-requirements.json at the package root (the same declaration the
+    # preflight, the Gradle build, and GitHub Actions read) so this device
+    # gate moves with the declared platform instead of drifting from it.
+    $toolRequirementsPath = Join-Path $packageRoot 'tool-requirements.json'
+    $minimumApiLevel = $null
+    try {
+        $parsedRequirements = Get-Content -Path $toolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
+        if ($declaredApiLevel -ge 1 -and [string]$parsedRequirements.androidSdk.platform -ceq ('android-{0}' -f $declaredApiLevel)) {
+            $minimumApiLevel = $declaredApiLevel
+        }
+    } catch {
+        $minimumApiLevel = $null
+    }
+    if ($null -eq $minimumApiLevel) {
+        Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath. Restore the complete, unmodified test kit."
+    }
+
     $model = (& $adb.Source -s $Serial shell getprop ro.product.model 2>&1 | Out-String).Trim()
     $api = (& $adb.Source -s $Serial shell getprop ro.build.version.sdk 2>&1 | Out-String).Trim()
     if ($model -ne 'Pixel 11') {
         Stop-Run "Expected the approved Pixel 11, but ADB reported '$model'."
     }
-    if ($api -notmatch '^\d+$' -or [int]$api -lt 35) {
-        Stop-Run "Expected Android API 35 or newer, but ADB reported '$api'."
+    if ($api -notmatch '^\d+$' -or [int]$api -lt $minimumApiLevel) {
+        Stop-Run "Expected Android API $minimumApiLevel or newer (declared in tool-requirements.json), but ADB reported '$api'."
     }
 
     Write-Host "Authorized target: $model / serial $Serial / API $api" -ForegroundColor Green

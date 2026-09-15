@@ -40,12 +40,15 @@ every Java/SDK/build-tools check and for the `-PrepareSdk` package list.
 Update that one file to move these consumers to new prerequisite levels; do
 not edit the docs or scripts to match.
 
-Two baselines are deliberately fixed and do not follow this declaration: the
-pinned Pixel 8a/API 35 emulator contract (owned by
-`scripts/pixel-emulator.ps1`, including the `system-images;android-35` package
-the preflight installs in emulator mode) and the app's `minSdk`/`targetSdk`,
-which pin the approved Pixel 11 device contract in `app/build.gradle.kts`.
-Change those only through their owning files and docs.
+The pinned-device checks follow the same declaration: the pinned Pixel 8a
+emulator contract (owned by `scripts/pixel-emulator.ps1`, including the
+`system-images;android-<apiLevel>` package the preflight installs in emulator
+mode) and the Pixel 11 minimum-API gate in `scripts/pixel11-gate0a.ps1` both
+derive their API level from `tool-requirements.json`, so a platform bump moves
+them with it. One baseline is deliberately fixed and does not follow this
+declaration: the app's `minSdk`/`targetSdk`, which pin the approved Pixel 11
+device contract in `app/build.gradle.kts`. Change that only through its
+owning file and docs.
 
 Two build gates protect this package after the 2026-09-14 field run shipped
 Kotlin that had never compiled:
@@ -184,13 +187,19 @@ physical run:
 
 | Setting | Pinned value |
 | --- | --- |
-| AVD name | `CAS_Pixel_8a_API_35` |
+| AVD name | `CAS_Pixel_8a_API_35` (the numeric suffix tracks the API level) |
 | Device profile | `pixel_8a` |
-| Android image | `system-images;android-35;google_apis;x86_64` |
-| API level | 35 |
+| Android image | `system-images;android-35;google_apis;x86_64` (tracks `tool-requirements.json`) |
+| API level | 35 (tracks `androidSdk.apiLevel` in `tool-requirements.json`) |
 | Architecture | x86_64 |
 | Repeatability settings | animation scales `0`; `stay_on_while_plugged_in=3` |
 | Evidence label | `simulated-emulator` |
+
+The API 35 pin is not a hardcoded copy: `scripts/pixel-emulator.ps1` derives
+the API level, the AVD-name suffix, and the system image from
+`tool-requirements.json`, so the pinned contract moves when the declared SDK
+platform moves (and a stale AVD from an earlier platform fails validation
+until `-Action create` rebuilds it).
 
 From the copied Windows test kit, the single lifecycle entry point is:
 
@@ -267,7 +276,8 @@ The script prints the package list and waits for the operator to type
 optional preparation only covers `platform-tools` plus the SDK platform and
 build-tools packages declared in `tool-requirements.json`; emulator mode also
 includes the official `emulator` package and the pinned
-`system-images;android-35;google_apis;x86_64` package.
+`system-images;android-<apiLevel>;google_apis;x86_64` package matching the SDK
+platform declared in `tool-requirements.json`.
 It never installs an APK or changes the device.
 
 ### Local preflight contract
