@@ -15,10 +15,18 @@ if (-not (Test-Path (Join-Path $PackageRoot 'settings.gradle.kts') -PathType Lea
 }
 
 # The package intentionally ships no Gradle wrapper; use the workstation or CI
-# Gradle (8.9 or newer, matching Android Gradle Plugin 8.7.3).
+# Gradle release pinned in gradle-version.txt (matching Android Gradle Plugin 8.7.3).
+$gradleVersionFile = Join-Path $PackageRoot 'gradle-version.txt'
+$expectedGradle = $null
+if (Test-Path $gradleVersionFile -PathType Leaf) {
+    $expectedGradle = (Get-Content -Path $gradleVersionFile -Raw).Trim()
+}
+if ([string]::IsNullOrWhiteSpace($expectedGradle)) {
+    $expectedGradle = '(unreadable: check gradle-version.txt at the package root)'
+}
 $gradleCommand = Get-Command gradle -ErrorAction SilentlyContinue
 if ($null -eq $gradleCommand) {
-    throw ('Gradle was not found on PATH. Install Gradle 8.9 or newer (and an Android SDK with ANDROID_HOME set) before packaging, or rerun packaging with -SkipApkBuild to bypass the APK build gate.')
+    throw ('Gradle was not found on PATH. Install the Gradle release pinned in android-test-package\gradle-version.txt (currently {0}; and an Android SDK with ANDROID_HOME set) before packaging, or rerun packaging with -SkipApkBuild to bypass the APK build gate.' -f $expectedGradle)
 }
 $gradle = $gradleCommand.Source
 
