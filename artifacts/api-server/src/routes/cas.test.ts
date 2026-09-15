@@ -18,6 +18,7 @@ import {
   casIncidentEvents,
   casIncidents,
   casOutbox,
+  casTransportCooldowns,
 } from "@workspace/db/schema";
 import { asc, eq, sql } from "drizzle-orm";
 import {
@@ -42,6 +43,7 @@ async function clearCasData() {
   await db.delete(casIncidentEvents);
   await db.delete(casOutbox);
   await db.delete(casIncidents);
+  await db.delete(casTransportCooldowns);
 }
 
 async function startApiProcess() {
@@ -1225,6 +1227,273 @@ test("a provider outage fails the delivery as retryable and keeps the outbox rec
     }
   } finally {
     await provider.close();
+  }
+});
+
+test("a 429 with a Retry-After hint schedules the next attempt no earlier than the hint", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const provider = await startStubProvider(() => ({
+    status: 429,
+    headers: { "Retry-After": "120" },
+  }));
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const startedAt = Date.now();
+    const result = await processCasOutbox({ workerId: "rate-limit-worker", send });
+    assert.equal(result.failed, 2);
+    assert.equal(result.sent, 0);
+
+    const outbox = await db.select().from(casOutbox);
+    assert.equal(outbox.length, 2);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^rate-limited \(retryable\):/);
+      // The 120s hint exceeds the generic 60s backoff cap, so observing a
+      // delay near 120s proves the hint (not the default backoff) scheduled
+      // this attempt.
+      const delay = item.nextAttemptAt.getTime() - startedAt;
+      assert.ok(delay >= 120_000, `nextAttemptAt delay ${delay}ms is earlier than the 120s hint`);
+      assert.ok(delay < 130_000, `nextAttemptAt delay ${delay}ms overshoots the 120s hint`);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a 429 without a Retry-After hint falls back to exponential backoff", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const provider = await startStubProvider(() => 429);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const startedAt = Date.now();
+    const result = await processCasOutbox({ workerId: "unhinted-rate-limit-worker", send });
+    assert.equal(result.failed, 2);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^rate-limited \(retryable\):/);
+      // First failure: 1s of generic backoff, nowhere near a provider hint.
+      const delay = item.nextAttemptAt.getTime() - startedAt;
+      assert.ok(delay >= 1_000, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
+      assert.ok(delay < 10_000, `nextAttemptAt delay ${delay}ms looks like a hint was applied`);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a 429 with a malformed Retry-After hint falls back to exponential backoff", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const provider = await startStubProvider(() => ({
+    status: 429,
+    headers: { "Retry-After": "not-a-valid-hint" },
+  }));
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const startedAt = Date.now();
+    const result = await processCasOutbox({ workerId: "malformed-hint-worker", send });
+    assert.equal(result.failed, 2);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^rate-limited \(retryable\):/);
+      const delay = item.nextAttemptAt.getTime() - startedAt;
+      assert.ok(delay >= 1_000, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
+      assert.ok(delay < 10_000, `nextAttemptAt delay ${delay}ms looks like a hint was applied`);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a rate-limited transport is cooled down for the rest of the run so it cannot starve the other transport", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Queue two older SMS items ahead of the triggered pair so, without a
+  // per-transport cooldown, the worker would hammer the throttled SMS
+  // provider for the whole batch before ever reaching XMPP.
+  await db.insert(casOutbox).values([
+    { id: `${id}-sms-backlog-1`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 3_000) },
+    { id: `${id}-sms-backlog-2`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 2_000) },
+  ]);
+
+  const smsProvider = await startStubProvider(() => 429);
+  const xmppProvider = await startStubProvider(() => 200);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: smsProvider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: xmppProvider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "cooldown-worker", maxItems: 10, send });
+
+    // The first SMS failure puts SMS on cooldown for this run; the remaining
+    // SMS backlog is left queued instead of hammering the provider, and the
+    // XMPP item is delivered in the same run.
+    assert.equal(smsProvider.requests.length, 1);
+    assert.equal(xmppProvider.requests.length, 1);
+    assert.equal(result.failed, 1);
+    assert.equal(result.sent, 1);
+
+    const outbox = await db.select().from(casOutbox);
+    assert.equal(outbox.filter((item) => item.transport === "SMS" && item.state === "QUEUED").length, 2);
+    assert.equal(outbox.filter((item) => item.transport === "SMS" && item.state === "FAILED").length, 1);
+    assert.equal(outbox.filter((item) => item.transport === "XMPP" && item.state === "SENT").length, 1);
+  } finally {
+    await smsProvider.close();
+    await xmppProvider.close();
+  }
+});
+
+test("an oversized Retry-After hint is clamped to the cooldown cap instead of being ignored", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  // One hour is beyond the sane-hint cap (10 minutes). Dropping the hint
+  // entirely would retry in ~1s and keep hammering the provider; clamping
+  // must cool the transport down for the full cap instead.
+  const provider = await startStubProvider(() => ({
+    status: 429,
+    headers: { "Retry-After": "3600" },
+  }));
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const startedAt = Date.now();
+    const result = await processCasOutbox({ workerId: "clamp-worker", send });
+    assert.equal(result.failed, 2);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      const delay = item.nextAttemptAt.getTime() - startedAt;
+      assert.ok(delay >= 600_000, `nextAttemptAt delay ${delay}ms ignored the hint instead of clamping it`);
+      assert.ok(delay < 610_000, `nextAttemptAt delay ${delay}ms overshoots the 600s clamp`);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a rate-limited transport stays cooled down across worker ticks while the other transport drains", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Deep SMS backlog ahead of the XMPP item: without a cross-tick cooldown,
+  // every worker tick would claim another SMS record and hammer the
+  // throttled provider well before its 120s Retry-After window elapses.
+  await db.insert(casOutbox).values([
+    { id: `${id}-sms-backlog-1`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 3_000) },
+    { id: `${id}-sms-backlog-2`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 2_000) },
+  ]);
+
+  const smsProvider = await startStubProvider(() => ({
+    status: 429,
+    headers: { "Retry-After": "120" },
+  }));
+  const xmppProvider = await startStubProvider(() => 200);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: smsProvider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: xmppProvider.url, recipients: ["ops@example.org"] }),
+    });
+
+    // First tick: one SMS attempt fails with the 120s hint, XMPP drains.
+    const first = await processCasOutbox({ workerId: "tick-worker", maxItems: 10, send });
+    assert.equal(smsProvider.requests.length, 1);
+    assert.equal(first.failed, 1);
+    assert.equal(first.sent, 1);
+
+    // Subsequent ticks (different worker, like separate API processes) must
+    // not touch the SMS provider again while the hint window is still open.
+    for (let tick = 0; tick < 3; tick += 1) {
+      const run = await processCasOutbox({ workerId: `tick-worker-${tick}`, maxItems: 10, send });
+      assert.equal(run.claimed, 0, `tick ${tick + 2} claimed a cooled-down transport`);
+    }
+    assert.equal(smsProvider.requests.length, 1);
+    assert.equal(xmppProvider.requests.length, 1);
+
+    // The cooldown row is persisted, so the exclusion survives process
+    // restarts too.
+    const cooldowns = await db.select().from(casTransportCooldowns);
+    assert.equal(cooldowns.length, 1);
+    assert.equal(cooldowns[0].transport, "SMS");
+    assert.ok(cooldowns[0].nextAllowedAt.getTime() > Date.now() + 100_000);
+
+    const outbox = await db.select().from(casOutbox);
+    assert.equal(outbox.filter((item) => item.transport === "SMS" && item.state === "QUEUED").length, 2);
+    assert.equal(outbox.filter((item) => item.transport === "XMPP" && item.state === "SENT").length, 1);
+  } finally {
+    await smsProvider.close();
+    await xmppProvider.close();
+  }
+});
+
+test("a 503 with a Retry-After hint cools the transport down across worker ticks, not just the failed item", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  await db.insert(casOutbox).values([
+    { id: `${id}-sms-backlog-1`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 3_000) },
+    { id: `${id}-sms-backlog-2`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(Date.now() - 2_000) },
+  ]);
+
+  const smsProvider = await startStubProvider(() => ({
+    status: 503,
+    headers: { "Retry-After": "120" },
+  }));
+  const xmppProvider = await startStubProvider(() => 200);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: smsProvider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: xmppProvider.url, recipients: ["ops@example.org"] }),
+    });
+
+    const first = await processCasOutbox({ workerId: "outage-hint-worker", maxItems: 10, send });
+    assert.equal(smsProvider.requests.length, 1);
+    assert.equal(first.failed, 1);
+    assert.equal(first.sent, 1);
+
+    // The honored hint is a transport-level cooldown: later ticks must not
+    // hit the failing provider again while the window is open, even though
+    // only the first backlog item carries the scheduled delay.
+    const second = await processCasOutbox({ workerId: "outage-hint-worker-2", maxItems: 10, send });
+    assert.equal(second.claimed, 0);
+    assert.equal(smsProvider.requests.length, 1);
+
+    const cooldowns = await db.select().from(casTransportCooldowns);
+    assert.equal(cooldowns.length, 1);
+    assert.equal(cooldowns[0].transport, "SMS");
+    assert.ok(cooldowns[0].nextAllowedAt.getTime() > Date.now() + 100_000);
+
+    const failed = await db.select().from(casOutbox).where(eq(casOutbox.state, "FAILED"));
+    assert.equal(failed.length, 1);
+    assert.match(failed[0].lastError ?? "", /^server-outage \(retryable\):/);
+  } finally {
+    await smsProvider.close();
+    await xmppProvider.close();
   }
 });
 

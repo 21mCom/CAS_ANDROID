@@ -8,10 +8,12 @@ import {
   casIncidents,
   casOutbox,
   casSetupReadiness,
+  casTransportCooldowns,
 } from "@workspace/db/schema";
 import { z } from "zod";
 import { validateGate0aImport, type Gate0aReport } from "../lib/gate0a-report";
 import {
+  CasProviderError,
   createCasDeliverySender,
   formatProviderError,
   loadConfiguredProviders,
@@ -354,16 +356,51 @@ export async function processCasOutbox(options: {
       }
     } catch (error) {
       const message = formatProviderError(error);
+      const retryAfterMs =
+        error instanceof CasProviderError ? error.retryAfterMs : undefined;
+      const rateLimited =
+        error instanceof CasProviderError &&
+        error.classification === "rate-limited";
+      const failedAt = new Date();
       const exhausted = claimed.attempts >= MAX_DELIVERY_ATTEMPTS;
       const completed = exhausted
-        ? await deadLetterCasOutboxItem(claimed, workerId, new Date(), message)
+        ? await deadLetterCasOutboxItem(claimed, workerId, failedAt, message)
         : await completeCasOutboxItem(
             claimed,
             workerId,
             "FAILED",
-            new Date(),
+            failedAt,
             message,
+            retryAfterMs,
           );
+      if (rateLimited || retryAfterMs !== undefined) {
+        // Persist a per-transport cooldown so no worker tick or API process
+        // claims this transport again until the backoff window (the
+        // provider's Retry-After hint whenever one is honored) has elapsed.
+        // Without this, a deep queue behind a throttling or hinted-outage
+        // provider would be hammered on every tick and could starve the
+        // other transport.
+        const nextAllowedAt = new Date(
+          failedAt.getTime() + retryDelayMs(claimed.attempts, retryAfterMs),
+        );
+        await db
+          .insert(casTransportCooldowns)
+          .values({
+            transport: claimed.transport,
+            nextAllowedAt,
+            updatedAt: failedAt,
+          })
+          .onConflictDoUpdate({
+            target: casTransportCooldowns.transport,
+            set: {
+              // Concurrent workers may race to record the cooldown; keep the
+              // furthest-out window so a shorter backoff cannot erase a
+              // longer provider hint.
+              nextAllowedAt: sql`greatest(${casTransportCooldowns.nextAllowedAt}, excluded.next_allowed_at)`,
+              updatedAt: failedAt,
+            },
+          });
+      }
       if (completed && exhausted) {
         result.deadLettered += 1;
         result.deliveries.push({
@@ -451,6 +488,7 @@ async function completeCasOutboxItem(
   state: "SENT" | "FAILED",
   now: Date,
   error?: string,
+  retryAfterMs?: number,
 ) {
   const values =
     state === "SENT"
@@ -466,7 +504,9 @@ async function completeCasOutboxItem(
           claimedBy: null,
           claimedAt: null,
           lastError: error ?? "Delivery failed",
-          nextAttemptAt: new Date(now.getTime() + retryDelayMs(item.attempts)),
+          nextAttemptAt: new Date(
+            now.getTime() + retryDelayMs(item.attempts, retryAfterMs),
+          ),
         };
 
   const [updated] = await db
@@ -481,11 +521,14 @@ async function completeCasOutboxItem(
   return updated;
 }
 
-function retryDelayMs(attempts: number) {
-  return Math.min(
+function retryDelayMs(attempts: number, retryAfterMs?: number) {
+  const backoff = Math.min(
     MAX_RETRY_DELAY_MS,
     1_000 * 2 ** Math.min(Math.max(attempts - 1, 0), 6),
   );
+  // A provider's Retry-After hint is a lower bound on the next attempt, not
+  // a replacement for our own backoff: never retry sooner than either one.
+  return retryAfterMs === undefined ? backoff : Math.max(backoff, retryAfterMs);
 }
 
 export type CasOutboxWorkerResult = {
@@ -511,11 +554,18 @@ export async function claimCasOutboxItem(workerId: string, now: Date) {
       SELECT id
       FROM cas_outbox
       WHERE (
-        state IN ('QUEUED', 'FAILED')
-        AND next_attempt_at <= ${now}
-      ) OR (
-        state = 'PROCESSING'
-        AND claimed_at < ${staleBefore}
+        (
+          state IN ('QUEUED', 'FAILED')
+          AND next_attempt_at <= ${now}
+        ) OR (
+          state = 'PROCESSING'
+          AND claimed_at < ${staleBefore}
+        )
+      )
+      AND transport NOT IN (
+        SELECT transport
+        FROM cas_transport_cooldowns
+        WHERE next_allowed_at > ${now}
       )
       ORDER BY created_at ASC
       LIMIT 1

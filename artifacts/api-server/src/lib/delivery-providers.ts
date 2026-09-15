@@ -55,18 +55,62 @@ export class CasProviderError extends Error {
   readonly classification: ProviderErrorClassification;
   readonly retryable: boolean;
   readonly status?: number;
+  /**
+   * Minimum delay the provider asked for before the next attempt (from its
+   * Retry-After header), when the hint was present and sane. The outbox
+   * worker treats this as a lower bound on top of its own backoff.
+   */
+  readonly retryAfterMs?: number;
 
   constructor(
     classification: ProviderErrorClassification,
     message: string,
-    options: { retryable: boolean; status?: number; cause?: unknown },
+    options: {
+      retryable: boolean;
+      status?: number;
+      cause?: unknown;
+      retryAfterMs?: number;
+    },
   ) {
     super(message, { cause: options.cause });
     this.name = "CasProviderError";
     this.classification = classification;
     this.retryable = options.retryable;
     this.status = options.status;
+    this.retryAfterMs = options.retryAfterMs;
   }
+}
+
+// A Retry-After hint beyond this bound is clamped to the cap rather than
+// dropped: a throttling provider asking for an extreme wait still means
+// "back off", so falling back to a near-immediate retry would keep
+// hammering it. Clamping cools the transport down for a bounded time.
+export const MAX_RETRY_AFTER_HINT_MS = 10 * 60_000;
+
+/**
+ * Parses a Retry-After header (delta-seconds or HTTP-date) into a delay in
+ * milliseconds. Oversized hints are clamped to MAX_RETRY_AFTER_HINT_MS;
+ * absent, malformed, or non-positive hints return undefined so callers fall
+ * back to exponential backoff.
+ */
+export function parseRetryAfterMs(
+  header: string | null,
+  now: number = Date.now(),
+): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  let delayMs: number;
+  if (/^\d+$/.test(trimmed)) {
+    delayMs = Number(trimmed) * 1_000;
+  } else {
+    const date = Date.parse(trimmed);
+    if (Number.isNaN(date)) return undefined;
+    delayMs = date - now;
+  }
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return undefined;
+  }
+  return Math.min(delayMs, MAX_RETRY_AFTER_HINT_MS);
 }
 
 export function formatProviderError(error: unknown): string {
@@ -139,6 +183,7 @@ function classifyStatus(
   detail: string,
   isIdempotentReplay: boolean,
   redirectLocation: string | null,
+  retryAfterMs?: number,
 ): CasProviderError | null {
   if (status >= 200 && status < 300) return null;
   if (status >= 300 && status < 400) {
@@ -178,14 +223,14 @@ function classifyStatus(
     return new CasProviderError(
       "rate-limited",
       `${transport} provider rate-limited the submission (HTTP 429): ${detail}`,
-      { retryable: true, status },
+      { retryable: true, status, retryAfterMs },
     );
   }
   if (status >= 500) {
     return new CasProviderError(
       "server-outage",
       `${transport} provider is failing (HTTP ${status}): ${detail}`,
-      { retryable: true, status },
+      { retryable: true, status, retryAfterMs },
     );
   }
   return new CasProviderError(
@@ -270,6 +315,7 @@ async function submitToProvider(
       detail.slice(0, 200) || response.statusText,
       response.headers.get(IDEMPOTENCY_REPLAYED_HEADER) === "true",
       response.headers.get("location"),
+      parseRetryAfterMs(response.headers.get("retry-after")),
     );
     if (classified) throw classified;
   }

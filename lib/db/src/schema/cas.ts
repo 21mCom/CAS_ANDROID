@@ -34,6 +34,12 @@ export const casOutbox = pgTable("cas_outbox", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const casTransportCooldowns = pgTable("cas_transport_cooldowns", {
+  transport: text("transport").primaryKey(),
+  nextAllowedAt: timestamp("next_allowed_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const casSetupReadiness = pgTable("cas_setup_readiness", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
