@@ -44,6 +44,18 @@ if ($StartupSmokeCheck) {
     Write-Output ('CAS_STARTUP_OK windows-preflight OutputDirectory={0}' -f [System.IO.Path]::GetFullPath($OutputDirectory))
     exit 0
 }
+
+# The validated tool-requirements.json parse is shared with the other kit
+# entry points (pixel-emulator.ps1, pixel11-gate0a.ps1, mvp-install.ps1) via
+# this dot-sourced library, so the declaration's shape and consistency rule
+# live in exactly one place. A kit missing the library is incomplete and is
+# handled as a BLOCKED tools.requirements outcome in the main flow below.
+$script:SharedToolRequirementsParser = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+$script:SharedToolRequirementsParserAvailable = Test-Path $script:SharedToolRequirementsParser -PathType Leaf
+if ($script:SharedToolRequirementsParserAvailable) {
+    . $script:SharedToolRequirementsParser
+}
+
 $script:Checks = @()
 $script:Actions = @()
 
@@ -217,37 +229,8 @@ function Get-ExpectedGradleVersion {
     return Get-Version ((Get-Content -Path $Path -Raw).Trim())
 }
 
-function Get-ToolRequirements {
-    # tool-requirements.json is the single source of truth for the JDK and
-    # Android SDK prerequisites the preflight enforces; CI reads the same file,
-    # the way gradle-version.txt pins the Gradle release.
-    param([string]$Path)
-
-    if (-not $Path -or -not (Test-Path $Path -PathType Leaf)) {
-        return $null
-    }
-    try {
-        $parsed = Get-Content -Path $Path -Raw | ConvertFrom-Json
-        $jdkMinimumMajor = [int]$parsed.jdk.minimumMajor
-        $apiLevel = [int]$parsed.androidSdk.apiLevel
-        $sdkPlatform = [string]$parsed.androidSdk.platform
-        $buildToolsMinimum = [version]([string]$parsed.androidSdk.buildToolsMinimum)
-        if ($jdkMinimumMajor -lt 1 -or $apiLevel -lt 1) {
-            return $null
-        }
-        if ($sdkPlatform -cne ('android-{0}' -f $apiLevel)) {
-            return $null
-        }
-        return [pscustomobject]@{
-            jdkMinimumMajor = $jdkMinimumMajor
-            apiLevel = $apiLevel
-            sdkPlatform = $sdkPlatform
-            buildToolsMinimum = $buildToolsMinimum
-        }
-    } catch {
-        return $null
-    }
-}
+# Get-ToolRequirements is provided by the dot-sourced cas-tool-requirements.ps1
+# library (loaded near the top of this script); do not re-add a local copy.
 
 function Test-GradleVersionAlignment {
     param(
@@ -306,6 +289,9 @@ if ($ParserRegressionCheck) {
     try {
         $brokenPreflight = Join-Path $brokenKitDirectory 'scripts\windows-preflight.ps1'
         Copy-Item -Path $PSCommandPath -Destination $brokenPreflight
+        # The preflight dot-sources the shared tool-requirements parser; copy it
+        # so the only broken piece in this fixture is the missing declaration.
+        Copy-Item -Path $script:SharedToolRequirementsParser -Destination (Join-Path $brokenKitDirectory 'scripts')
         $currentPowerShell = (Get-Process -Id $PID).Path
         $brokenOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $brokenPreflight -OutputDirectory (Join-Path $brokenKitDirectory 'results') 2>&1)
         $brokenExitCode = $LASTEXITCODE
@@ -327,6 +313,35 @@ if ($ParserRegressionCheck) {
         }
     } finally {
         Remove-Item -Recurse -Force $brokenKitDirectory -ErrorAction SilentlyContinue
+    }
+
+    # Missing-parser regression: a kit whose shared parser file was dropped is
+    # just as broken as one missing the declaration. The preflight must fail
+    # closed with the same BLOCKED tools.requirements outcome and exit 2
+    # instead of crashing on the absent dot-source or guessing requirements.
+    $parserlessKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-parserless-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $parserlessKitDirectory 'scripts') | Out-Null
+    try {
+        Copy-Item -Path $PSCommandPath -Destination (Join-Path $parserlessKitDirectory 'scripts\windows-preflight.ps1')
+        Copy-Item -Path (Join-Path $scriptDirectory '..\tool-requirements.json') -Destination $parserlessKitDirectory
+        $currentPowerShell = (Get-Process -Id $PID).Path
+        $parserlessOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $parserlessKitDirectory 'scripts\windows-preflight.ps1') -OutputDirectory (Join-Path $parserlessKitDirectory 'results') 2>&1)
+        $parserlessExitCode = $LASTEXITCODE
+        $parserlessText = ($parserlessOutput | Out-String)
+        if ($parserlessExitCode -ne 2) {
+            throw ('Missing-parser regression: the preflight exited {0} without cas-tool-requirements.ps1; a broken kit must abort with exit 2. Output: {1}' -f $parserlessExitCode, $parserlessText)
+        }
+        if ($parserlessText -notmatch '\[BLOCKED\] Tool requirements declaration') {
+            throw ('Missing-parser regression: the preflight did not fail the tools.requirements check. Output: {0}' -f $parserlessText)
+        }
+        if ($parserlessText -notmatch 'cas-tool-requirements\.ps1') {
+            throw ('Missing-parser regression: the preflight did not name the missing shared parser. Output: {0}' -f $parserlessText)
+        }
+        if (Get-ChildItem -Path $parserlessKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+            throw 'Missing-parser regression: the preflight wrote a result file for a broken kit.'
+        }
+    } finally {
+        Remove-Item -Recurse -Force $parserlessKitDirectory -ErrorAction SilentlyContinue
     }
 
     $javaCases = @(
@@ -488,6 +503,23 @@ Write-Host 'CAS Pixel Gate 0A - Windows workstation preflight' -ForegroundColor 
 Write-Host ('Target mode: {0}' -f $Target)
 Write-Host 'Default behavior is read-only. No APK, device policy, reboot, message, or evidence action is performed.'
 Write-Host ''
+
+if (-not $script:SharedToolRequirementsParserAvailable) {
+    # A kit missing the shared parser was tampered with or incompletely
+    # copied. Fail closed with the same BLOCKED outcome as a missing
+    # declaration instead of crashing on the absent dot-source.
+    Add-Check `
+        -Id 'tools.requirements' `
+        -Name 'Tool requirements declaration' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed ('The shared parser scripts\cas-tool-requirements.ps1 is missing from the kit at {0}.' -f $script:SharedToolRequirementsParser) `
+        -Expected 'cas-tool-requirements.ps1 ships with the kit and parses tool-requirements.json for every kit script.' `
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess tool requirements when its parser is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue because scripts\cas-tool-requirements.ps1 is missing. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
+}
 
 $toolRequirementsFile = Join-Path $scriptDirectory '..\tool-requirements.json'
 $toolRequirements = Get-ToolRequirements $toolRequirementsFile

@@ -112,22 +112,20 @@ if ($HarnessFailureSimulation) {
 
     # The minimum API level derives from the Android SDK platform declared in
     # tool-requirements.json at the package root (the same declaration the
-    # preflight, the Gradle build, and GitHub Actions read) so this device
-    # gate moves with the declared platform instead of drifting from it.
-    $toolRequirementsPath = Join-Path $packageRoot 'tool-requirements.json'
-    $minimumApiLevel = $null
-    try {
-        $parsedRequirements = Get-Content -Path $toolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
-        if ($declaredApiLevel -ge 1 -and [string]$parsedRequirements.androidSdk.platform -ceq ('android-{0}' -f $declaredApiLevel)) {
-            $minimumApiLevel = $declaredApiLevel
-        }
-    } catch {
-        $minimumApiLevel = $null
+    # preflight, the Gradle build, and GitHub Actions read), parsed by the
+    # shared kit parser so this device gate moves with the declared platform
+    # instead of drifting from it.
+    $sharedParserPath = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+    if (-not (Test-Path $sharedParserPath -PathType Leaf)) {
+        Stop-Run "The shared tool-requirements parser is missing at $sharedParserPath. Restore the complete, unmodified test kit."
     }
-    if ($null -eq $minimumApiLevel) {
+    . $sharedParserPath
+    $toolRequirementsPath = Join-Path $packageRoot 'tool-requirements.json'
+    $toolRequirements = Get-ToolRequirements $toolRequirementsPath
+    if ($null -eq $toolRequirements) {
         Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath. Restore the complete, unmodified test kit."
     }
+    $minimumApiLevel = $toolRequirements.apiLevel
 
     $model = (& $adb.Source -s $Serial shell getprop ro.product.model 2>&1 | Out-String).Trim()
     $api = (& $adb.Source -s $Serial shell getprop ro.build.version.sdk 2>&1 | Out-String).Trim()

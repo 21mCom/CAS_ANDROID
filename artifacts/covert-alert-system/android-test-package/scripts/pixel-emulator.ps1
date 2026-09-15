@@ -42,24 +42,20 @@ if ($StartupSmokeCheck) {
 
 # The pinned emulator contract derives its API level, system image, and AVD
 # name from tool-requirements.json at the package root (the same declaration
-# the Windows preflight, the Gradle build, and GitHub Actions read) so the
-# pinned-device checks move with the declared Android SDK platform instead of
-# drifting from it. Only the device profile and architecture are fixed here.
+# the Windows preflight, the Gradle build, and GitHub Actions read), parsed
+# by the shared kit parser so the pinned-device checks move with the declared
+# Android SDK platform instead of drifting from it. Only the device profile
+# and architecture are fixed here.
 $script:ToolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
-$script:ToolRequirements = $null
-try {
-    $parsedRequirements = Get-Content -Path $script:ToolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
-    $declaredSdkPlatform = [string]$parsedRequirements.androidSdk.platform
-    if ($declaredApiLevel -ge 1 -and $declaredSdkPlatform -ceq ('android-{0}' -f $declaredApiLevel)) {
-        $script:ToolRequirements = [pscustomobject]@{
-            apiLevel = $declaredApiLevel
-            sdkPlatform = $declaredSdkPlatform
-        }
-    }
-} catch {
-    $script:ToolRequirements = $null
+$script:SharedParserPath = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+if (-not (Test-Path $script:SharedParserPath -PathType Leaf)) {
+    # Not Write-Error: with $ErrorActionPreference = 'Stop' it would terminate
+    # the script with exit 1 before this block's exit 2 runs.
+    Write-Host ('BLOCKED: the shared tool-requirements parser is missing at {0}; restore the complete, unmodified test kit before using the pinned emulator.' -f $script:SharedParserPath) -ForegroundColor Red
+    exit 2
 }
+. $script:SharedParserPath
+$script:ToolRequirements = Get-ToolRequirements $script:ToolRequirementsPath
 if ($null -eq $script:ToolRequirements) {
     # Not Write-Error: with $ErrorActionPreference = 'Stop' it would terminate
     # the script with exit 1 before this block's exit 2 runs.

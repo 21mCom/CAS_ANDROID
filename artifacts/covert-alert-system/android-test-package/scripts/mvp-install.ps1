@@ -28,23 +28,19 @@ function Stop-Run {
 
 # The minimum Android API floor derives from tool-requirements.json at the
 # package root (the same declaration the Windows preflight, the Gradle build,
-# and GitHub Actions read) so this install gate moves with the declared SDK
-# platform instead of drifting from it.
-$toolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
-$minimumApiLevel = $null
-try {
-    $parsedRequirements = Get-Content -Path $toolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
-    $declaredSdkPlatform = [string]$parsedRequirements.androidSdk.platform
-    if ($declaredApiLevel -ge 1 -and $declaredSdkPlatform -ceq ('android-{0}' -f $declaredApiLevel)) {
-        $minimumApiLevel = $declaredApiLevel
-    }
-} catch {
-    $minimumApiLevel = $null
+# and GitHub Actions read), parsed by the shared kit parser so this install
+# gate moves with the declared SDK platform instead of drifting from it.
+$sharedParserPath = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+if (-not (Test-Path $sharedParserPath -PathType Leaf)) {
+    Stop-Run "The shared tool-requirements parser is missing at $sharedParserPath; restore the complete, unmodified test kit before installing the MVP app."
 }
-if ($null -eq $minimumApiLevel) {
+. $sharedParserPath
+$toolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
+$toolRequirements = Get-ToolRequirements $toolRequirementsPath
+if ($null -eq $toolRequirements) {
     Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath; restore the complete, unmodified test kit before installing the MVP app."
 }
+$minimumApiLevel = $toolRequirements.apiLevel
 
 Write-Host ''
 Write-Host 'CAS Pixel 11 - MVP app install' -ForegroundColor Cyan

@@ -184,6 +184,14 @@ function Invoke-BlockedRunPropagationCheck {
 $temporaryWorkingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-windows-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryWorkingDirectory | Out-Null
 try {
+    # Every PowerShell entry point dot-sources the shared tool-requirements
+    # parser; a packaging regression that drops it would only surface on the
+    # field workstation, so require it in the packaged kit here.
+    $sharedParser = Join-Path $entrypointDirectory 'cas-tool-requirements.ps1'
+    if (-not (Test-Path $sharedParser -PathType Leaf)) {
+        throw ('The shared tool-requirements parser is missing from the packaged kit: {0}' -f $sharedParser)
+    }
+
     $entrypoints = @(
         @{ Name = 'windows-preflight.ps1'; Marker = 'CAS_STARTUP_OK windows-preflight' },
         @{ Name = 'pixel-emulator.ps1'; Marker = 'CAS_STARTUP_OK pixel-emulator' },
