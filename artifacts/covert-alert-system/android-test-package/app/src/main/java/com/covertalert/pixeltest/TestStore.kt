@@ -10,6 +10,13 @@ object TestStore {
     private const val PREFS = "gate0a-local-journal"
     private const val EVENTS = "events"
     private const val COVER_PACKAGE = "cover_package"
+    private const val ALERT_SERVER_URL = "alert_server_url"
+
+    fun setAlertServerUrl(context: Context, value: String) =
+        storage(context).edit().putString(ALERT_SERVER_URL, value.trim()).apply()
+
+    fun alertServerUrl(context: Context): String =
+        storage(context).getString(ALERT_SERVER_URL, "").orEmpty()
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

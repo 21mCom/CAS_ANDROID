@@ -22,7 +22,9 @@ import org.json.JSONObject
 
 class MainActivity : Activity() {
     private lateinit var coverInput: EditText
+    private lateinit var serverInput: EditText
     private lateinit var reportView: TextView
+    @Volatile private var alertInFlight = false
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -48,7 +50,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nLocal-only test. No SMS, network, location, evidence capture, or production incident behavior."
+            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nGate 0A runs stay local-only: no SMS, network, location, evidence capture, or production behavior.\nMVP mode (below) is the only networked path: one POST to the CAS alert server."
             textSize = 13f
         })
         root.addView(coverInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
@@ -58,6 +60,24 @@ class MainActivity : Activity() {
             TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to value, "validInstalledPackage" to isInstalled(value)))
             refreshReport()
         })
+        serverInput = EditText(this).apply {
+            hint = "Alert server URL, e.g. https://your-replit-app.replit.app"
+            setText(TestStore.alertServerUrl(this@MainActivity))
+            isSingleLine = true
+        }
+        root.addView(TextView(this).apply {
+            text = "MVP alert loop (personal device)\nSends one trigger POST to the CAS API. Watch the console Incidents view for the new incident."
+            textSize = 13f
+            setPadding(0, 24, 0, 4)
+        })
+        root.addView(serverInput, LinearLayout.LayoutParams(-1, -2))
+        root.addView(button("Save alert server") {
+            val value = serverInput.text.toString().trim()
+            TestStore.setAlertServerUrl(this, value)
+            TestStore.record(this, "ALERT_SERVER_CONFIGURED", mapOf("configured" to value.isNotBlank(), "https" to value.startsWith("https://")))
+            refreshReport()
+        })
+        root.addView(button("Send MVP alert now") { sendMvpAlert() })
         root.addView(button("Request pinned proxy shortcut") {
             val manager = getSystemService<android.content.pm.ShortcutManager>()
             if (manager == null || !manager.isRequestPinShortcutSupported) {
@@ -101,6 +121,28 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         TestStore.record(this, "BACK_OBSERVED", mapOf("activity" to "MainActivity", "expected" to "returns_to_launcher_or_previous_task"))
         super.onBackPressed()
+    }
+
+    private fun sendMvpAlert() {
+        if (alertInFlight) return
+        val baseUrl = serverInput.text.toString().trim()
+        TestStore.setAlertServerUrl(this, baseUrl)
+        if (baseUrl.isBlank()) {
+            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no server URL configured"))
+            refreshReport()
+            return
+        }
+        alertInFlight = true
+        TestStore.record(this, "MVP_ALERT_ATTEMPT", mapOf("https" to baseUrl.startsWith("https://")))
+        reportView.text = "Sending MVP alert..."
+        Thread {
+            val result = AlertSender.trigger(baseUrl)
+            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
+            runOnUiThread {
+                alertInFlight = false
+                refreshReport()
+            }
+        }.start()
     }
 
     private fun button(label: String, action: () -> Unit) = Button(this).apply {

@@ -187,7 +187,8 @@ try {
     $entrypoints = @(
         @{ Name = 'windows-preflight.ps1'; Marker = 'CAS_STARTUP_OK windows-preflight' },
         @{ Name = 'pixel-emulator.ps1'; Marker = 'CAS_STARTUP_OK pixel-emulator' },
-        @{ Name = 'pixel11-gate0a.ps1'; Marker = 'CAS_STARTUP_OK pixel11-gate0a' }
+        @{ Name = 'pixel11-gate0a.ps1'; Marker = 'CAS_STARTUP_OK pixel11-gate0a' },
+        @{ Name = 'mvp-install.ps1'; Marker = 'CAS_STARTUP_OK mvp-install' }
     )
     foreach ($entrypoint in $entrypoints) {
         $path = Join-Path $entrypointDirectory $entrypoint.Name
