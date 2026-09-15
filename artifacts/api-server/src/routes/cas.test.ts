@@ -16,7 +16,11 @@ import {
   casOutbox,
 } from "@workspace/db/schema";
 import { asc, eq } from "drizzle-orm";
-import { processCasOutbox } from "./cas";
+import {
+  DELIVERY_LEASE_MS,
+  claimCasOutboxItem,
+  processCasOutbox,
+} from "./cas";
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -593,6 +597,85 @@ test("failed delivery records the error for retry", async () => {
   assert.equal(failedRow.state, "FAILED");
   assert.equal(failedRow.lastError, "transport unavailable");
   assert.equal(failedRow.attempts, 1);
+});
+
+test("delivery stays duplicate-free after a worker crash", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  // Fake provider whose accepted idempotency keys are durable: they live
+  // outside any worker and survive a worker's death.
+  const provider = {
+    acceptedKeys: new Set<string>(),
+    presentations: [] as Array<{ id: string; key: string }>,
+    sends: 0,
+    suppressed: 0,
+    send: async (item: typeof casOutbox.$inferSelect, key: string) => {
+      provider.presentations.push({ id: item.id, key });
+      if (provider.acceptedKeys.has(key)) {
+        provider.suppressed += 1;
+        return;
+      }
+      provider.acceptedKeys.add(key);
+      provider.sends += 1;
+    },
+  };
+
+  // Worker A claims the oldest item and the provider accepts it, then the
+  // worker dies before it can mark the record SENT.
+  const claimed = await claimCasOutboxItem("worker-a", new Date());
+  assert.ok(claimed);
+  await provider.send(claimed, claimed.id);
+
+  const [midCrash] = await db
+    .select()
+    .from(casOutbox)
+    .where(eq(casOutbox.id, claimed.id));
+  assert.equal(midCrash.state, "PROCESSING");
+  assert.equal(midCrash.claimedBy, "worker-a");
+  assert.equal(midCrash.sentAt, null);
+
+  // The lease expires while the crashed worker is gone.
+  await db
+    .update(casOutbox)
+    .set({ claimedAt: new Date(Date.now() - DELIVERY_LEASE_MS - 1_000) })
+    .where(eq(casOutbox.id, claimed.id));
+
+  // Worker B reclaims the stale lease and retries; the provider suppresses
+  // the duplicate instead of sending the alert a second time.
+  const recovery = await processCasOutbox({
+    workerId: "worker-b",
+    maxItems: 10,
+    send: provider.send,
+  });
+  assert.equal(recovery.sent, 2);
+  assert.equal(recovery.failed, 0);
+  assert.ok(recovery.deliveries.every((delivery) => delivery.state === "SENT"));
+
+  // The reclaimed item was presented twice with the same stable key, but the
+  // provider only sent it once.
+  const reclaimedPresentations = provider.presentations.filter(
+    (presentation) => presentation.id === claimed.id,
+  );
+  assert.equal(reclaimedPresentations.length, 2);
+  assert.ok(reclaimedPresentations.every((presentation) => presentation.key === claimed.id));
+  assert.equal(provider.sends, 2);
+  assert.equal(provider.suppressed, 1);
+
+  const outbox = await db
+    .select()
+    .from(casOutbox)
+    .orderBy(asc(casOutbox.createdAt));
+  assert.equal(outbox.length, 2);
+  assert.ok(outbox.every((item) => item.state === "SENT"));
+  assert.ok(outbox.every((item) => item.sentAt !== null));
+
+  const recovered = outbox.find((item) => item.id === claimed.id);
+  const fresh = outbox.find((item) => item.id !== claimed.id);
+  assert.ok(recovered && fresh);
+  assert.equal(recovered.attempts, 2);
+  assert.equal(recovered.claimedBy, null);
+  assert.equal(fresh.attempts, 1);
 });
 
 test("concurrent ACK requests accept one transition and conflict the other", async () => {

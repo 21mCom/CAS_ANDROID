@@ -14,7 +14,7 @@ import { validateGate0aImport, type Gate0aReport } from "../lib/gate0a-report";
 
 const router: IRouter = Router();
 
-const DELIVERY_LEASE_MS = 30_000;
+export const DELIVERY_LEASE_MS = 30_000;
 
 function formatGate0aNotes(report: Gate0aReport): string {
   const timestampLines = report.events.map((event, index) =>
@@ -386,7 +386,9 @@ export type CasOutboxWorkerResult = {
   }>;
 };
 
-async function claimCasOutboxItem(workerId: string, now: Date) {
+// Exported so crash-recovery tests can drive a worker up to the exact point
+// between provider acceptance and the SENT mark.
+export async function claimCasOutboxItem(workerId: string, now: Date) {
   const staleBefore = new Date(now.getTime() - DELIVERY_LEASE_MS);
   return db.transaction(async (tx) => {
     const candidates = await tx.execute(sql`
