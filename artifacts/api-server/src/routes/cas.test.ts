@@ -996,6 +996,97 @@ test("re-queue journals the responder note when one is provided", async () => {
   assert.ok(allEvents[2].detail.endsWith(`Responder note: ${maxNote}`));
 });
 
+test("re-queue rejects notes that contain credentials and journals nothing", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Drive one item to DEAD_LETTER so a valid note would otherwise succeed.
+  const [target] = await db
+    .select({ id: casOutbox.id })
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, id))
+    .orderBy(asc(casOutbox.createdAt))
+    .limit(1);
+  await db
+    .update(casOutbox)
+    .set({ attempts: MAX_DELIVERY_ATTEMPTS - 1 })
+    .where(eq(casOutbox.id, target.id));
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${target.id}`);
+  await processCasOutbox({
+    workerId: "requeue-secret-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("provider rejects stale credentials");
+    },
+  });
+
+  const postRequeue = (body: unknown) =>
+    fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  // Each of these pastes an obvious secret shape a responder might copy out
+  // of a provider console while fixing the delivery problem.
+  const leakedNotes = [
+    "Rotated key to sk_live_4eC39HqLyjWDarjtT1zdp7dc",
+    "New key is sk-9f8e7d6c5b4a3210fedc9876",
+    "Set header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dbsj9s8df",
+    "Updated provider password=Sup3rSecret!2026 in the console",
+    "Reset api_key: ab12cd34ef56gh78ij90 in provider settings",
+    "New bot token xoxb-123456789012-abcdefghijkl",
+    "AWS key AKIAIOSFODNN7EXAMPLE still valid",
+    "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkq",
+  ];
+  for (const reason of leakedNotes) {
+    const rejected = await postRequeue({ reason });
+    assert.equal(rejected.status, 400, `note should be rejected: ${reason}`);
+    const payload = (await rejected.json()) as { error: string };
+    assert.match(payload.error, /appears to contain/);
+    assert.match(payload.error, /Never paste credentials/);
+    // The rejection must not echo the secret back.
+    assert.ok(!payload.error.includes(reason));
+    // No state change and no journal entry for a rejected note.
+    const [stillDead] = await db.select().from(casOutbox).where(eq(casOutbox.id, target.id));
+    assert.equal(stillDead.state, "DEAD_LETTER");
+  }
+  let events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "DELIVERY_REQUEUED").length, 0);
+
+  // Legitimate notes still pass: describing the rotation, mentioning a
+  // credential by name without a value, and near-miss wording.
+  const legitimateNotes = [
+    "Rotated the SMS provider credentials and verified auth in the provider console.",
+    "Checked the api_key rotation runbook and the password policy page.",
+    "Reissued the provider token; old one revoked.",
+  ];
+  for (const reason of legitimateNotes) {
+    const ok = await postRequeue({ reason });
+    assert.equal(ok.status, 200, `note should be accepted: ${reason}`);
+    // Put the item back so the next note can be exercised.
+    await db
+      .update(casOutbox)
+      .set({ state: "DEAD_LETTER", claimedBy: null, claimedAt: null })
+      .where(eq(casOutbox.id, target.id));
+  }
+
+  events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  const requeued = events.filter((event) => event.type === "DELIVERY_REQUEUED");
+  assert.equal(requeued.length, legitimateNotes.length);
+  assert.match(requeued[0].detail, /Responder note: Rotated the SMS provider credentials/);
+});
+
 test("re-queue refuses deliveries that are not dead-lettered", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
   assert.equal(trigger.status, 201);

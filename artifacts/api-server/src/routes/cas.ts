@@ -299,6 +299,32 @@ router.post("/cas/incidents/:id/ack", (req, res, next) => appendTransition(req.p
 router.post("/cas/incidents/:id/resolve", (req, res, next) => appendTransition(req.params.id, "ACTIVE_ACKED", "RESOLVED", "RESPONDER_RESOLVE", "Authenticated resolution appended to the journal.", res, next).catch(next));
 
 /**
+ * Obvious secret shapes that must never reach the incident journal. The
+ * journal is append-only and broadly visible, so a responder note that pastes
+ * an actual credential would leak it permanently; these notes are rejected
+ * outright. Describing the fix ("rotated the SMS provider credentials") is
+ * always fine — only the secret shapes themselves match.
+ */
+const NOTE_SECRET_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\b(?:sk|pk)_(?:live|test)_[0-9A-Za-z]{8,}\b/, label: "a provider API key" },
+  { pattern: /\bsk-[0-9A-Za-z_-]{16,}\b/, label: "a provider API key" },
+  { pattern: /\bAIza[0-9A-Za-z_-]{20,}\b/, label: "a Google API key" },
+  { pattern: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, label: "a Slack token" },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/, label: "an AWS access key" },
+  { pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{16,}\b|\bgithub_pat_[0-9A-Za-z_]{20,}\b/, label: "a GitHub token" },
+  { pattern: /\bBearer\s+[0-9A-Za-z._~+/=-]{8,}\b/i, label: "a bearer token" },
+  { pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, label: "a private key block" },
+  { pattern: /\b(?:password|passwd|pwd|secret|api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret)\s*[:=]\s*["']?\S{4,}/i, label: "a password or key in key=value form" },
+];
+
+function detectSecretInNote(note: string): string | null {
+  for (const { pattern, label } of NOTE_SECRET_PATTERNS) {
+    if (pattern.test(note)) return label;
+  }
+  return null;
+}
+
+/**
  * Operator recovery for an abandoned delivery: moves a DEAD_LETTER item back
  * to QUEUED with attempts reset and the lease cleared so the worker claims it
  * on its next pass, and journals the manual recovery so the timeline shows
@@ -315,6 +341,16 @@ router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
       .safeParse(req.body ?? {});
     if (!body.success) {
       return res.status(400).json({ error: "Invalid re-queue note", issues: body.error.issues });
+    }
+    // Reject before any state change or journal entry: a note carrying an
+    // actual credential must never be persisted.
+    if (body.data.reason) {
+      const leaked = detectSecretInNote(body.data.reason);
+      if (leaked) {
+        return res.status(400).json({
+          error: `Re-queue note appears to contain ${leaked}. Never paste credentials into the incident journal — it is append-only and broadly visible. Describe the fix instead (e.g. "rotated the provider API key").`,
+        });
+      }
     }
     const id = req.params.id;
     const now = new Date();
