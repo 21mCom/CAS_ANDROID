@@ -48,6 +48,74 @@ function Invoke-ParserRegressionCheck {
     return $text
 }
 
+function Invoke-HarnessFailurePropagationCheck {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$LauncherName
+    )
+
+    # The launcher runs a stub harness invocation that exits non-zero. The build
+    # must fail if the launcher swallows that failure and exits 0 or prints the
+    # success message, because a failed field run would then look successful.
+    $env:CAS_NO_PAUSE = '1'
+    try {
+        $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -HarnessFailureSimulation 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
+    }
+    $text = ($output | Out-String).Trim()
+    if ($exitCode -eq 0) {
+        throw ('{0} exited 0 although the Gate 0A harness invocation failed; a failed field run would look successful. Output: {1}' -f $LauncherName, $text)
+    }
+    if ($text -match 'Run completed') {
+        throw ('{0} printed the success message although the Gate 0A harness invocation failed: {1}' -f $LauncherName, $text)
+    }
+    if ($text -notmatch 'exited with code') {
+        throw ('{0} did not report the failing harness exit code: {1}' -f $LauncherName, $text)
+    }
+    return $text
+}
+
+function Invoke-BlockedRunPropagationCheck {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$LauncherName,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory
+    )
+
+    # With no Android SDK configured the launcher run is blocked. The build must
+    # fail if the launcher reports that blocked run with exit code 0.
+    $savedSdkRoot = $env:ANDROID_SDK_ROOT
+    $savedAndroidHome = $env:ANDROID_HOME
+    Remove-Item Env:\ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+    Remove-Item Env:\ANDROID_HOME -ErrorAction SilentlyContinue
+    try {
+        $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -Action status -OutputDirectory $OutputDirectory 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        if ($null -ne $savedSdkRoot) { $env:ANDROID_SDK_ROOT = $savedSdkRoot }
+        if ($null -ne $savedAndroidHome) { $env:ANDROID_HOME = $savedAndroidHome }
+    }
+    $text = ($output | Out-String).Trim()
+    if ($exitCode -eq 0) {
+        throw ('{0} exited 0 although the run was blocked (no Android SDK); a failed field run would look successful. Output: {1}' -f $LauncherName, $text)
+    }
+    # Independent verification: the launcher must also record the blocked run as
+    # BLOCKED in its JSON result, not just exit non-zero.
+    $resultFile = Get-ChildItem -Path $OutputDirectory -Filter 'cas-pixel-emulator-*.json' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $resultFile) {
+        throw ('{0} did not write a JSON result for the blocked run. Output: {1}' -f $LauncherName, $text)
+    }
+    $resultText = (Get-Content $resultFile.FullName -Raw)
+    if ($resultText -notmatch '"overallStatus":\s*"BLOCKED"') {
+        throw ('{0} recorded the blocked run without a BLOCKED overall status: {1}' -f $LauncherName, $resultText)
+    }
+    return $text
+}
+
 $temporaryWorkingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-windows-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryWorkingDirectory | Out-Null
 try {
@@ -66,6 +134,13 @@ try {
 
     $preflightPath = Join-Path $entrypointDirectory 'windows-preflight.ps1'
     Invoke-ParserRegressionCheck -ScriptPath $preflightPath | Write-Host
+
+    $gate0aLauncherPath = Join-Path $entrypointDirectory 'pixel11-gate0a.ps1'
+    Invoke-HarnessFailurePropagationCheck -ScriptPath $gate0aLauncherPath -LauncherName 'pixel11-gate0a.ps1' | Write-Host
+
+    $emulatorLauncherPath = Join-Path $entrypointDirectory 'pixel-emulator.ps1'
+    $emulatorNegativeOutput = Join-Path $temporaryWorkingDirectory 'emulator-negative-results'
+    Invoke-BlockedRunPropagationCheck -ScriptPath $emulatorLauncherPath -LauncherName 'pixel-emulator.ps1' -OutputDirectory $emulatorNegativeOutput | Write-Host
 
     $wrapper = Join-Path $entrypointDirectory 'run-windows-preflight.cmd'
     $env:CAS_NO_PAUSE = '1'
