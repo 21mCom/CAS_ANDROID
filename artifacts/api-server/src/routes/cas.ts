@@ -307,6 +307,15 @@ router.post("/cas/incidents/:id/resolve", (req, res, next) => appendTransition(r
  */
 router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
   try {
+    // Optional responder note recording what was fixed before re-queuing, so
+    // the incident journal shows the manual recovery was deliberate. A bare
+    // POST with no body still re-queues exactly as before.
+    const body = z
+      .object({ reason: z.string().trim().min(1).max(500).optional() })
+      .safeParse(req.body ?? {});
+    if (!body.success) {
+      return res.status(400).json({ error: "Invalid re-queue note", issues: body.error.issues });
+    }
     const id = req.params.id;
     const now = new Date();
     const result = await db.transaction(async (tx) => {
@@ -329,7 +338,7 @@ router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
         incidentId: item.incidentId,
         type: "DELIVERY_REQUEUED",
         priority: item.priority,
-        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again.`,
+        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again.${body.data.reason ? ` Responder note: ${body.data.reason}` : ""}`,
         createdAt: now,
       });
       return "requeued" as const;

@@ -16,3 +16,4 @@
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — local emulator IS possible: workspace volume (home has ~5G quota), nix-store libX11, -no-accel TCG, ~7min cold boot.
 - [Protected broadcasts need adb root](protected-broadcasts-adb.md) — shell uid cannot send BOOT_COMPLETED on API 35; root the google_apis emulator first.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
+- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; edits from a stale snapshot can revert another task that merged mid-task.

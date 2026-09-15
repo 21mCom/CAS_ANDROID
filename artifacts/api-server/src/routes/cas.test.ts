@@ -907,6 +907,95 @@ test("a re-queued dead-letter delivery becomes claimable and deliverable again",
   assert.equal(sentRow.attempts, 1);
 });
 
+test("re-queue journals the responder note when one is provided", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Drive one item to DEAD_LETTER; hold the sibling back so claims are deterministic.
+  const [target] = await db
+    .select({ id: casOutbox.id })
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, id))
+    .orderBy(asc(casOutbox.createdAt))
+    .limit(1);
+  await db
+    .update(casOutbox)
+    .set({ attempts: MAX_DELIVERY_ATTEMPTS - 1 })
+    .where(eq(casOutbox.id, target.id));
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${target.id}`);
+  await processCasOutbox({
+    workerId: "requeue-note-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("provider rejects stale credentials");
+    },
+  });
+
+  const postRequeue = (body: unknown) =>
+    fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const deadLetterAgain = () =>
+    db
+      .update(casOutbox)
+      .set({ state: "DEAD_LETTER", claimedBy: null, claimedAt: null })
+      .where(eq(casOutbox.id, target.id));
+  const requeuedEvents = async () =>
+    (await db
+      .select()
+      .from(casIncidentEvents)
+      .where(eq(casIncidentEvents.incidentId, id))
+      .orderBy(asc(casIncidentEvents.createdAt)))
+      .filter((event) => event.type === "DELIVERY_REQUEUED");
+
+  // Malformed and out-of-bounds notes are rejected before any state change
+  // or journal entry: a non-string, a whitespace-only note (trimmed to
+  // empty), and a note past the 500-character bound.
+  for (const body of [
+    { reason: 42 },
+    { reason: "   " },
+    { reason: "x".repeat(501) },
+  ]) {
+    const invalid = await postRequeue(body);
+    assert.equal(invalid.status, 400);
+    const [stillDead] = await db.select().from(casOutbox).where(eq(casOutbox.id, target.id));
+    assert.equal(stillDead.state, "DEAD_LETTER");
+  }
+  assert.equal((await requeuedEvents()).length, 0);
+
+  // The responder records what they fixed; the journal carries the note.
+  const requeue = await postRequeue({ reason: "Rotated the SMS provider credentials and verified auth in the provider console." });
+  assert.equal(requeue.status, 200);
+
+  const eventsAfterNote = await requeuedEvents();
+  assert.equal(eventsAfterNote.length, 1);
+  assert.match(eventsAfterNote[0].detail, /re-queued the abandoned SMS delivery/);
+  assert.match(eventsAfterNote[0].detail, /Responder note: Rotated the SMS provider credentials and verified auth in the provider console\./);
+  assert.match(eventsAfterNote[0].detail, /provider rejects stale credentials/);
+
+  // Boundary notes are accepted: a single character, and exactly 500
+  // characters (the note is journaled verbatim at the end of the detail).
+  await deadLetterAgain();
+  const oneChar = await postRequeue({ reason: "x" });
+  assert.equal(oneChar.status, 200);
+  await deadLetterAgain();
+  const maxNote = `rotated ${"a".repeat(492)}`;
+  assert.equal(maxNote.length, 500);
+  const maxLength = await postRequeue({ reason: maxNote });
+  assert.equal(maxLength.status, 200);
+
+  const allEvents = await requeuedEvents();
+  assert.equal(allEvents.length, 3);
+  assert.match(allEvents[1].detail, /Responder note: x$/);
+  assert.ok(allEvents[2].detail.endsWith(`Responder note: ${maxNote}`));
+});
+
 test("re-queue refuses deliveries that are not dead-lettered", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
   assert.equal(trigger.status, 201);
