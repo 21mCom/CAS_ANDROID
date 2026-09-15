@@ -84,7 +84,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot API 35 emulator and launch MainActivity
+    name: Boot API 35 emulator and launch MainActivity + PROXY_TRIGGER
     needs: assemble-debug
     runs-on: macos-latest
     timeout-minutes: 20
@@ -108,7 +108,7 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot API 35 emulator, install APK, launch MainActivity
+      - name: Boot API 35 emulator, install APK, launch MainActivity and TriggerActivity
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -148,4 +148,33 @@ jobs:
               adb logcat -d | tail -200
               exit 1
             fi
-            echo "Smoke test passed: MainActivity launched, process alive (pid $pid), no fatal logcat entries."
+            echo "MainActivity check passed: launched, process alive (pid $pid), no fatal logcat entries."
+            # Second entry point: the pinned field shortcut fires the
+            # PROXY_TRIGGER intent, which opens TriggerActivity. A crash there
+            # (bad theme, shortcuts.xml mismatch, onCreate assumption) would
+            # otherwise only be discovered on the field device. Re-clear
+            # logcat so the checks below only see output from this launch.
+            adb logcat -c
+            if ! adb shell am start -W -a com.covertalert.pixeltest.action.PROXY_TRIGGER; then
+              echo "::error::am start failed — PROXY_TRIGGER intent did not resolve to TriggerActivity."
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            sleep 8
+            # TriggerActivity finishes itself after forwarding, but the app
+            # process (still hosting MainActivity) must survive; an uncaught
+            # exception in TriggerActivity kills the whole process.
+            pid="$(adb shell pidof com.covertalert.pixeltest || true)"
+            if [ -z "$pid" ]; then
+              echo "::error::App process is not running 8s after PROXY_TRIGGER launch — TriggerActivity crashed."
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            crashes="$(adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: FATAL|Force finishing activity com\.covertalert\.pixeltest' || true)"
+            if [ -n "$crashes" ]; then
+              echo "::error::Fatal crash detected in logcat after PROXY_TRIGGER launch."
+              echo "$crashes"
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            echo "Smoke test passed: MainActivity and TriggerActivity (PROXY_TRIGGER) launched, process alive (pid $pid), no fatal logcat entries."
