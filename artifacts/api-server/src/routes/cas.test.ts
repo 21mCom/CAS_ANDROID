@@ -26,6 +26,7 @@ import {
   MAX_DELIVERY_ATTEMPTS,
   claimCasOutboxItem,
   processCasOutbox,
+  retryDelayMs,
 } from "./cas";
 import {
   createCasDeliverySender,
@@ -1290,9 +1291,10 @@ test("a 429 without a Retry-After hint falls back to exponential backoff", async
     for (const item of outbox) {
       assert.equal(item.state, "FAILED");
       assert.match(item.lastError ?? "", /^rate-limited \(retryable\):/);
-      // First failure: 1s of generic backoff, nowhere near a provider hint.
+      // First failure: 1s of generic backoff with up to -20% jitter (800ms
+      // floor), nowhere near a provider hint.
       const delay = item.nextAttemptAt.getTime() - startedAt;
-      assert.ok(delay >= 1_000, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
+      assert.ok(delay >= 800, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
       assert.ok(delay < 10_000, `nextAttemptAt delay ${delay}ms looks like a hint was applied`);
     }
   } finally {
@@ -1321,13 +1323,54 @@ test("a 429 with a malformed Retry-After hint falls back to exponential backoff"
     for (const item of outbox) {
       assert.equal(item.state, "FAILED");
       assert.match(item.lastError ?? "", /^rate-limited \(retryable\):/);
+      // Same as the unhinted case: 1s backoff with up to -20% jitter.
       const delay = item.nextAttemptAt.getTime() - startedAt;
-      assert.ok(delay >= 1_000, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
+      assert.ok(delay >= 800, `nextAttemptAt delay ${delay}ms skipped the generic backoff`);
       assert.ok(delay < 10_000, `nextAttemptAt delay ${delay}ms looks like a hint was applied`);
     }
   } finally {
     await provider.close();
   }
+});
+
+test("retryDelayMs jitter stays within ±20% of the exponential backoff", () => {
+  // Deterministic extremes: random() === 0 gives the full -20%, === 1 the +20%.
+  for (let attempts = 1; attempts <= 8; attempts += 1) {
+    const backoff = Math.min(
+      60_000,
+      1_000 * 2 ** Math.min(Math.max(attempts - 1, 0), 6),
+    );
+    assert.equal(retryDelayMs(attempts, undefined, () => 0), Math.round(backoff * 0.8));
+    assert.equal(retryDelayMs(attempts, undefined, () => 1), Math.round(backoff * 1.2));
+  }
+
+  // A spread of pseudo-random draws must never leave the jitter band, which
+  // is what spreads a synchronized fleet of retries across the window.
+  let seed = 42;
+  const lcg = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let i = 0; i < 1_000; i += 1) {
+    const attempts = 1 + Math.floor(lcg() * 8);
+    const backoff = Math.min(
+      60_000,
+      1_000 * 2 ** Math.min(Math.max(attempts - 1, 0), 6),
+    );
+    const delay = retryDelayMs(attempts, undefined, lcg);
+    assert.ok(delay >= Math.floor(backoff * 0.8), `delay ${delay}ms is below the -20% jitter floor of ${backoff}ms`);
+    assert.ok(delay <= Math.ceil(backoff * 1.2), `delay ${delay}ms is above the +20% jitter ceiling of ${backoff}ms`);
+  }
+});
+
+test("retryDelayMs jitter never undercuts a provider's Retry-After hint", () => {
+  // A 120s hint against a 1s first-attempt backoff: even the full -20% draw
+  // must not schedule the next attempt sooner than the provider asked for.
+  assert.equal(retryDelayMs(1, 120_000, () => 0), 120_000);
+  assert.equal(retryDelayMs(1, 120_000, () => 1), 120_000);
+  // A hint inside the jitter band is still honored as a lower bound.
+  assert.ok(retryDelayMs(4, 8_800, () => 0) >= 8_800);
+  assert.ok(retryDelayMs(4, 8_800, () => 1) >= 8_800);
 });
 
 test("a rate-limited transport is cooled down for the rest of the run so it cannot starve the other transport", async () => {

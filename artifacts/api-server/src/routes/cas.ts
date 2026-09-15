@@ -585,14 +585,30 @@ async function completeCasOutboxItem(
   return updated;
 }
 
-function retryDelayMs(attempts: number, retryAfterMs?: number) {
+// Bounded jitter on top of the backoff spreads retries out: without it, every
+// alert that failed during a provider outage becomes claimable at the exact
+// same moment and the recovering provider gets hit by a synchronized burst.
+const RETRY_JITTER_FRACTION = 0.2;
+
+export function retryDelayMs(
+  attempts: number,
+  retryAfterMs?: number,
+  random: () => number = Math.random,
+) {
   const backoff = Math.min(
     MAX_RETRY_DELAY_MS,
     1_000 * 2 ** Math.min(Math.max(attempts - 1, 0), 6),
   );
+  // Uniform jitter in [1 - f, 1 + f] * backoff, rounded to whole ms.
+  const jittered = Math.round(
+    backoff * (1 + (random() * 2 - 1) * RETRY_JITTER_FRACTION),
+  );
   // A provider's Retry-After hint is a lower bound on the next attempt, not
-  // a replacement for our own backoff: never retry sooner than either one.
-  return retryAfterMs === undefined ? backoff : Math.max(backoff, retryAfterMs);
+  // a replacement for our own backoff: never retry sooner than either one,
+  // and jitter must not dip below the hint either.
+  return retryAfterMs === undefined
+    ? jittered
+    : Math.max(jittered, retryAfterMs);
 }
 
 export type CasOutboxWorkerResult = {
