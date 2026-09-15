@@ -1,61 +1,57 @@
-import { AlertTriangle, CheckCircle2, RadioTower } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, RadioTower } from 'lucide-react';
+import { Link } from 'wouter';
 import { useOutboxStatus } from '@/hooks/use-outbox-status';
 import { SectionKicker } from '@/components/field-ui';
+import { deriveOutboxWarnings, outboxAgeLabel as ageLabel } from '@/lib/outbox-warnings';
 
-// A P1 alert is expected to reach a provider within seconds; anything still
-// pending after five minutes means the pipeline is stuck, not just retrying.
-const STUCK_PENDING_MS = 5 * 60 * 1000;
+/**
+ * Compact stalled-pipeline warning for pages other than /incidents (e.g. the
+ * overview). Renders nothing while the pipeline is healthy so a quiet overview
+ * stays quiet; the moment the outbox dead-letters or gets stuck, a responder
+ * landing anywhere sees it and can jump straight to the incidents panel.
+ */
+export function OutboxStatusBanner() {
+  const { status, unreachable } = useOutboxStatus();
+  const nowMs = Date.now();
+  const warnings = deriveOutboxWarnings({ status, unreachable, nowMs });
 
-function ageLabel(iso: string, nowMs: number): string {
-  const ageMs = Math.max(0, nowMs - new Date(iso).getTime());
-  const minutes = Math.floor(ageMs / 60_000);
-  if (minutes >= 1) return `${minutes} min ago`;
-  return `${Math.floor(ageMs / 1000)}s ago`;
-}
+  if (warnings.length === 0) return null;
 
-type Warning = { severity: 'danger' | 'caution'; message: string };
-
-function deriveWarnings({ status, unreachable, nowMs }: {
-  status: ReturnType<typeof useOutboxStatus>['status'];
-  unreachable: boolean;
-  nowMs: number;
-}): Warning[] {
-  if (unreachable) {
-    return [{ severity: 'caution', message: 'The console cannot reach the delivery status endpoint — pipeline health is unknown.' }];
-  }
-  if (!status) return [];
-
-  const warnings: Warning[] = [];
-  const { counts, oldestPendingAt, worker, lastDeliveryError } = status;
-  const pending = counts.QUEUED + counts.PROCESSING + counts.FAILED;
-
-  if (counts.DEAD_LETTER > 0) {
-    warnings.push({
-      severity: 'danger',
-      message: `${counts.DEAD_LETTER} ${counts.DEAD_LETTER === 1 ? 'delivery has' : 'deliveries have'} been abandoned (dead letter) — the provider kept rejecting ${counts.DEAD_LETTER === 1 ? 'it' : 'them'} and no further retries will be made.${lastDeliveryError ? ` Last error (${lastDeliveryError.transport}): ${lastDeliveryError.message}` : ''}`,
-    });
-  }
-  if (pending > 0 && oldestPendingAt && nowMs - new Date(oldestPendingAt).getTime() > STUCK_PENDING_MS) {
-    warnings.push({
-      severity: 'danger',
-      message: `${pending} ${pending === 1 ? 'alert is' : 'alerts are'} still waiting; the oldest has been pending for over ${Math.floor((nowMs - new Date(oldestPendingAt).getTime()) / 60_000)} minutes.`,
-    });
-  }
-  if (!worker) {
-    warnings.push({ severity: 'caution', message: 'The delivery worker has not reported a heartbeat from this server — queued alerts may never be sent.' });
-  } else if (worker.stoppedAt) {
-    warnings.push({ severity: 'danger', message: `The delivery worker stopped ${ageLabel(worker.stoppedAt, nowMs)}; queued alerts will not be delivered.` });
-  } else {
-    const lastActivity = worker.lastTickAt ?? worker.startedAt;
-    const staleMs = Math.max(worker.intervalMs * 3, 30_000);
-    if (nowMs - new Date(lastActivity).getTime() > staleMs) {
-      warnings.push({ severity: 'caution', message: `No delivery tick for over ${Math.floor((nowMs - new Date(lastActivity).getTime()) / 1000)}s (expected every ${Math.round(worker.intervalMs / 1000)}s).` });
-    }
-    if (worker.lastError) {
-      warnings.push({ severity: 'caution', message: `Last worker tick error ${ageLabel(worker.lastError.at, nowMs)}: ${worker.lastError.message}` });
-    }
-  }
-  return warnings;
+  const worst = warnings.some((warning) => warning.severity === 'danger') ? 'danger' : 'caution';
+  return (
+    <section
+      className={`fade-up mt-5 border px-4 py-3 ${
+        worst === 'danger' ? 'border-[#e7b8af] bg-[#f8e0db]' : 'border-[#e8c880] bg-[#fff8e7]'
+      }`}
+      data-testid="outbox-status-banner"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1.5">
+          {warnings.map((warning) => (
+            <p
+              key={warning.message}
+              className={`flex items-start gap-2 text-xs leading-5 ${
+                warning.severity === 'danger' ? 'font-bold text-[#914136]' : 'text-[#765013]'
+              }`}
+              data-testid={`outbox-banner-warning-${warning.severity}`}
+            >
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>{warning.message}</span>
+            </p>
+          ))}
+        </div>
+        <Link
+          href="/incidents"
+          className={`inline-flex shrink-0 items-center gap-1 text-xs font-bold ${
+            worst === 'danger' ? 'text-[#914136]' : 'text-[#a06712]'
+          }`}
+          data-testid="link-outbox-banner-incidents"
+        >
+          Open delivery pipeline <ArrowRight size={13} />
+        </Link>
+      </div>
+    </section>
+  );
 }
 
 /**
@@ -66,7 +62,7 @@ function deriveWarnings({ status, unreachable, nowMs }: {
 export function OutboxStatusPanel() {
   const { status, unreachable } = useOutboxStatus();
   const nowMs = Date.now();
-  const warnings = deriveWarnings({ status, unreachable, nowMs });
+  const warnings = deriveOutboxWarnings({ status, unreachable, nowMs });
 
   if (!status && !unreachable) return null;
 
