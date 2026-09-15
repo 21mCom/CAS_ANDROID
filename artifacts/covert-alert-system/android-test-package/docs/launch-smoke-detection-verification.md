@@ -47,6 +47,17 @@ bash .github/scripts/verify-launch-smoke-detection.sh
 # exit 0 = red/green behavior preserved; exit 1 = detection regression; exit 2 = extractor drift
 ```
 
+## CI wiring (automatic since 2026-09-15)
+
+The harness no longer depends on someone remembering to run it. `.github/workflows/launch-smoke-detection-selftest.yml` runs `bash .github/scripts/verify-launch-smoke-detection.sh` on `ubuntu-latest` (no Android SDK or emulator needed, ~seconds) whenever a PR or push touches any side of the contract it guards:
+
+- `.github/workflows/android-test-package-build.yml` (the launch-smoke-test job's `script:` block the harness extracts verbatim),
+- `.github/scripts/verify-launch-smoke-detection.sh` (the harness itself),
+- `.github/scripts/launch-smoke-fixtures/**` (the simulated logcat fixtures),
+- the self-test workflow itself.
+
+Verified locally before wiring: with the workflow unmodified the harness passes 8/8; with all three detection greps in the guarded script block replaced by a never-matching pattern (the silent-breakage shape this protects against) the harness exits 1 reporting `FAIL fatal-logcat-with-live-process` and `FAIL boot-receiver-crash`. The guarded workflow was restored byte-identical afterwards (`git status` clean). First-real-GitHub-run confirmation belongs to the CI-run confirmation tasks.
+
 ## Re-verifying on real CI (scratch branch recipe)
 
 End-to-end confirmation on the hosted runner belongs to the first-real-CI-run task. Recipe:
