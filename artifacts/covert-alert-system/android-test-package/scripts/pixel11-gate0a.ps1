@@ -7,7 +7,14 @@ param(
     # CI-only: replaces the device gates and the real harness with a stub harness
     # invocation that exits non-zero, proving the launcher surfaces a failed run
     # as a non-zero exit instead of reporting success.
-    [switch]$HarnessFailureSimulation
+    [switch]$HarnessFailureSimulation,
+    # CI-only: skips the device gates but keeps the real scripts/measure-gate0a.sh
+    # invocation in --report-self-test mode. CI shadows python3 with a broken shim
+    # so the real harness fails its report write, proving the launcher surfaces an
+    # actual harness failure (not just the stub) as a non-zero exit without the
+    # success message. CAS_GATE0A_SELF_TEST_OUT_DIR overrides the self-test output
+    # parent directory so the check can inspect what the harness wrote.
+    [switch]$RealHarnessFailureSimulation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,6 +78,18 @@ if ($HarnessFailureSimulation) {
     Write-Host 'Harness failure simulation: no device is touched. A stub harness invocation exits non-zero' -ForegroundColor Yellow
     Write-Host 'so CI can prove this launcher surfaces a failed Gate 0A run as a non-zero exit.' -ForegroundColor Yellow
     $arguments = @('-c', 'echo "CAS simulated Gate 0A harness failure" >&2; exit 3')
+} elseif ($RealHarnessFailureSimulation) {
+    Write-Host 'Real-harness failure simulation: no device is touched. The launcher invokes the real' -ForegroundColor Yellow
+    Write-Host 'scripts/measure-gate0a.sh report self-test; CI shadows python3 to force the failure.' -ForegroundColor Yellow
+    $selfTestOutDir = $env:CAS_GATE0A_SELF_TEST_OUT_DIR
+    if ([string]::IsNullOrWhiteSpace($selfTestOutDir)) {
+        $selfTestOutDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-gate0a-real-harness-' + [guid]::NewGuid().ToString('N'))
+    }
+    $arguments = @(
+        'scripts/measure-gate0a.sh',
+        '--report-self-test',
+        '--out-dir', ($selfTestOutDir -replace '\\', '/')
+    )
 } else {
     $adb = Get-Command adb.exe -ErrorAction SilentlyContinue
     if (-not $adb) {
