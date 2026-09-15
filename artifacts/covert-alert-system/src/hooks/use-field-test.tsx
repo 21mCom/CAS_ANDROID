@@ -253,10 +253,19 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       });
       const body = await response.json() as {
         error?: string;
+        issues?: { path?: string; message?: string }[];
         observation?: GateObservation;
         summary?: Gate0AImportSummary;
       };
-      if (!response.ok) throw new Error(body.error || 'Gate 0A report was rejected.');
+      if (!response.ok) {
+        const detail = (body.issues ?? [])
+          .map((issue) => (issue.path ? `${issue.path}: ${issue.message ?? 'Invalid value'}` : issue.message))
+          .filter((line): line is string => Boolean(line))
+          .join('; ');
+        const reason = body.error || 'Gate 0A report was rejected.';
+        // The server error already embeds the top issues; only append when it does not.
+        throw new Error(detail && !reason.includes(detail) ? `${reason} (${detail})` : reason);
+      }
       const observation = body.observation;
       if (!observation) throw new Error('Gate 0A report was accepted without an observation.');
       setState((current) => ({

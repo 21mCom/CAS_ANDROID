@@ -195,10 +195,17 @@ export function hasUnsafeJsonContent(value: unknown, depth = 0): boolean {
     hasUnsafeJsonContent(entry, depth + 1));
 }
 
+export type Gate0aValidationIssue = {
+  /** Dotted path to the offending report field, e.g. "target.model" ("" for the report root). */
+  path: string;
+  /** Human-readable validation message for that field. */
+  message: string;
+};
 export type Gate0aValidationResult =
   | { ok: true; report: Gate0aReport }
-  | { ok: false; error: string };
+  | { ok: false; error: string; issues?: Gate0aValidationIssue[] };
 
+const MAX_REPORTED_ISSUES = 3;
 /**
  * Applies the exact accept/reject rules of POST /api/cas/gate0a/import to an
  * already-parsed JSON value. Both the route and the CI validator call this so
@@ -210,7 +217,7 @@ export function validateGate0aImport(body: unknown): Gate0aValidationResult {
   }
   const parsed = gate0aReportSchema.safeParse(body);
   if (!parsed.success) {
-    return { ok: false, error: "Invalid cas-gate0a-report-v2 report" };
+    return { ok: false, ...describeSchemaIssues(parsed.error) };
   }
   const report = parsed.data;
   if (report.status === "blocked" || report.preflight.status === "BLOCKED") {
@@ -220,4 +227,32 @@ export function validateGate0aImport(body: unknown): Gate0aValidationResult {
     };
   }
   return { ok: true, report };
+}
+
+/**
+ * Summarizes the top zod issues into a message a field operator can act on
+ * (which field failed and why) plus a structured issue list for clients.
+ */
+function describeSchemaIssues(error: z.ZodError): { error: string; issues: Gate0aValidationIssue[] } {
+  const issues = error.issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => ({
+    path: formatIssuePath(issue.path),
+    message: issue.message,
+  }));
+  const detail = issues
+    .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message))
+    .join("; ");
+  const overflow = error.issues.length > MAX_REPORTED_ISSUES
+    ? ` (and ${error.issues.length - MAX_REPORTED_ISSUES} more issue${error.issues.length - MAX_REPORTED_ISSUES === 1 ? "" : "s"})`
+    : "";
+  return {
+    error: `Invalid cas-gate0a-report-v2 report — ${detail}${overflow}`,
+    issues,
+  };
+}
+
+function formatIssuePath(path: PropertyKey[]): string {
+  return path
+    .map((segment) => (typeof segment === "number" ? `[${segment}]` : String(segment)))
+    .join(".")
+    .replace(/\.\[/g, "[");
 }

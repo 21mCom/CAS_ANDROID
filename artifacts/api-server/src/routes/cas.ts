@@ -57,7 +57,7 @@ router.post("/cas/gate0a/import", async (req, res, next) => {
   try {
     const validation = validateGate0aImport(req.body);
     if (!validation.ok) {
-      return res.status(400).json({ error: validation.error });
+      return res.status(400).json({ error: validation.error, issues: validation.issues ?? [] });
     }
     const report = validation.report;
     const observation = {

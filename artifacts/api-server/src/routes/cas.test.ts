@@ -235,6 +235,7 @@ test("Gate 0A import rejects blocked preflight reports", async () => {
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
     error: "Gate 0A report is blocked; resolve the preflight blockers and import the completed report.",
+    issues: [],
   });
 });
 
@@ -339,7 +340,7 @@ test("Gate 0A import rejects an intentionally oversized report", async () => {
   assert.equal(response.status, 413);
 });
 
-test("Gate 0A import rejects malformed reports", async () => {
+test("Gate 0A import rejects malformed reports with the failing field", async () => {
   const malformed = { ...validGate0aReport, schema: "cas-gate0a-report-v0" };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
@@ -348,7 +349,11 @@ test("Gate 0A import rejects malformed reports", async () => {
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
+  const body = await response.json() as { error: string; issues: { path: string; message: string }[] };
+  assert.match(body.error, /^Invalid cas-gate0a-report-v2 report — schema: /);
+  assert.deepEqual(body.issues, [
+    { path: "schema", message: 'Invalid literal value, expected "cas-gate0a-report-v2"' },
+  ]);
 });
 
 test("Gate 0A import rejects physical evidence from an unapproved Pixel model", async () => {
@@ -363,7 +368,11 @@ test("Gate 0A import rejects physical evidence from an unapproved Pixel model", 
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
+  const body = await response.json() as { error: string; issues: { path: string; message: string }[] };
+  assert.match(body.error, /target\.model: Physical evidence must come from the approved Pixel 11 target/);
+  assert.deepEqual(body.issues, [
+    { path: "target.model", message: "Physical evidence must come from the approved Pixel 11 target" },
+  ]);
 });
 
 test("Gate 0A import rejects reports that cross the safety boundary", async () => {
@@ -378,7 +387,11 @@ test("Gate 0A import rejects reports that cross the safety boundary", async () =
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Invalid cas-gate0a-report-v2 report" });
+  const body = await response.json() as { error: string; issues: { path: string; message: string }[] };
+  assert.match(body.error, /safety\.liveMessagingEnabled: /);
+  assert.deepEqual(body.issues, [
+    { path: "safety.liveMessagingEnabled", message: "Invalid literal value, expected false" },
+  ]);
 });
 
 test("Gate 0A import rejects unsafe JSON keys", async () => {
@@ -393,7 +406,7 @@ test("Gate 0A import rejects unsafe JSON keys", async () => {
   });
 
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "Gate 0A report contains unsafe JSON content" });
+  assert.deepEqual(await response.json(), { error: "Gate 0A report contains unsafe JSON content", issues: [] });
 });
 
 after(async () => {
