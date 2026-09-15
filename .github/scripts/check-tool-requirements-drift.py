@@ -13,17 +13,6 @@ literals. This gate greps the packaged kit's human-readable files (*.md,
     API 35
     build-tools;35.0.0      build-tools 35.0.0
 
-plus the assignment forms the preflight's built-in fallback block uses, where a
-bare literal carries no JDK/API/build-tools keyword and would otherwise match
-nothing:
-
-    jdkMinimumMajor = 17
-    apiLevel = 35
-    buildToolsMinimum = [version]'35.0.0'   (or bare '35.0.0')
-
-(The fallback's sdkPlatform = 'android-35' is already caught by the android-35
-form above.)
-
 A literal is a violation only when it DISAGREES with the declared value, so
 both drift directions are caught: a stale literal added while the declaration
 stays put, and a declaration bump that leaves old literals behind.
@@ -72,12 +61,6 @@ def build_patterns(jdk: int, api: int, build_tools: str) -> list[tuple[re.Patter
         (re.compile(r"\bAPI\s+(\d+)\b"), "SDK API level", str(api)),
         (re.compile(r"(?i)\bbuild-tools;(\d+\.\d+\.\d+)\b"), "build-tools", build_tools),
         (re.compile(r"(?i)\bbuild-tools\s+(\d+\.\d+\.\d+)\b"), "build-tools", build_tools),
-        # Assignment forms: the preflight's built-in fallback requirements block
-        # (used when tool-requirements.json is missing) carries bare literals
-        # that match none of the keyword forms above.
-        (re.compile(r"\bjdkMinimumMajor\s*=\s*(\d+)\b"), "JDK major", str(jdk)),
-        (re.compile(r"\bapiLevel\s*=\s*(\d+)\b"), "SDK API level", str(api)),
-        (re.compile(r"\bbuildToolsMinimum\s*=\s*(?:\[version\]\s*)?'(\d+\.\d+\.\d+)'"), "build-tools", build_tools),
     ]
 
 

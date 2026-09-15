@@ -283,6 +283,49 @@ if ($ParserRegressionCheck) {
     if ($null -ne (Get-ToolRequirements (Join-Path $scriptDirectory '..\does-not-exist.json'))) {
         throw 'Tool requirements regression: a missing requirements file must not produce requirements.'
     }
+    $invalidRequirementsFile = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-invalid-' + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        '{"jdk":{"minimumMajor":"seventeen"},"androidSdk":{"apiLevel":35,"platform":"android-35","buildToolsMinimum":"35.0.0"}}' |
+            Set-Content -Path $invalidRequirementsFile -Encoding Ascii
+        if ($null -ne (Get-ToolRequirements $invalidRequirementsFile)) {
+            throw 'Tool requirements regression: an invalid requirements file must not produce requirements.'
+        }
+    } finally {
+        Remove-Item -Force $invalidRequirementsFile -ErrorAction SilentlyContinue
+    }
+
+    # Missing-declaration regression: the preflight must refuse to guess tool
+    # requirements. Run a copy of this script with no tool-requirements.json
+    # beside it and require a BLOCKED tools.requirements outcome with exit
+    # code 2 — there is no built-in fallback block anymore, so a broken kit
+    # can no longer be downgraded to a WARN with substituted minimums.
+    $brokenKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-missing-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $brokenKitDirectory 'scripts') | Out-Null
+    try {
+        $brokenPreflight = Join-Path $brokenKitDirectory 'scripts\windows-preflight.ps1'
+        Copy-Item -Path $PSCommandPath -Destination $brokenPreflight
+        $currentPowerShell = (Get-Process -Id $PID).Path
+        $brokenOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $brokenPreflight -OutputDirectory (Join-Path $brokenKitDirectory 'results') 2>&1)
+        $brokenExitCode = $LASTEXITCODE
+        $brokenText = ($brokenOutput | Out-String)
+        if ($brokenExitCode -ne 2) {
+            throw ('Missing-declaration regression: the preflight exited {0} without tool-requirements.json; a broken kit must abort with exit 2. Output: {1}' -f $brokenExitCode, $brokenText)
+        }
+        if ($brokenText -notmatch '\[BLOCKED\] Tool requirements declaration') {
+            throw ('Missing-declaration regression: the preflight did not fail the tools.requirements check. Output: {0}' -f $brokenText)
+        }
+        if ($brokenText -notmatch 'Restore the complete, unmodified test kit') {
+            throw ('Missing-declaration regression: the preflight did not tell the operator to restore the kit. Output: {0}' -f $brokenText)
+        }
+        if ($brokenText -match 'Java command') {
+            throw ('Missing-declaration regression: the preflight continued past the missing declaration and guessed tool requirements. Output: {0}' -f $brokenText)
+        }
+        if (Get-ChildItem -Path $brokenKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+            throw 'Missing-declaration regression: the preflight wrote a result file for a broken kit.'
+        }
+    } finally {
+        Remove-Item -Recurse -Force $brokenKitDirectory -ErrorAction SilentlyContinue
+    }
 
     $javaCases = @(
         @{ Version = '17.0.2'; ExpectedMajor = 17 },
@@ -445,29 +488,29 @@ Write-Host ''
 $toolRequirementsFile = Join-Path $scriptDirectory '..\tool-requirements.json'
 $toolRequirements = Get-ToolRequirements $toolRequirementsFile
 if ($null -eq $toolRequirements) {
+    # A missing or invalid declaration means the kit was tampered with or
+    # incompletely copied. There is no built-in fallback: guessing minimums
+    # would downgrade a broken kit to a WARN and let a field run start from
+    # unverifiable prerequisites, so the preflight stops here.
     Add-Check `
         -Id 'tools.requirements' `
         -Name 'Tool requirements declaration' `
-        -Status 'WARN' `
-        -Required $false `
+        -Status 'BLOCKED' `
+        -Required $true `
         -Observed ('{0} is missing or does not contain valid requirements.' -f $toolRequirementsFile) `
         -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.' `
-        -NextSteps @('Restore the complete, unmodified test kit; without this file the preflight falls back to built-in minimums that may drift from CI.')
-    $toolRequirements = [pscustomobject]@{
-        jdkMinimumMajor = 17
-        apiLevel = 35
-        sdkPlatform = 'android-35'
-        buildToolsMinimum = [version]'35.0.0'
-    }
-} else {
-    Add-Check `
-        -Id 'tools.requirements' `
-        -Name 'Tool requirements declaration' `
-        -Status 'PASS' `
-        -Required $false `
-        -Observed ('JDK {0}+, {1}, build-tools {2}+' -f $toolRequirements.jdkMinimumMajor, $toolRequirements.sdkPlatform, $toolRequirements.buildToolsMinimum) `
-        -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.'
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess tool requirements when this file is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue without a valid tool-requirements.json. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
 }
+Add-Check `
+    -Id 'tools.requirements' `
+    -Name 'Tool requirements declaration' `
+    -Status 'PASS' `
+    -Required $false `
+    -Observed ('JDK {0}+, {1}, build-tools {2}+' -f $toolRequirements.jdkMinimumMajor, $toolRequirements.sdkPlatform, $toolRequirements.buildToolsMinimum) `
+    -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.'
 $jdkRequirementText = 'JDK {0} or newer' -f $toolRequirements.jdkMinimumMajor
 $buildToolsRequirementText = 'Build-tools {0} or newer' -f $toolRequirements.buildToolsMinimum
 
