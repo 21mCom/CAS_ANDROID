@@ -26,6 +26,26 @@ function Stop-Run {
     exit 2
 }
 
+# The minimum Android API floor derives from tool-requirements.json at the
+# package root (the same declaration the Windows preflight, the Gradle build,
+# and GitHub Actions read) so this install gate moves with the declared SDK
+# platform instead of drifting from it.
+$toolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
+$minimumApiLevel = $null
+try {
+    $parsedRequirements = Get-Content -Path $toolRequirementsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $declaredApiLevel = [int]$parsedRequirements.androidSdk.apiLevel
+    $declaredSdkPlatform = [string]$parsedRequirements.androidSdk.platform
+    if ($declaredApiLevel -ge 1 -and $declaredSdkPlatform -ceq ('android-{0}' -f $declaredApiLevel)) {
+        $minimumApiLevel = $declaredApiLevel
+    }
+} catch {
+    $minimumApiLevel = $null
+}
+if ($null -eq $minimumApiLevel) {
+    Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath; restore the complete, unmodified test kit before installing the MVP app."
+}
+
 Write-Host ''
 Write-Host 'CAS Pixel 11 - MVP app install' -ForegroundColor Cyan
 Write-Host 'Builds the debug APK and installs it on the approved Pixel 11.'
@@ -63,8 +83,8 @@ $api = (& $adb.Source -s $Serial shell getprop ro.build.version.sdk 2>&1 | Out-S
 if ($model -ne 'Pixel 11') {
     Stop-Run "Expected the approved Pixel 11, but ADB reported '$model'."
 }
-if ($api -notmatch '^\d+$' -or [int]$api -lt 35) {
-    Stop-Run "Expected Android API 35 or newer, but ADB reported '$api'."
+if ($api -notmatch '^\d+$' -or [int]$api -lt $minimumApiLevel) {
+    Stop-Run "Expected Android API $minimumApiLevel or newer (declared in tool-requirements.json), but ADB reported '$api'."
 }
 
 Write-Host "Target: $model / serial $Serial / API $api" -ForegroundColor Green
