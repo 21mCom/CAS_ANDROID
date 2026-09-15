@@ -23,14 +23,52 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # tool-requirements.json is the single source of truth shared with
+          # the Windows workstation preflight (scripts/windows-preflight.ps1),
+          # the same way gradle-version.txt pins the Gradle release.
+          jdk="$(jq -er '.jdk.minimumMajor' tool-requirements.json)"
+          api="$(jq -er '.androidSdk.apiLevel' tool-requirements.json)"
+          bt="$(jq -er '.androidSdk.buildToolsMinimum' tool-requirements.json)"
+          echo "jdk=$jdk" >> "$GITHUB_OUTPUT"
+          echo "api-level=$api" >> "$GITHUB_OUTPUT"
+          echo "build-tools=$bt" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Install and verify the declared SDK platform and build-tools
+        env:
+          API_LEVEL: ${{ steps.tool-requirements.outputs.api-level }}
+          BUILD_TOOLS_MIN: ${{ steps.tool-requirements.outputs.build-tools }}
+        run: |
+          set -euo pipefail
+          # CI must satisfy the same declaration the Windows preflight enforces;
+          # building with whatever the runner happens to ship would let CI stay
+          # green on a toolchain the field kit would reject.
+          sdkmanager --sdk_root="$ANDROID_HOME" \
+            "platforms;android-$API_LEVEL" "build-tools;$BUILD_TOOLS_MIN" > /dev/null
+          jar="$ANDROID_HOME/platforms/android-$API_LEVEL/android.jar"
+          if [ ! -f "$jar" ]; then
+            echo "::error::Declared platform android-$API_LEVEL is missing ($jar) after sdkmanager install."
+            exit 1
+          fi
+          newest="$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -1)"
+          if [ "$(printf '%s\n%s\n' "$newest" "$BUILD_TOOLS_MIN" | sort -V | head -1)" != "$BUILD_TOOLS_MIN" ]; then
+            echo "::error::Newest installed build-tools $newest is below the declared minimum $BUILD_TOOLS_MIN."
+            exit 1
+          fi
+          echo "SDK satisfies tool-requirements.json: platform android-$API_LEVEL present, build-tools $newest >= $BUILD_TOOLS_MIN."
 
       - name: Read pinned Gradle version
         id: gradle-version
@@ -70,6 +108,9 @@ jobs:
         working-directory: artifacts/covert-alert-system/android-test-package
         run: |
           set -euo pipefail
+          # The install/verify step above guarantees the newest build-tools
+          # release is at or above the declared minimum, so this aapt always
+          # comes from a qualifying release.
           aapt="$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)"
           apk="app/build/outputs/apk/debug/app-debug.apk"
           "$aapt" dump xmltree "$apk" AndroidManifest.xml > /tmp/apk-manifest.txt
@@ -84,7 +125,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot API 35 emulator and launch MainActivity + PROXY_TRIGGER
+    name: Boot emulator and launch MainActivity + PROXY_TRIGGER
     needs: assemble-debug
     runs-on: macos-latest
     timeout-minutes: 20
@@ -93,11 +134,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -108,10 +158,10 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot API 35 emulator, install APK, launch MainActivity and TriggerActivity
+      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_6

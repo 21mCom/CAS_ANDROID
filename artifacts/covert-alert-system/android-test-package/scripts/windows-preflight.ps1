@@ -176,6 +176,17 @@ function Get-JavaVersionInfo {
     }
 }
 
+function Test-JdkMeetsRequirement {
+    # The Java decision consumes the declared minimum so a drift test with
+    # altered requirement values exercises the same path the real check uses.
+    param(
+        [Parameter(Mandatory = $true)]$JavaVersion,
+        [Parameter(Mandatory = $true)]$Requirements
+    )
+
+    return $JavaVersion.major -ge $Requirements.jdkMinimumMajor
+}
+
 function Get-Version {
     param([string]$Text)
 
@@ -206,6 +217,38 @@ function Get-ExpectedGradleVersion {
     return Get-Version ((Get-Content -Path $Path -Raw).Trim())
 }
 
+function Get-ToolRequirements {
+    # tool-requirements.json is the single source of truth for the JDK and
+    # Android SDK prerequisites the preflight enforces; CI reads the same file,
+    # the way gradle-version.txt pins the Gradle release.
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path $Path -PathType Leaf)) {
+        return $null
+    }
+    try {
+        $parsed = Get-Content -Path $Path -Raw | ConvertFrom-Json
+        $jdkMinimumMajor = [int]$parsed.jdk.minimumMajor
+        $apiLevel = [int]$parsed.androidSdk.apiLevel
+        $sdkPlatform = [string]$parsed.androidSdk.platform
+        $buildToolsMinimum = [version]([string]$parsed.androidSdk.buildToolsMinimum)
+        if ($jdkMinimumMajor -lt 1 -or $apiLevel -lt 1) {
+            return $null
+        }
+        if ($sdkPlatform -cne ('android-{0}' -f $apiLevel)) {
+            return $null
+        }
+        return [pscustomobject]@{
+            jdkMinimumMajor = $jdkMinimumMajor
+            apiLevel = $apiLevel
+            sdkPlatform = $sdkPlatform
+            buildToolsMinimum = $buildToolsMinimum
+        }
+    } catch {
+        return $null
+    }
+}
+
 function Test-GradleVersionAlignment {
     param(
         [Parameter(Mandatory = $true)][version]$Actual,
@@ -233,22 +276,58 @@ if ($ParserRegressionCheck) {
         throw ('SDK root regression: expected {0}, received {1}' -f $driveSdkRoot, ($resolvedSdkRoots -join ', '))
     }
 
+    $regressionRequirements = Get-ToolRequirements (Join-Path $scriptDirectory '..\tool-requirements.json')
+    if ($null -eq $regressionRequirements) {
+        throw 'Tool requirements regression: tool-requirements.json next to the package root was not parsed.'
+    }
+    if ($null -ne (Get-ToolRequirements (Join-Path $scriptDirectory '..\does-not-exist.json'))) {
+        throw 'Tool requirements regression: a missing requirements file must not produce requirements.'
+    }
+
     $javaCases = @(
-        @{ Version = '17.0.2'; ExpectedMajor = 17; ExpectedPass = $true },
-        @{ Version = '21.0.4'; ExpectedMajor = 21; ExpectedPass = $true },
-        @{ Version = '25.0.4.1'; ExpectedMajor = 25; ExpectedPass = $true },
-        @{ Version = '26'; ExpectedMajor = 26; ExpectedPass = $true },
-        @{ Version = '11.0.20'; ExpectedMajor = 11; ExpectedPass = $false },
-        @{ Version = '1.8.0_392'; ExpectedMajor = 8; ExpectedPass = $false }
+        @{ Version = '17.0.2'; ExpectedMajor = 17 },
+        @{ Version = '21.0.4'; ExpectedMajor = 21 },
+        @{ Version = '25.0.4.1'; ExpectedMajor = 25 },
+        @{ Version = '26'; ExpectedMajor = 26 },
+        @{ Version = '11.0.20'; ExpectedMajor = 11 },
+        @{ Version = '1.8.0_392'; ExpectedMajor = 8 }
     )
     foreach ($case in $javaCases) {
         $actual = Get-JavaVersionInfo ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
         if ($null -eq $actual -or $actual.version -ne $case.Version -or $actual.major -ne $case.ExpectedMajor) {
             throw ('Java version regression: {0} was not parsed as major {1}' -f $case.Version, $case.ExpectedMajor)
         }
-        if (($actual.major -ge 17) -ne $case.ExpectedPass) {
-            throw ('Java minimum-version regression: {0} produced the wrong JDK 17 decision.' -f $case.Version)
+    }
+
+    # Drift test: an altered requirements file (different from the declared
+    # values) must change the JDK pass/fail decisions. This catches a hardcoded
+    # threshold in Test-JdkMeetsRequirement that a same-value comparison cannot.
+    $driftDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-drift-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $driftDirectory | Out-Null
+    try {
+        $driftFile = Join-Path $driftDirectory 'tool-requirements.json'
+        '{"jdk":{"minimumMajor":21},"androidSdk":{"apiLevel":36,"platform":"android-36","buildToolsMinimum":"36.0.0"}}' |
+            Set-Content -Path $driftFile -Encoding Ascii
+        $driftedRequirements = Get-ToolRequirements $driftFile
+        if ($null -eq $driftedRequirements -or $driftedRequirements.jdkMinimumMajor -ne 21 -or
+            $driftedRequirements.apiLevel -ne 36 -or $driftedRequirements.sdkPlatform -ne 'android-36' -or
+            $driftedRequirements.buildToolsMinimum -ne [version]'36.0.0') {
+            throw 'Tool requirements drift regression: the altered requirements file was not parsed into the altered values.'
         }
+        $driftCases = @(
+            @{ Version = '17.0.2'; ExpectedPass = $false },
+            @{ Version = '20.0.2'; ExpectedPass = $false },
+            @{ Version = '21.0.4'; ExpectedPass = $true },
+            @{ Version = '25.0.4.1'; ExpectedPass = $true }
+        )
+        foreach ($case in $driftCases) {
+            $actual = Get-JavaVersionInfo ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
+            if ((Test-JdkMeetsRequirement -JavaVersion $actual -Requirements $driftedRequirements) -ne $case.ExpectedPass) {
+                throw ('Java minimum drift regression: {0} produced the wrong decision against an altered minimum of 21.' -f $case.Version)
+            }
+        }
+    } finally {
+        Remove-Item -Recurse -Force $driftDirectory -ErrorAction SilentlyContinue
     }
     foreach ($invalidOutput in @('', 'garbage')) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
@@ -361,6 +440,35 @@ Write-Host ('Target mode: {0}' -f $Target)
 Write-Host 'Default behavior is read-only. No APK, device policy, reboot, message, or evidence action is performed.'
 Write-Host ''
 
+$toolRequirementsFile = Join-Path $scriptDirectory '..\tool-requirements.json'
+$toolRequirements = Get-ToolRequirements $toolRequirementsFile
+if ($null -eq $toolRequirements) {
+    Add-Check `
+        -Id 'tools.requirements' `
+        -Name 'Tool requirements declaration' `
+        -Status 'WARN' `
+        -Required $false `
+        -Observed ('{0} is missing or does not contain valid requirements.' -f $toolRequirementsFile) `
+        -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.' `
+        -NextSteps @('Restore the complete, unmodified test kit; without this file the preflight falls back to built-in minimums that may drift from CI.')
+    $toolRequirements = [pscustomobject]@{
+        jdkMinimumMajor = 17
+        apiLevel = 35
+        sdkPlatform = 'android-35'
+        buildToolsMinimum = [version]'35.0.0'
+    }
+} else {
+    Add-Check `
+        -Id 'tools.requirements' `
+        -Name 'Tool requirements declaration' `
+        -Status 'PASS' `
+        -Required $false `
+        -Observed ('JDK {0}+, {1}, build-tools {2}+' -f $toolRequirements.jdkMinimumMajor, $toolRequirements.sdkPlatform, $toolRequirements.buildToolsMinimum) `
+        -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.'
+}
+$jdkRequirementText = 'JDK {0} or newer' -f $toolRequirements.jdkMinimumMajor
+$buildToolsRequirementText = 'Build-tools {0} or newer' -f $toolRequirements.buildToolsMinimum
+
 $sdkRoot = $null
 $sdkRootCandidates = @(
     @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME) |
@@ -417,9 +525,9 @@ if (-not $javaHomePath) {
         -Status 'BLOCKED' `
         -Required $true `
         -Observed 'JAVA_HOME is not set.' `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.' `
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText) `
         -NextSteps @(
-            'Install a JDK 17 or newer with user consent.',
+            ('Install a {0} with user consent.' -f $jdkRequirementText),
             'Set JAVA_HOME to the JDK folder, not its bin folder.',
             'Close and reopen this window, then rerun the preflight.'
         )
@@ -430,7 +538,7 @@ if (-not $javaHomePath) {
         -Status 'BLOCKED' `
         -Required $true `
         -Observed ('JAVA_HOME does not exist: {0}' -f $javaHomePath) `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.' `
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText) `
         -NextSteps @('Correct JAVA_HOME to the installed JDK folder, then reopen this window.')
 } else {
     Add-Check `
@@ -439,7 +547,7 @@ if (-not $javaHomePath) {
         -Status 'PASS' `
         -Required $true `
         -Observed $javaHomePath `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.'
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText)
 }
 
 if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
@@ -461,8 +569,8 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe could not start. {0}' -f $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
     } elseif ($javaResult.exitCode -ne 0) {
         Add-Check `
             -Id 'java.command' `
@@ -470,8 +578,8 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe failed with exit code {0}. {1}' -f $javaResult.exitCode, $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
     } elseif ($null -eq $javaVersion) {
         Add-Check `
             -Id 'java.command' `
@@ -479,17 +587,17 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe did not report a version. {0}' -f $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
-    } elseif ($javaVersion.major -lt 17) {
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
+    } elseif (-not (Test-JdkMeetsRequirement -JavaVersion $javaVersion -Requirements $toolRequirements)) {
         Add-Check `
             -Id 'java.command' `
             -Name 'Java command' `
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install JDK 17 or newer and point JAVA_HOME and PATH to it.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install {0} and point JAVA_HOME and PATH to it.' -f $jdkRequirementText))
     } else {
         Add-Check `
             -Id 'java.command' `
@@ -497,7 +605,7 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'PASS' `
             -Required $true `
             -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
-            -Expected 'JDK 17 or newer.'
+            -Expected ('{0}.' -f $jdkRequirementText)
     }
 }
 
@@ -636,7 +744,7 @@ if ($buildToolsPath -and (Test-Path $buildToolsPath -PathType Container)) {
         $null -ne (Get-Version $_.Name)
     } | Sort-Object { Get-Version $_.Name } -Descending)
 }
-$minimumBuildTools = [version]'35.0.0'
+$minimumBuildTools = $toolRequirements.buildToolsMinimum
 $selectedBuildTools = $buildTools | Where-Object { (Get-Version $_.Name) -ge $minimumBuildTools } | Select-Object -First 1
 if ($selectedBuildTools) {
     Add-Check `
@@ -645,36 +753,36 @@ if ($selectedBuildTools) {
         -Status 'PASS' `
         -Required $true `
         -Observed $selectedBuildTools.Name `
-        -Expected 'Build-tools 35.0.0 or newer.'
+        -Expected ('{0}.' -f $buildToolsRequirementText)
 } else {
     Add-Check `
         -Id 'android.build-tools' `
         -Name 'Android build-tools' `
         -Status 'BLOCKED' `
         -Required $true `
-        -Observed 'No build-tools 35.0.0 or newer was found.' `
-        -Expected 'Build-tools 35.0.0 or newer.' `
-        -NextSteps @('Install Android SDK Build-Tools 35.0.0 or newer, then rerun the preflight.')
+        -Observed ('No build-tools {0} or newer was found.' -f $toolRequirements.buildToolsMinimum) `
+        -Expected ('{0}.' -f $buildToolsRequirementText) `
+        -NextSteps @(('Install Android SDK {0}, then rerun the preflight.' -f $buildToolsRequirementText))
 }
 
-$platform35Path = if ($sdkRoot) { Join-Path $sdkRoot 'platforms\android-35\android.jar' } else { $null }
-if ($platform35Path -and (Test-Path $platform35Path -PathType Leaf)) {
+$requiredPlatformJar = if ($sdkRoot) { Join-Path $sdkRoot ('platforms\{0}\android.jar' -f $toolRequirements.sdkPlatform) } else { $null }
+if ($requiredPlatformJar -and (Test-Path $requiredPlatformJar -PathType Leaf)) {
     Add-Check `
-        -Id 'android.api-35' `
-        -Name 'Android API 35 platform' `
+        -Id 'android.api-platform' `
+        -Name ('Android API {0} platform' -f $toolRequirements.apiLevel) `
         -Status 'PASS' `
         -Required $true `
-        -Observed $platform35Path `
-        -Expected 'platforms\android-35\android.jar exists.'
+        -Observed $requiredPlatformJar `
+        -Expected ('platforms\{0}\android.jar exists.' -f $toolRequirements.sdkPlatform)
 } else {
     Add-Check `
-        -Id 'android.api-35' `
-        -Name 'Android API 35 platform' `
+        -Id 'android.api-platform' `
+        -Name ('Android API {0} platform' -f $toolRequirements.apiLevel) `
         -Status 'BLOCKED' `
         -Required $true `
-        -Observed 'Android API 35 was not found in the selected SDK.' `
-        -Expected 'platforms\android-35\android.jar exists.' `
-        -NextSteps @('Install Android SDK Platform 35, then rerun the preflight.')
+        -Observed ('Android API {0} was not found in the selected SDK.' -f $toolRequirements.apiLevel) `
+        -Expected ('platforms\{0}\android.jar exists.' -f $toolRequirements.sdkPlatform) `
+        -NextSteps @(('Install Android SDK Platform {0}, then rerun the preflight.' -f $toolRequirements.apiLevel))
 }
 
 $bashCandidates = @(
@@ -964,10 +1072,16 @@ if ($PrepareSdk) {
             -Expected 'Official Android SDK Command-line Tools are installed.' `
             -NextSteps @('Install the official command-line tools, then rerun with -PrepareSdk.')
     } else {
-        $packages = @('platform-tools', 'platforms;android-35', 'build-tools;35.0.0')
+        $packages = @(
+            'platform-tools',
+            ('platforms;{0}' -f $toolRequirements.sdkPlatform),
+            ('build-tools;{0}' -f $toolRequirements.buildToolsMinimum)
+        )
         if ($Target -eq 'emulator' -or $Target -eq 'both') {
             $packages += @(
                 'emulator',
+                # The system image follows the pinned emulator contract owned by
+                # pixel-emulator.ps1, not the workstation platform declaration.
                 'system-images;android-35;google_apis;x86_64'
             )
         }
@@ -1051,11 +1165,11 @@ $result = [ordered]@{
         powershellEdition = $PSVersionTable.PSEdition
     }
     contract = [ordered]@{
-        java = 'JDK 17 or newer'
-        androidSdk = 'Android SDK with API 35'
+        java = $jdkRequirementText
+        androidSdk = ('Android SDK with API {0}' -f $toolRequirements.apiLevel)
         platformTools = 'Android platform-tools with adb'
-        buildTools = 'Android build-tools 35.0.0 or newer'
-        gradle = 'Gradle 8.9 or newer'
+        buildTools = ('Android {0}' -f $buildToolsRequirementText.ToLowerInvariant())
+        gradle = $expectedGradleText
         environment = 'JAVA_HOME plus ANDROID_SDK_ROOT or ANDROID_HOME; Java and platform-tools on PATH'
     }
     checks = @($script:Checks)

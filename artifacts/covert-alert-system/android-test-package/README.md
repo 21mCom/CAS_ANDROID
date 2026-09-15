@@ -15,7 +15,8 @@ All timestamps and outcomes remain in device-local `SharedPreferences`.
 
 ## Build and install
 
-From this directory, with Android SDK API 35 and a JDK 17 installation:
+From this directory, with the Android SDK platform and JDK declared in
+`tool-requirements.json`:
 
 ```sh
 gradle :app:assembleDebug
@@ -28,6 +29,23 @@ declared once in `gradle-version.txt` in this directory: the GitHub Actions
 build reads it to install Gradle, and the Windows preflight reads it to warn
 when the workstation Gradle major.minor differs from the release CI builds
 with. Update that one file to move both sides to a new Gradle release.
+
+The other workstation prerequisites are declared the same way in
+`tool-requirements.json` in this directory: the minimum JDK major version, the
+Android SDK platform (`android-<apiLevel>`), and the minimum build-tools
+release. The GitHub Actions build reads it to select the JDK, install and
+verify the SDK platform/build-tools, and pick the emulator API level; the
+Gradle build reads it for `compileSdk`; and the Windows preflight reads it for
+every Java/SDK/build-tools check and for the `-PrepareSdk` package list.
+Update that one file to move these consumers to new prerequisite levels; do
+not edit the docs or scripts to match.
+
+Two baselines are deliberately fixed and do not follow this declaration: the
+pinned Pixel 8a/API 35 emulator contract (owned by
+`scripts/pixel-emulator.ps1`, including the `system-images;android-35` package
+the preflight installs in emulator mode) and the app's `minSdk`/`targetSdk`,
+which pin the approved Pixel 11 device contract in `app/build.gradle.kts`.
+Change those only through their owning files and docs.
 
 Two build gates protect this package after the 2026-09-14 field run shipped
 Kotlin that had never compiled:
@@ -246,9 +264,10 @@ scripts\run-windows-preflight.cmd -Target physical -PrepareSdk
 
 The script prints the package list and waits for the operator to type
 `INSTALL`. Nothing is installed if that confirmation is not provided. The
-optional preparation only covers `platform-tools`, `platforms;android-35`, and
-`build-tools;35.0.0`; emulator mode also includes the official `emulator`
-package and the pinned `system-images;android-35;google_apis;x86_64` package.
+optional preparation only covers `platform-tools` plus the SDK platform and
+build-tools packages declared in `tool-requirements.json`; emulator mode also
+includes the official `emulator` package and the pinned
+`system-images;android-35;google_apis;x86_64` package.
 It never installs an APK or changes the device.
 
 ### Local preflight contract
@@ -258,11 +277,11 @@ built or measured:
 
 | Area | Required result |
 | --- | --- |
-| Java | JDK 17 or newer; `JAVA_HOME` points to the JDK root and `JAVA_HOME\bin` is on `PATH` |
+| Java | A JDK at or above the minimum major version declared in `tool-requirements.json`; `JAVA_HOME` points to the JDK root and `JAVA_HOME\bin` is on `PATH` |
 | Android SDK | `ANDROID_SDK_ROOT` or `ANDROID_HOME` points to an existing SDK; if both are set, they point to the same folder |
 | Platform tools | `platform-tools\adb.exe` exists and `platform-tools` is on `PATH`; `adb version` succeeds |
-| Android platform | `platforms\android-35\android.jar` exists |
-| Build tools | Android Build-Tools 35.0.0 or newer exists |
+| Android platform | The `platforms\android-<apiLevel>\android.jar` declared in `tool-requirements.json` exists |
+| Build tools | An Android Build-Tools release at or above the minimum declared in `tool-requirements.json` exists |
 | Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release |
 | Physical target | An approved physical device appears as `device` in `adb devices -l`; `unauthorized` and `offline` are blocking states |
 | Emulator target | `emulator\emulator.exe` exists; use the pinned lifecycle command to create/start and validate the emulator |
@@ -274,11 +293,12 @@ commands can include the JSON alongside the in-app report and host timing log.
 
 ### Recovery paths
 
-- **Missing SDK or API 35:** In Android Studio, open **Tools > SDK Manager**,
-  select Android SDK Platform 35, Android SDK Build-Tools 35.0.0 or newer, and
-  Android SDK Platform-Tools, then apply the change with the operator's
-  approval. Alternatively, use the script's `-PrepareSdk` path after installing
-  the official command-line tools.
+- **Missing SDK platform or build tools:** In Android Studio, open
+  **Tools > SDK Manager**, select the Android SDK Platform and Build-Tools
+  releases declared in `tool-requirements.json`, plus Android SDK
+  Platform-Tools, then apply the change with the operator's approval.
+  Alternatively, use the script's `-PrepareSdk` path after installing the
+  official command-line tools.
 - **`JAVA_HOME` or `ANDROID_SDK_ROOT` is missing:** Set the variable to the
   installation folder, not its `bin` or `platform-tools` child folder. If both
   `ANDROID_SDK_ROOT` and `ANDROID_HOME` are present, make them identical or
@@ -304,7 +324,8 @@ commands can include the JSON alongside the in-app report and host timing log.
   Windows security by downloading replacement binaries or disabling protection.
 - **Gradle cannot run or warns about a version mismatch:** Confirm the `gradle`
   executable on PATH matches the release declared in `gradle-version.txt` and
-  that Java points to the same JDK 17+ installation. The package has no
+  that Java points to the same JDK installation that satisfies
+  `tool-requirements.json`. The package has no
   checked-in Gradle wrapper, so the workstation's approved Gradle installation
   is intentional; `gradle-version.txt` keeps it aligned with the release CI
   builds with.
