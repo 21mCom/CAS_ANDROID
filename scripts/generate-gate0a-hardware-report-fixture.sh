@@ -50,6 +50,21 @@ command -v python3 >/dev/null 2>&1 || { echo "Required command is missing: pytho
 STARTED_AT_MS="$(date -u -d "$STARTED_AT_UTC" +%s%3N)"
 FINAL_STATUS="complete"
 
+# write_report() embeds the harness's pinned-device contract (pinned AVD name,
+# emulator API, minimum physical API) in the preflight expectations. Derive
+# those constants from the same tool-requirements.json declaration the harness
+# reads so the fixture cannot drift from real output.
+readonly TOOL_REQUIREMENTS_JSON="$REPO_ROOT/artifacts/covert-alert-system/android-test-package/tool-requirements.json"
+[[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
+    { echo "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON" >&2; exit 2; }
+DECLARED_API="$(sed -nE 's/^[[:space:]]*"apiLevel"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+DECLARED_PLATFORM_API="$(sed -nE 's/^[[:space:]]*"platform"[[:space:]]*:[[:space:]]*"android-([0-9]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+[[ "$DECLARED_API" =~ ^[0-9]+$ && "$DECLARED_PLATFORM_API" =~ ^[0-9]+$ && "$DECLARED_API" == "$DECLARED_PLATFORM_API" ]] ||
+    { echo "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (androidSdk.apiLevel and androidSdk.platform must be consistent)" >&2; exit 2; }
+PINNED_AVD="CAS_Pixel_8a_API_${DECLARED_API}"
+EMULATOR_API="$DECLARED_API"
+MIN_PHYSICAL_API="$DECLARED_API"
+
 RUN_DIR="$OUT_DIR/$RUN_DIR_NAME"
 mkdir -p "$RUN_DIR"/{screenshots,logcat,tasks,launch}
 EVENTS_FILE="$RUN_DIR/events.ndjson"
@@ -186,8 +201,9 @@ for label in cold-launch warm-launch back home recents unlocked-launch locked-la
 done
 
 # Reuse the harness's own writer so the fixture cannot drift from real output.
-# write_report() is self-contained: it reads $EVENTS_FILE/$ENV_FILE and the
-# STARTED_AT_*/FINAL_STATUS variables and writes report.json/report.md.
+# write_report() is self-contained: it reads $EVENTS_FILE/$ENV_FILE, the
+# STARTED_AT_*/FINAL_STATUS variables, and the pinned-device constants derived
+# above, and writes report.json/report.md.
 extracted="$(mktemp)"
 # The function body ends at the heredoc terminator (PY) followed by the closing
 # brace; a naive brace match would stop at the Python report dict's closing

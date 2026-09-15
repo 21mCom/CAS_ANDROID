@@ -287,6 +287,87 @@ jobs:
           print("report.json parsed; status:", report["status"])
           PYEOF
 
+      - name: Pinned device constants track the declared SDK platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Step-local PATH changes do not persist between steps: establish the
+          # python3 shim again (setup-python exposes python on Windows).
+          if ! command -v python3 >/dev/null 2>&1; then
+            shim_dir="$RUNNER_TEMP/python3-shim"
+            mkdir -p "$shim_dir"
+            printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$shim_dir/python3"
+            chmod +x "$shim_dir/python3"
+            export PATH="$shim_dir:$PATH"
+          fi
+          # Drift the packaged kit's declared platform and prove the bash
+          # harness's pinned-device contract (AVD name, emulator API, minimum
+          # physical API, and report expectations) moves with it instead of
+          # staying pinned to a hardcoded level. The kit copy is disposable;
+          # restore it anyway so later steps see the unmodified kit.
+          kit_root="$(cygpath "$PACKAGED_KIT_ROOT")"
+          harness="$kit_root/scripts/measure-gate0a.sh"
+          requirements="$kit_root/tool-requirements.json"
+          cp "$requirements" "$RUNNER_TEMP/tool-requirements.json.bak"
+          trap 'cp "$RUNNER_TEMP/tool-requirements.json.bak" "$requirements"' EXIT
+          python - "$(cygpath -w "$requirements")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          data["androidSdk"]["apiLevel"] = 36
+          data["androidSdk"]["platform"] = "android-36"
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PYEOF
+          out_parent="$RUNNER_TEMP/gate0a-drifted-declaration"
+          rm -rf "$out_parent"
+          output="$("$harness" --report-self-test --out-dir "$out_parent" 2>&1)"
+          printf '%s\n' "$output"
+          drifted_run_dir="$(printf '%s\n' "$output" | sed -n 's/.*CAS_GATE0A_REPORT_SELF_TEST_OK runDir=//p' | tail -n 1 | tr -d '\r')"
+          if [[ -z "$drifted_run_dir" ]]; then
+            echo "The harness did not complete the report self-test with a declared API 36 platform." >&2
+            exit 1
+          fi
+          grep -q 'CAS_Pixel_8a_API_36' "$drifted_run_dir/report.json" || {
+            echo "Report expectations do not reflect the declared API 36 pinned AVD." >&2
+            exit 1
+          }
+          grep -q 'Pinned emulator API 36, or approved physical Pixel 11 on API 36 or newer' "$drifted_run_dir/report.json" || {
+            echo "Report expectations do not reflect the declared API 36 minimum physical API." >&2
+            exit 1
+          }
+          grep -P -q '^apiLevel\t36$' "$drifted_run_dir/environment.tsv" || {
+            echo "The harness did not derive the recorded API level from the declared platform." >&2
+            exit 1
+          }
+          echo "Declared API 36 produced a matching pinned-device contract in the report."
+          # An inconsistent declaration must block explicitly, never silently default.
+          python - "$(cygpath -w "$requirements")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          data["androidSdk"]["apiLevel"] = 36
+          data["androidSdk"]["platform"] = "android-35"
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PYEOF
+          set +e
+          bad_output="$("$harness" --report-self-test --out-dir "$RUNNER_TEMP/gate0a-inconsistent-declaration" 2>&1)"
+          bad_code=$?
+          set -e
+          printf '%s\n' "$bad_output"
+          if [[ $bad_code -ne 2 ]]; then
+            echo "An inconsistent tool-requirements.json did not block the harness with exit 2 (exit $bad_code)." >&2
+            exit 1
+          fi
+          grep -q 'BLOCKED' <<<"$bad_output" || {
+            echo "An inconsistent tool-requirements.json did not produce a BLOCKED message." >&2
+            exit 1
+          }
+          echo "Inconsistent declaration blocked the harness explicitly, as required."
+
       - name: Generate a hardware-shaped report with the repo-only fixture generator
         shell: bash
         run: |
