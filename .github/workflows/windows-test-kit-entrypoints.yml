@@ -19,9 +19,16 @@ on:
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
   workflow_dispatch:
 
+# Field operators run the ZIP produced by package-windows-test-kit.ps1, not the
+# repository checkout. Every check below therefore runs against the packaged
+# copy: the first job builds the ZIP exactly as a field packager would, and the
+# check jobs extract it and test only what the ZIP contains. A packaging
+# regression that drops, renames, or stale-copies a script fails the build
+# instead of shipping a broken kit.
+
 jobs:
-  windows-entrypoints:
-    name: Windows PowerShell launcher smoke checks
+  package-kit:
+    name: Build the Windows test kit ZIP
     runs-on: windows-latest
     timeout-minutes: 10
 
@@ -29,23 +36,112 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
+      - name: Package the Windows test kit
+        shell: pwsh
+        run: |
+          $zipPath = Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-Windows-Test-Kit-v6.zip'
+          # The APK build gate is covered by the "Android test package build"
+          # workflow; packaging still runs the repo-copy entry-point gate itself.
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1 -SkipApkBuild -OutputPath $zipPath
+          if ($LASTEXITCODE -ne 0) { throw "package-windows-test-kit.ps1 exited $LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) { throw "Packaging reported success but $zipPath is missing." }
 
-      - name: Run Windows PowerShell and CMD entry-point checks
-        run: pnpm --filter @workspace/covert-alert-system run test:windows-entrypoints
+      - name: Upload the Windows test kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-kit
+          path: ${{ runner.temp }}/CAS-Pixel11-Windows-Test-Kit-v6.zip
+          retention-days: 7
+
+  windows-entrypoints:
+    name: Windows PowerShell launcher smoke checks
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: package-kit
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download the packaged Windows test kit
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-test-kit
+          path: ${{ runner.temp }}
+
+      - name: Extract the packaged Windows test kit
+        shell: pwsh
+        run: |
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'packaged-windows-test-kit'
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-Windows-Test-Kit-v6.zip') -DestinationPath $extractRoot -Force
+          $kitRoot = Join-Path $extractRoot 'CAS-Pixel11-Windows-Test-Kit-v6'
+          if (-not (Test-Path -LiteralPath $kitRoot -PathType Container)) { throw "The packaged ZIP does not contain the expected kit root: $kitRoot" }
+          Add-Content -Path $env:GITHUB_ENV -Value "PACKAGED_KIT_ROOT=$kitRoot"
+
+      - name: Verify the packaged kit matches the repository checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repoRoot = [System.IO.Path]::GetFullPath('artifacts/covert-alert-system/android-test-package')
+          $packagedRoot = [System.IO.Path]::GetFullPath($env:PACKAGED_KIT_ROOT)
+          # package-windows-test-kit.ps1 intentionally strips Gradle outputs; a
+          # field workstation regenerates them via the APK build gate.
+          $excludedPrefixes = @('.gradle/', 'app/build/')
+
+          function Get-RelativeFilePaths([string]$Root) {
+              @(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
+                  $_.FullName.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+              })
+          }
+
+          $repoFiles = @(Get-RelativeFilePaths $repoRoot | Where-Object {
+              $relative = $_
+              -not @($excludedPrefixes | Where-Object { $relative.StartsWith($_) })
+          })
+          $packagedFiles = @(Get-RelativeFilePaths $packagedRoot)
+
+          $missing = @($repoFiles | Where-Object { $packagedFiles -notcontains $_ })
+          $unexpected = @($packagedFiles | Where-Object { $repoFiles -notcontains $_ })
+          if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+              $missing | ForEach-Object { Write-Host "MISSING from package: $_" }
+              $unexpected | ForEach-Object { Write-Host "UNEXPECTED in package: $_" }
+              throw ("The packaged kit file set differs from the repository checkout ({0} missing, {1} unexpected)." -f $missing.Count, $unexpected.Count)
+          }
+
+          foreach ($relative in $repoFiles) {
+              $repoHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative) -Algorithm SHA256).Hash
+              $packagedHash = (Get-FileHash -LiteralPath (Join-Path $packagedRoot $relative) -Algorithm SHA256).Hash
+              if ($repoHash -ne $packagedHash) {
+                  throw "Packaged file content differs from the repository checkout: $relative"
+              }
+          }
+          Write-Host ("Packaged kit matches the repository checkout ({0} files verified)." -f $repoFiles.Count)
+
+      - name: Run entry-point checks against the packaged kit
+        shell: pwsh
+        run: |
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1 -PackageRoot $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "test-windows-entrypoints.ps1 exited $LASTEXITCODE" }
 
   git-bash-report:
     name: Gate 0A report generation under Git Bash
     runs-on: windows-latest
     timeout-minutes: 10
+    needs: package-kit
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Download the packaged Windows test kit
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-test-kit
+          path: ${{ runner.temp }}
+
+      - name: Extract the packaged Windows test kit
+        shell: pwsh
+        run: |
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'packaged-windows-test-kit'
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-Windows-Test-Kit-v6.zip') -DestinationPath $extractRoot -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "PACKAGED_KIT_ROOT=$(Join-Path $extractRoot 'CAS-Pixel11-Windows-Test-Kit-v6')"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -65,7 +161,8 @@ jobs:
             chmod +x "$shim_dir/python3"
             export PATH="$shim_dir:$PATH"
           fi
-          harness="artifacts/covert-alert-system/android-test-package/scripts/measure-gate0a.sh"
+          # Exercise the packaged copy: field operators run the ZIP, not the checkout.
+          harness="$(cygpath "$PACKAGED_KIT_ROOT")/scripts/measure-gate0a.sh"
           out_parent="$RUNNER_TEMP/gate0a-report-selftest"
           rm -rf "$out_parent"
           set +e
@@ -103,7 +200,7 @@ jobs:
           mkdir -p "$shim_dir"
           printf '#!/usr/bin/env bash\nexit 1\n' > "$shim_dir/python3"
           chmod +x "$shim_dir/python3"
-          harness="artifacts/covert-alert-system/android-test-package/scripts/measure-gate0a.sh"
+          harness="$(cygpath "$PACKAGED_KIT_ROOT")/scripts/measure-gate0a.sh"
           out_parent="$RUNNER_TEMP/gate0a-report-negative"
           rm -rf "$out_parent"
           set +e
