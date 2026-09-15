@@ -125,7 +125,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED
+    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED + LOCKED_BOOT_COMPLETED
     needs: assemble-debug
     runs-on: macos-latest
     timeout-minutes: 20
@@ -158,7 +158,7 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED
+      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED and LOCKED_BOOT_COMPLETED
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ steps.tool-requirements.outputs.api-level }}
@@ -270,4 +270,93 @@ jobs:
               adb logcat -d | tail -200
               exit 1
             fi
-            echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), and BootReceiver (BOOT_COMPLETED) exercised, process alive (pid $pid), no fatal logcat entries."
+            echo "BootReceiver (BOOT_COMPLETED) check passed: broadcast delivered, process alive (pid $pid), no fatal logcat entries."
+            # Fourth entry point: the REAL pre-unlock (direct-boot) path.
+            # BootReceiver is directBootAware and handles LOCKED_BOOT_COMPLETED,
+            # delivered by the system BEFORE the user unlocks the device.
+            # Injecting that action with `am broadcast` after unlock would NOT
+            # exercise direct boot: credential-encrypted (CE) storage is
+            # already available then, so a regression that touches CE storage
+            # in onReceive (e.g. TestStore switched from
+            # createDeviceProtectedStorageContext to plain getSharedPreferences)
+            # would stay green here and only crash on a field device rebooting
+            # to the lock screen. Instead: set a lockscreen PIN so the next
+            # boot keeps user 0 LOCKED until credentials are entered, reboot,
+            # and let the SYSTEM deliver LOCKED_BOOT_COMPLETED naturally in
+            # the direct-boot phase. Uses the root shell acquired above;
+            # locksettings needs it (and a userdebug/google_apis image).
+            if ! adb shell locksettings set-pin 1234; then
+              echo "::error::locksettings set-pin failed — cannot force the emulator into the locked (direct-boot) state."
+              exit 1
+            fi
+            # Calibrate the locked-state probe while the device is known to be
+            # unlocked: CE storage must report available. If it does not read
+            # "true" here, the property cannot prove anything after the reboot
+            # and this job must fail loudly rather than claim direct-boot
+            # coverage it cannot verify.
+            ce_now="$(adb shell getprop sys.user.0.ce_available | tr -d '[:space:]')"
+            if [ "$ce_now" != "true" ]; then
+              echo "::error::sys.user.0.ce_available reads '$ce_now' on an unlocked emulator — the locked-state probe is untrustworthy; refusing to claim direct-boot coverage."
+              exit 1
+            fi
+            # Re-clear logcat so post-reboot output belongs to the locked-boot
+            # phase only (the natural LOCKED_BOOT_COMPLETED delivery happens
+            # during boot, before we could clear).
+            adb logcat -c
+            adb reboot
+            adb wait-for-device
+            booted=""
+            for i in $(seq 1 60); do
+              bc="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]')"
+              if [ "$bc" = "1" ]; then booted=1; break; fi
+              sleep 5
+            done
+            if [ -z "$booted" ]; then
+              echo "::error::Emulator did not finish the PIN-protected reboot within 5 minutes."
+              exit 1
+            fi
+            # adbd may drop root across the reboot; re-acquire it before
+            # reading /data/user_de below.
+            adb root
+            adb wait-for-device
+            if ! adb shell id | grep -q "uid=0"; then
+              echo "::error::adb root did not yield a root shell after reboot — cannot read device-protected storage for the delivery-evidence check."
+              exit 1
+            fi
+            # Explicitly assert the precondition that makes this phase
+            # meaningful: user 0 is STILL LOCKED (credential-encrypted storage
+            # unavailable). Without this, everything below proves nothing
+            # about the pre-unlock path.
+            ce_after="$(adb shell getprop sys.user.0.ce_available | tr -d '[:space:]')"
+            if [ "$ce_after" = "true" ]; then
+              echo "::error::sys.user.0.ce_available is still 'true' after a PIN-protected reboot — the device is NOT in the locked/direct-boot state; cannot validate the pre-unlock path."
+              exit 1
+            fi
+            echo "Locked-state precondition holds: user 0 still locked after PIN-protected reboot (ce_available='$ce_after', was 'true' while unlocked)."
+            adb shell dumpsys user | grep -E '^[[:space:]]+0: ' || true
+            sleep 5
+            # Crash detection, scoped to our package (FATAL EXCEPTION blocks
+            # name the process on the following lines, so another component's
+            # boot-time crash cannot false-positive here). Note pidof is NOT
+            # a valid detector in this phase: pre-unlock the app has no reason
+            # to keep a process alive after the receiver returns.
+            if adb logcat -d | grep -A2 'FATAL EXCEPTION' | grep -q 'Process: com.covertalert.pixeltest'; then
+              echo "::error::BootReceiver crashed during locked (pre-unlock) boot — FATAL EXCEPTION for com.covertalert.pixeltest in logcat."
+              adb logcat -d | grep -B2 -A30 'FATAL EXCEPTION' || true
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            # Delivery evidence: BootReceiver journals BOOT_OBSERVED into
+            # device-protected storage (TestStore), which is exactly the
+            # storage available pre-unlock. Assert the LOCKED_BOOT_COMPLETED
+            # event is there — without this the phase would be green even if
+            # the receiver silently never ran (e.g. a manifest regression
+            # dropping directBootAware or the intent-filter).
+            journal="$(adb shell cat /data/user_de/0/com.covertalert.pixeltest/shared_prefs/gate0a-local-journal.xml 2>/dev/null || true)"
+            if ! echo "$journal" | grep -q 'LOCKED_BOOT_COMPLETED'; then
+              echo "::error::No LOCKED_BOOT_COMPLETED event in the device-protected journal — BootReceiver did not record the pre-unlock broadcast (or never ran)."
+              echo "$journal"
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), BootReceiver (BOOT_COMPLETED), and BootReceiver (LOCKED_BOOT_COMPLETED, verified while user 0 locked) all exercised; pre-unlock journal entry present; no fatal logcat entries."

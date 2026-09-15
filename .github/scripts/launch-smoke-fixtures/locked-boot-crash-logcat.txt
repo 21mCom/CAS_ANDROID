@@ -1,0 +1,12 @@
+--------- beginning of main
+09-15 10:06:00.100  1560  1580 I ActivityManager: Broadcasting: Intent { act=android.intent.action.LOCKED_BOOT_COMPLETED pkg=com.covertalert.pixeltest }
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: FATAL EXCEPTION: main
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: Process: com.covertalert.pixeltest, PID: 2100
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: java.lang.RuntimeException: Unable to start receiver com.covertalert.pixeltest.BootReceiver: java.lang.IllegalStateException: LOCKED-BOOT-CRASH-MARKER
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread.handleReceiver(ActivityThread.java:4370)
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread.-$$Nest$mhandleReceiver(ActivityThread.java:0)
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2300)
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: Caused by: java.lang.IllegalStateException: LOCKED-BOOT-CRASH-MARKER
+09-15 10:06:00.280  2100  2100 E AndroidRuntime: 	at com.covertalert.pixeltest.BootReceiver.onReceive(BootReceiver.kt:9)
+09-15 10:06:00.480  1560  1580 I ActivityManager: Process com.covertalert.pixeltest (pid 2100) has died: fg TOP

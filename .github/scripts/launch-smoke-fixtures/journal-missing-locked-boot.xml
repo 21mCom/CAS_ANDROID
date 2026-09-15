@@ -1,0 +1,4 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="events">[{&quot;type&quot;:&quot;BOOT_OBSERVED&quot;,&quot;wallClockMs&quot;:1758000000000,&quot;elapsedRealtimeMs&quot;:45000,&quot;action&quot;:&quot;android.intent.action.BOOT_COMPLETED&quot;,&quot;directBootAware&quot;:true}]</string>
+</map>

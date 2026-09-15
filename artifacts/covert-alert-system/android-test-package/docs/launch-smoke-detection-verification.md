@@ -36,7 +36,7 @@
 
 ## Ongoing regression coverage (no emulator needed)
 
-`.github/scripts/verify-launch-smoke-detection.sh` extracts the same `script:` block verbatim and runs it against a simulated adb with realistic logcat fixtures (`.github/scripts/launch-smoke-fixtures/`). The simulated adb is phase-aware: it counts `logcat -c` calls so a scenario can serve a crash fixture for one entry point only (1=MainActivity, 2=PROXY_TRIGGER, 3=BOOT_COMPLETED broadcast). After the BootReceiver coverage was added it passes 7/7: healthy green through all three entry points, crash-after-successful-am-start red with excerpt, fatal-logcat-with-live-process red with excerpt, am-start failure red, unrelated-package force-finish green, BootReceiver-crash-on-BOOT_COMPLETED red with excerpt, BOOT_COMPLETED-send-failure red.
+`.github/scripts/verify-launch-smoke-detection.sh` extracts the same `script:` block verbatim and runs it against a simulated adb with realistic logcat fixtures (`.github/scripts/launch-smoke-fixtures/`). The simulated adb is phase-aware: it counts `logcat -c` calls so a scenario can serve a crash fixture for one entry point only (1=MainActivity, 2=PROXY_TRIGGER, 3=BOOT_COMPLETED broadcast, 4=locked-boot phase after the PIN-protected reboot), and models the reboot itself (flipping `ce_available` and serving journal fixtures). After the direct-boot coverage was added it passes 12/12: healthy green through all four entry points, crash-after-successful-am-start red with excerpt, fatal-logcat-with-live-process red with excerpt, am-start failure red, unrelated-package force-finish green, BootReceiver-crash-on-BOOT_COMPLETED red with excerpt, BOOT_COMPLETED-send-failure red, adb-root-unavailable red, BootReceiver-crash-in-locked-boot red with excerpt, missing-LOCKED_BOOT_COMPLETED-journal-entry red, device-failed-to-stay-locked red, and set-pin failure red.
 
 Negative controls (proof the harness is not vacuous): mutating **one** of the three logcat patterns still goes red via the remaining patterns; mutating **all three** lets a crash slip through green, and the harness reports `FAIL fatal-logcat-with-live-process` with exit 1. Both mutations were reverted byte-identical afterwards.
 
@@ -66,3 +66,62 @@ End-to-end confirmation on the hosted runner belongs to the first-real-CI-run ta
 2. Push a change touching `artifacts/covert-alert-system/android-test-package/**` (or `workflow_dispatch`).
 3. Confirm `assemble-debug` succeeds and `launch-smoke-test` **fails**, with the `FATAL EXCEPTION` / `smoke-test self-check` excerpt visible in the job log.
 4. Revert the throw, re-run, confirm green.
+
+
+## LOCKED_BOOT_COMPLETED (direct-boot) follow-up — 2026-09-15
+
+**Question:** the manifest registers BootReceiver with `directBootAware=true` and an
+`android.intent.action.LOCKED_BOOT_COMPLETED` filter — the broadcast delivered BEFORE the
+user unlocks the device. Can the job exercise that pre-unlock path, and does the same
+crash detection hold there?
+
+**Why injecting the action is not enough:** a first cut of this phase sent
+`am broadcast -a android.intent.action.LOCKED_BOOT_COMPLETED` after the earlier phases
+had run. That is NOT direct-boot coverage: by then user 0 is unlocked and
+credential-encrypted (CE) storage is available, so a regression that touches CE storage
+in `onReceive` (e.g. TestStore switched from `createDeviceProtectedStorageContext()` to
+plain `getSharedPreferences`) would stay green in CI and only crash on a field device
+rebooting to the lock screen. The phase was reworked to exercise the real locked state.
+
+**Coverage added (real locked boot):** the job now
+
+1. sets a lockscreen PIN (`locksettings set-pin 1234`, root shell from the
+   BOOT_COMPLETED phase), so the next boot keeps user 0 LOCKED until credentials are
+   entered;
+2. calibrates the locked-state probe while still unlocked: `sys.user.0.ce_available`
+   must read `true` — if it does not, the property can prove nothing after the reboot
+   and the job fails loudly instead of claiming coverage;
+3. reboots and waits for `sys.boot_completed` — the system then delivers
+   LOCKED_BOOT_COMPLETED naturally, during the direct-boot phase, to the
+   directBootAware receiver (no injection);
+4. explicitly asserts the precondition: `sys.user.0.ce_available` must NOT be `true`
+   after the PIN-protected reboot (user 0 still locked, CE storage unavailable);
+5. checks for a package-scoped `FATAL EXCEPTION` (`Process: com.covertalert.pixeltest`
+   within 2 lines) in the post-reboot logcat — `pidof` is NOT a valid detector here,
+   since pre-unlock the app has no reason to keep a process after the receiver returns;
+6. requires delivery evidence: the device-protected journal
+   (`/data/user_de/0/com.covertalert.pixeltest/shared_prefs/gate0a-local-journal.xml`,
+   read as root — DE storage is available pre-unlock) must contain a BOOT_OBSERVED event
+   with action LOCKED_BOOT_COMPLETED, proving the receiver actually ran and that its
+   journal writes go to direct-boot-safe storage.
+
+**Runtime cost:** one emulator reboot (~1–2 min on the accelerated macOS runner) —
+comfortably within the existing 20-minute job timeout.
+
+**Self-test:** `.github/scripts/verify-launch-smoke-detection.sh` now models the
+reboot in its fake adb (a reboot marker flips `ce_available` from `true` to empty and
+serves a post-reboot logcat/journal fixture) and proves 12/12 scenarios, including the
+new red cases: `locked-boot-receiver-crash` (FATAL for our process in the post-reboot
+logcat), `locked-boot-no-delivery-evidence` (journal lacks the LOCKED_BOOT_COMPLETED
+event — no-crash alone is not proof of delivery), `locked-state-precondition-fails`
+(`ce_available` still `true` after reboot — device never actually locked), and
+`set-pin-failure`. Fixtures: `locked-boot-crash-logcat.txt`, `journal-healthy.xml`,
+`journal-missing-locked-boot.xml`.
+
+**Note on a live re-verification attempt:** standing up the API 35 emulator again in
+this workspace was attempted but the system image plus a writable AVD no longer fits
+the per-user disk quota, so the PIN-protected reboot path has not yet been observed on
+a real boot here. The first real CI run (the existing first-real-CI-run task) is where
+`locksettings set-pin` and the `ce_available` behaviour on the actual
+`google_apis`/pixel_6 image get confirmed; both fail loudly (steps 1–2 above) if the
+image does not cooperate, so the job cannot silently claim direct-boot coverage.
