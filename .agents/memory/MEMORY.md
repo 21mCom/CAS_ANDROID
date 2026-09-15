@@ -11,6 +11,7 @@
 - [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
+- [CAS tool-requirements gate pair](cas-api-floor-gates.md) — drift gate catches disagreeing literals, apifloor gate catches matching ones in scripts; deliberate fixtures may need both marker prefixes.
 - [Gate 0A harness python3 shim coupling](gate0a-harness-python3-shim.md) — CI shadows python3 with a broken shim, so harness code before write_report must not call python3; the fixture generator extracts write_report and needs its globals.
 - [Launch smoke detection lessons](launch-smoke-detection-selftest.md) — am start -W exits 0 on onCreate crashes; tail -200 alone can miss the fatal block — grep it explicitly.
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — local emulator IS possible: workspace volume (home has ~5G quota), nix-store libX11, -no-accel TCG, ~7min cold boot.

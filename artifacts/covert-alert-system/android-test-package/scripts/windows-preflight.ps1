@@ -283,6 +283,7 @@ if ($ParserRegressionCheck) {
     if ($null -ne (Get-ToolRequirements (Join-Path $scriptDirectory '..\does-not-exist.json'))) {
         throw 'Tool requirements regression: a missing requirements file must not produce requirements.'
     }
+    # apifloor-gate: allow-begin -- deliberate invalid-declaration fixture: it must hardcode concrete values to prove an unparsable declaration is rejected, not derived.
     $invalidRequirementsFile = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-invalid-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
         '{"jdk":{"minimumMajor":"seventeen"},"androidSdk":{"apiLevel":35,"platform":"android-35","buildToolsMinimum":"35.0.0"}}' |
@@ -293,6 +294,7 @@ if ($ParserRegressionCheck) {
     } finally {
         Remove-Item -Force $invalidRequirementsFile -ErrorAction SilentlyContinue
     }
+    # apifloor-gate: allow-end
 
     # Missing-declaration regression: the preflight must refuse to guess tool
     # requirements. Run a copy of this script with no tool-requirements.json
@@ -346,6 +348,7 @@ if ($ParserRegressionCheck) {
     # values) must change the JDK pass/fail decisions. This catches a hardcoded
     # threshold in Test-JdkMeetsRequirement that a same-value comparison cannot.
     # toolreq-gate: allow-begin -- deliberate drift fixture: the altered values must differ from tool-requirements.json to prove the thresholds are not hardcoded.
+    # apifloor-gate: allow-begin -- deliberate drift fixture: the altered values must hardcode non-declared numbers to prove the thresholds are derived, not fixed.
     $driftDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-drift-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $driftDirectory | Out-Null
     try {
@@ -373,6 +376,7 @@ if ($ParserRegressionCheck) {
     } finally {
         Remove-Item -Recurse -Force $driftDirectory -ErrorAction SilentlyContinue
     }
+    # apifloor-gate: allow-end
     # toolreq-gate: allow-end
     foreach ($invalidOutput in @('', 'garbage')) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {

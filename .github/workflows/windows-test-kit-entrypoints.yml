@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - ".github/scripts/check-tool-requirements-drift.py"
+      - ".github/scripts/check-hardcoded-api-floor.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
@@ -22,6 +23,7 @@ on:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - ".github/scripts/check-tool-requirements-drift.py"
+      - ".github/scripts/check-hardcoded-api-floor.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
@@ -149,6 +151,55 @@ jobs:
           # declaration, so a future edit cannot silently fork the guidance again.
           python .github/scripts/check-tool-requirements-drift.py $env:PACKAGED_KIT_ROOT
           if ($LASTEXITCODE -ne 0) { throw "check-tool-requirements-drift.py exited $LASTEXITCODE" }
+
+      - name: Packaged scripts must not hardcode the Android API floor
+        shell: pwsh
+        run: |
+          # The drift gate above only catches literals that DISAGREE with
+          # tool-requirements.json. A script that hardcodes the currently
+          # declared floor (-lt 35, "API 35 or newer") passes that gate while
+          # silently forking the floor at the next declaration bump; this
+          # drift class has already occurred twice (measure-gate0a.sh and
+          # mvp-install.ps1). This gate rejects API-level literals and
+          # comparisons in scripts outright, so scripts must derive the floor
+          # from the declaration.
+          python .github/scripts/check-hardcoded-api-floor.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-hardcoded-api-floor.py exited $LASTEXITCODE" }
+
+      - name: A hardcoded API floor matching the declaration must fail the hardcode gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: inject literals EQUAL to the currently declared
+          # floor, so the drift gate stays green and only the hardcode gate
+          # can turn red. Only the copy is modified; the packaged kit stays
+          # clean for the entry-point checks below.
+          $hardcodeCopy = Join-Path $env:RUNNER_TEMP 'apifloor-hardcode-negative'
+          if (Test-Path -LiteralPath $hardcodeCopy) { Remove-Item -Recurse -Force $hardcodeCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $hardcodeCopy
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value 'if ([int]$api -lt 35) { Stop-Run "This build requires API 35 or newer." }'
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value '[[ "$DEVICE_API" -lt 35 ]] && die "device too old"'
+          # The injected literals agree with tool-requirements.json, so the
+          # drift gate must still accept the copy. The native commands below
+          # are expected to exit non-zero; do not let pwsh 7.4+ turn the exit
+          # code into a terminating error before the assertions run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $driftOutput = & python .github/scripts/check-tool-requirements-drift.py $hardcodeCopy 2>&1 | Out-String
+          $driftCode = $LASTEXITCODE
+          Write-Host $driftOutput
+          if ($driftCode -ne 0) { throw 'Test setup broken: literals matching the declaration must pass the drift gate; only the hardcode gate may turn red.' }
+          $output = & python .github/scripts/check-hardcoded-api-floor.py $hardcodeCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The hardcode gate accepted scripts that re-hardcode the Android API floor.' }
+          if ($output -notmatch 'mvp-install\.ps1') { throw 'The gate failed without naming the drifted installer script.' }
+          if ($output -notmatch 'measure-gate0a\.sh') { throw 'The gate failed without naming the drifted harness script.' }
+          if ($output -notmatch 'API-level comparison' -or $output -notmatch 'API keyword literal') {
+              throw 'The gate failed without identifying the hardcoded comparison and API keyword literal.'
+          }
+          Write-Host 'Hardcoded API-floor literals turned the gate red while the drift gate stayed green, as required.'
 
       - name: A reintroduced stale literal must fail the drift gate
         shell: pwsh

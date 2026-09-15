@@ -3,9 +3,10 @@
     Lifecycle and validation commands for the pinned CAS Gate 0A emulator.
 
 .DESCRIPTION
-    Creates, starts, validates, resets, stops, or reports the CAS_Pixel_8a_API_35
-    Android Virtual Device. Every result is explicitly simulated emulator
-    evidence and cannot establish physical Pixel readiness.
+    Creates, starts, validates, resets, stops, or reports the pinned
+    CAS_Pixel_8a_API_<apiLevel> Android Virtual Device (the API level derives
+    from tool-requirements.json). Every result is explicitly simulated
+    emulator evidence and cannot establish physical Pixel readiness.
 
     The script never selects a physical ADB serial. It only acts on an emulator
     whose ro.boot.qemu.avd_name matches the pinned AVD name.
