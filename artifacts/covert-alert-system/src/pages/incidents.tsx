@@ -3,6 +3,7 @@ import { Activity, ArrowRight, Check, CircleStop, LockKeyhole, RotateCcw, Shield
 import { Link } from 'wouter';
 import { useFieldTest, type Priority } from '@/hooks/use-field-test';
 import { EvidenceLabel, EmptyState, PriorityPill, SectionKicker } from '@/components/field-ui';
+import { OutboxStatusPanel } from '@/components/outbox-status';
 
 export default function Incidents() {
   const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, resetDemo } = useFieldTest();
@@ -25,6 +26,7 @@ export default function Incidents() {
   return (
     <div className="mx-auto max-w-[1380px]">
       <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker>Incident kernel / read-only</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">Preserve the sequence.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">A durable timeline for the incident kernel. It keeps priority, event order, source, and observable state together across refreshes and devices.</p></div><button onClick={runTestIncident} className="inline-flex items-center justify-center gap-2 self-start bg-[#203c49] px-4 py-3 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55]" data-testid="button-incidents-test-incident"><Activity size={15} /> Run local TEST</button></section>
+      <OutboxStatusPanel />
       <section className="fade-up fade-up-1 mt-5 grid gap-5 xl:grid-cols-[1fr_320px]">
         <div className="border border-[#d7d8d0] bg-[#fbfbf7]">
           <div className="border-b border-[#d7d8d0] bg-[#f4f2e9] p-5">

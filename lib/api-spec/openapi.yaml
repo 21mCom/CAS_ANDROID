@@ -108,6 +108,19 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /cas/outbox/status:
+    get:
+      operationId: getCasOutboxStatus
+      tags: [cas]
+      summary: Read outbox pipeline health
+      description: Outbox counts by state plus the delivery worker heartbeat (interval, batch size, last tick, last error) so responders can spot a stalled or dead-lettering pipeline without server logs.
+      responses:
+        "200":
+          description: Pipeline counts and worker heartbeat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CasOutboxStatus"
   /cas/incidents/{id}/ack:
     post:
       operationId: acknowledgeCasIncident
@@ -170,6 +183,17 @@ components:
         setup: { type: array, items: { type: object, additionalProperties: true } }
         gates: { type: array, items: { type: object, additionalProperties: true } }
       required: [incidents, activeIncident, setup, gates]
+    CasOutboxStatus:
+      type: object
+      properties:
+        counts:
+          type: object
+          description: Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+          additionalProperties: { type: number }
+        oldestPendingAt: { type: string, format: date-time, nullable: true }
+        lastDeliveryError: { type: object, nullable: true, additionalProperties: true }
+        worker: { type: object, nullable: true, additionalProperties: true }
+      required: [counts, oldestPendingAt, lastDeliveryError, worker]
     Gate0aReport:
       type: object
       additionalProperties: false

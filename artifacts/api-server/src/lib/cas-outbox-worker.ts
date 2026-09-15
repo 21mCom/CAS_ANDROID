@@ -4,6 +4,12 @@ import {
   type CasOutboxWorkerResult,
 } from "../routes/cas";
 import { logger } from "./logger";
+import {
+  markCasOutboxWorkerStopped,
+  recordCasOutboxTick,
+  recordCasOutboxTickError,
+  registerCasOutboxWorkerHeartbeat,
+} from "./cas-outbox-status";
 
 export const DEFAULT_CAS_OUTBOX_INTERVAL_MS = 10_000;
 export const DEFAULT_CAS_OUTBOX_BATCH_SIZE = 10;
@@ -76,11 +82,29 @@ export function startCasOutboxWorker(
   let stopped = false;
   let inFlight: Promise<void> | null = null;
 
+  // Publish the worker's configuration immediately so the status endpoint can
+  // report the drain interval and batch size even before the first tick.
+  registerCasOutboxWorkerHeartbeat({
+    workerId,
+    intervalMs,
+    batchSize: maxItemsPerTick,
+  });
+
   const tick = async (): Promise<void> => {
     if (running || stopped) return;
     running = true;
+    const tickStartedAt = Date.now();
     try {
       const result = await runTick({ workerId, maxItems: maxItemsPerTick });
+      recordCasOutboxTick({
+        durationMs: Date.now() - tickStartedAt,
+        result: {
+          claimed: result.claimed,
+          sent: result.sent,
+          failed: result.failed,
+          deadLettered: result.deadLettered,
+        },
+      });
       if (result.claimed > 0) {
         log.info(
           {
@@ -95,6 +119,9 @@ export function startCasOutboxWorker(
       }
     } catch (error) {
       // Never let an adapter/DB error kill the loop or the server.
+      recordCasOutboxTickError(
+        error instanceof Error ? error.message : String(error),
+      );
       log.error({ err: error, workerId }, "CAS outbox tick failed");
     } finally {
       running = false;
@@ -125,6 +152,7 @@ export function startCasOutboxWorker(
           /* tick errors are already logged inside tick() */
         });
       }
+      markCasOutboxWorkerStopped();
       log.info({ workerId }, "CAS outbox delivery worker stopped");
     },
   };

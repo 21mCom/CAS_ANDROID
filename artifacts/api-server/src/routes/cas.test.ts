@@ -32,6 +32,13 @@ import {
   createSmsProvider,
   createXmppProvider,
 } from "../lib/delivery-providers";
+import {
+  getCasOutboxWorkerHeartbeat,
+  recordCasOutboxTick,
+  recordCasOutboxTickError,
+  registerCasOutboxWorkerHeartbeat,
+  resetCasOutboxWorkerHeartbeat,
+} from "../lib/cas-outbox-status";
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -1734,5 +1741,116 @@ test("separate API processes accept one concurrent RESOLVE and journal one event
       stopApiProcess(first.child),
       stopApiProcess(second.child),
     ]);
+  }
+});
+test("outbox status reports counts by state and the oldest pending item", async () => {
+  const now = new Date();
+  await db.insert(casIncidents).values({
+    id: "status-inc",
+    priority: "P1",
+    status: "ACTIVE_UNACKED",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(casOutbox).values([
+    { id: "status-queued", incidentId: "status-inc", transport: "SMS", state: "QUEUED", priority: "P1", createdAt: new Date(now.getTime() - 120_000) },
+    { id: "status-failed", incidentId: "status-inc", transport: "XMPP", state: "FAILED", priority: "P1", attempts: 2, lastError: "provider 503", createdAt: new Date(now.getTime() - 60_000) },
+    { id: "status-dead", incidentId: "status-inc", transport: "SMS", state: "DEAD_LETTER", priority: "P1", attempts: 8, lastError: "permanent rejection", createdAt: now },
+    { id: "status-sent", incidentId: "status-inc", transport: "XMPP", state: "SENT", priority: "P1", createdAt: now },
+  ]);
+
+  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    counts: Record<string, number>;
+    oldestPendingAt: string | null;
+    lastDeliveryError: { transport: string; state: string; attempts: number; message: string } | null;
+    worker: unknown;
+  };
+
+  // Dead-lettered deliveries must be countable without a database query.
+  assert.equal(body.counts.QUEUED, 1);
+  assert.equal(body.counts.FAILED, 1);
+  assert.equal(body.counts.DEAD_LETTER, 1);
+  assert.equal(body.counts.SENT, 1);
+  assert.equal(body.counts.PROCESSING, 0);
+
+  // The oldest still-pending item drives the console's "stuck" warning.
+  assert.equal(body.oldestPendingAt, new Date(now.getTime() - 120_000).toISOString());
+
+  // The most recent failure names the provider problem.
+  assert.deepEqual(body.lastDeliveryError, {
+    transport: "SMS",
+    state: "DEAD_LETTER",
+    attempts: 8,
+    message: "permanent rejection",
+  });
+});
+
+test("outbox status reports an empty pipeline with no worker heartbeat", async () => {
+  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    counts: Record<string, number>;
+    oldestPendingAt: string | null;
+    lastDeliveryError: unknown;
+    worker: unknown;
+  };
+
+  assert.deepEqual(body.counts, {
+    QUEUED: 0,
+    PROCESSING: 0,
+    FAILED: 0,
+    SENT: 0,
+    DEAD_LETTER: 0,
+  });
+  assert.equal(body.oldestPendingAt, null);
+  assert.equal(body.lastDeliveryError, null);
+  // The in-process test app never starts the delivery worker, so the
+  // heartbeat must be reported as absent rather than invented.
+  assert.equal(body.worker, null);
+});
+
+test("outbox status surfaces the worker heartbeat once ticks are recorded", async () => {
+  resetCasOutboxWorkerHeartbeat();
+  try {
+    registerCasOutboxWorkerHeartbeat({
+      workerId: "status-test-worker",
+      intervalMs: 10_000,
+      batchSize: 10,
+    });
+    recordCasOutboxTick({
+      durationMs: 42,
+      result: { claimed: 2, sent: 1, failed: 1, deadLettered: 0 },
+    });
+    recordCasOutboxTickError("database hiccup");
+
+    const response = await fetch(`${baseUrl}/cas/outbox/status`);
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      worker: {
+        workerId: string;
+        intervalMs: number;
+        batchSize: number;
+        lastTickAt: string | null;
+        ticksCompleted: number;
+        lastTick: { claimed: number; sent: number; failed: number; deadLettered: number } | null;
+        lastError: { message: string; at: string } | null;
+        stoppedAt: string | null;
+      } | null;
+    };
+
+    assert.ok(body.worker);
+    assert.equal(body.worker.workerId, "status-test-worker");
+    assert.equal(body.worker.intervalMs, 10_000);
+    assert.equal(body.worker.batchSize, 10);
+    assert.equal(body.worker.ticksCompleted, 1);
+    assert.deepEqual(body.worker.lastTick, { claimed: 2, sent: 1, failed: 1, deadLettered: 0 });
+    assert.ok(body.worker.lastTickAt);
+    assert.equal(body.worker.lastError?.message, "database hiccup");
+    assert.equal(body.worker.stoppedAt, null);
+    assert.ok(getCasOutboxWorkerHeartbeat());
+  } finally {
+    resetCasOutboxWorkerHeartbeat();
   }
 });

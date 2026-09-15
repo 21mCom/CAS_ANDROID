@@ -4,6 +4,10 @@ import {
   startCasOutboxWorker,
   type CasOutboxWorkerHandle,
 } from "./cas-outbox-worker";
+import {
+  getCasOutboxWorkerHeartbeat,
+  resetCasOutboxWorkerHeartbeat,
+} from "./cas-outbox-status";
 import type { CasOutboxWorkerResult } from "../routes/cas";
 
 function sleep(ms: number): Promise<void> {
@@ -133,6 +137,68 @@ test("stop() waits for an in-flight tick to settle", async () => {
   await waitFor(() => tickStarted && !tickSettled); // a tick has started but not finished
   await worker.stop();
   assert.equal(tickSettled, true, "stop() must await the in-flight tick");
+});
+
+test("the heartbeat records configuration and every completed tick", async () => {
+  resetCasOutboxWorkerHeartbeat();
+  const worker = startCasOutboxWorker({
+    intervalMs: 10,
+    maxItemsPerTick: 4,
+    workerId: "heartbeat-test",
+    log: silentLog(),
+    runTick: async ({ workerId }) => makeResult(workerId, 2),
+  });
+
+  const initial = getCasOutboxWorkerHeartbeat();
+  assert.ok(initial, "the worker must publish its configuration on start");
+  assert.equal(initial.workerId, "heartbeat-test");
+  assert.equal(initial.intervalMs, 10);
+  assert.equal(initial.batchSize, 4);
+  assert.equal(initial.lastTickAt, null);
+  assert.equal(initial.ticksCompleted, 0);
+
+  await waitFor(() => (getCasOutboxWorkerHeartbeat()?.ticksCompleted ?? 0) >= 2);
+  const heartbeat = getCasOutboxWorkerHeartbeat();
+  assert.ok(heartbeat?.lastTickAt, "a completed tick must update the heartbeat");
+  assert.ok(heartbeat.lastTickDurationMs !== null);
+  assert.deepEqual(heartbeat.lastTick, {
+    claimed: 2,
+    sent: 2,
+    failed: 0,
+    deadLettered: 0,
+  });
+
+  await worker.stop();
+  assert.ok(
+    getCasOutboxWorkerHeartbeat()?.stoppedAt,
+    "stop() must mark the heartbeat so the console can flag a dead worker",
+  );
+  resetCasOutboxWorkerHeartbeat();
+});
+
+test("a throwing tick is recorded as the heartbeat's last error", async () => {
+  resetCasOutboxWorkerHeartbeat();
+  const worker = startCasOutboxWorker({
+    intervalMs: 10,
+    workerId: "heartbeat-error-test",
+    log: silentLog(),
+    runTick: async () => {
+      throw new Error("provider unreachable");
+    },
+  });
+
+  await waitFor(() => getCasOutboxWorkerHeartbeat()?.lastError != null);
+  await worker.stop();
+
+  const heartbeat = getCasOutboxWorkerHeartbeat();
+  assert.equal(heartbeat?.lastError?.message, "provider unreachable");
+  assert.ok(heartbeat?.lastError?.at);
+  assert.equal(
+    heartbeat?.ticksCompleted,
+    0,
+    "a failed tick must not count as completed",
+  );
+  resetCasOutboxWorkerHeartbeat();
 });
 
 test("claimed items log claimed/sent/failed/deadLettered counts per tick", async () => {

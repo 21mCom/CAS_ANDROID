@@ -18,6 +18,7 @@ import {
   formatProviderError,
   loadConfiguredProviders,
 } from "../lib/delivery-providers";
+import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
 
 const router: IRouter = Router();
 
@@ -132,6 +133,69 @@ router.get("/cas/state", async (_req, res, next) => {
       activeIncident: active ? shapeIncident(active, events.filter((event) => event.incidentId === active.id), outbox.filter((item) => item.incidentId === active.id)) : null,
       setup: setup.map(({ id, label, detail, group, complete, mode }) => ({ id, label, detail, group, complete, mode })),
       gates: gates.map(({ id, index, name, short, status, criterion, evidence, nextAction, owner }) => ({ id, index, name, short, status, criterion, evidence, nextAction, owner })),
+    });
+  } catch (error) { return next(error); }
+});
+
+/**
+ * Operator-visible pipeline health: outbox counts by state plus the delivery
+ * worker's heartbeat. Responders use this to spot a stalled or dead-lettering
+ * pipeline without reading server logs or querying the database.
+ */
+router.get("/cas/outbox/status", async (_req, res, next) => {
+  try {
+    const [countRows, oldestPending, lastErrorRows] = await Promise.all([
+      db
+        .select({ state: casOutbox.state, count: sql<number>`count(*)::int` })
+        .from(casOutbox)
+        .groupBy(casOutbox.state),
+      // Age of the oldest item still waiting on a provider — the "stuck"
+      // signal the console warns about.
+      db
+        .select({ createdAt: casOutbox.createdAt })
+        .from(casOutbox)
+        .where(sql`${casOutbox.state} IN ('QUEUED', 'PROCESSING', 'FAILED')`)
+        .orderBy(asc(casOutbox.createdAt))
+        .limit(1),
+      // Most recent delivery failure, retryable or abandoned, so the console
+      // can name the provider problem.
+      db
+        .select({
+          transport: casOutbox.transport,
+          state: casOutbox.state,
+          attempts: casOutbox.attempts,
+          lastError: casOutbox.lastError,
+        })
+        .from(casOutbox)
+        .where(sql`${casOutbox.lastError} IS NOT NULL`)
+        .orderBy(desc(casOutbox.createdAt))
+        .limit(1),
+    ]);
+
+    const counts: Record<string, number> = {
+      QUEUED: 0,
+      PROCESSING: 0,
+      FAILED: 0,
+      SENT: 0,
+      DEAD_LETTER: 0,
+    };
+    for (const row of countRows) {
+      counts[row.state] = (counts[row.state] ?? 0) + row.count;
+    }
+
+    const lastError = lastErrorRows[0];
+    return res.json({
+      counts,
+      oldestPendingAt: oldestPending[0]?.createdAt.toISOString() ?? null,
+      lastDeliveryError: lastError
+        ? {
+            transport: lastError.transport,
+            state: lastError.state,
+            attempts: lastError.attempts,
+            message: lastError.lastError,
+          }
+        : null,
+      worker: getCasOutboxWorkerHeartbeat(),
     });
   } catch (error) { return next(error); }
 });
