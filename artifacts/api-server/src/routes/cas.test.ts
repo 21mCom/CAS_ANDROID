@@ -2010,6 +2010,56 @@ test("outbox status reports counts by state and the oldest pending item", async 
   });
 });
 
+test("a dead-lettered delivery is reported by the status endpoint end-to-end", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const send = async () => {
+    throw new Error("provider permanently rejects recipient");
+  };
+
+  // Drive the SMS outbox item through real worker failures to the attempt
+  // cap. Hold the sibling item back so the claim is deterministic (both rows
+  // share one createdAt, so order alone cannot pick the target).
+  const itemId = (
+    await db.select({ id: casOutbox.id }).from(casOutbox).where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.transport} = 'SMS'`).limit(1)
+  )[0].id;
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${itemId}`);
+
+  // Before the cap is reached the status endpoint must not cry dead letter.
+  const before = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { counts: Record<string, number> };
+  assert.equal(before.counts.DEAD_LETTER, 0);
+
+  for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+    await db
+      .update(casOutbox)
+      .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+      .where(eq(casOutbox.id, itemId));
+    await processCasOutbox({ workerId: "status-worker", maxItems: 1, send });
+  }
+
+  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    counts: Record<string, number>;
+    lastDeliveryError: { transport: string; state: string; attempts: number; message: string } | null;
+  };
+
+  // The console's red "abandoned (dead letter)" alarm reads these two fields;
+  // if either disappears the responder never hears about the lost alert.
+  assert.equal(body.counts.DEAD_LETTER, 1);
+  assert.deepEqual(body.lastDeliveryError, {
+    transport: "SMS",
+    state: "DEAD_LETTER",
+    attempts: MAX_DELIVERY_ATTEMPTS,
+    message: "provider permanently rejects recipient",
+  });
+});
+
 test("outbox status reports an empty pipeline with no worker heartbeat", async () => {
   const response = await fetch(`${baseUrl}/cas/outbox/status`);
   assert.equal(response.status, 200);

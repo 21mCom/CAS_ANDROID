@@ -4,6 +4,8 @@ import { useOutboxStatus } from '@/hooks/use-outbox-status';
 import { SectionKicker } from '@/components/field-ui';
 import { deriveOutboxWarnings, outboxAgeLabel as ageLabel } from '@/lib/outbox-warnings';
 
+type StatusSnapshot = ReturnType<typeof useOutboxStatus>['status'];
+
 /**
  * Compact stalled-pipeline warning for pages other than /incidents (e.g. the
  * overview). Renders nothing while the pipeline is healthy so a quiet overview
@@ -61,7 +63,19 @@ export function OutboxStatusBanner() {
  */
 export function OutboxStatusPanel() {
   const { status, unreachable } = useOutboxStatus();
-  const nowMs = Date.now();
+  return <OutboxStatusView status={status} unreachable={unreachable} nowMs={Date.now()} />;
+}
+
+/**
+ * Pure presentational half of the panel, split out so the warning banners
+ * (especially the red dead-letter alarm) can be render-tested without the
+ * polling hook.
+ */
+export function OutboxStatusView({ status, unreachable, nowMs }: {
+  status: StatusSnapshot;
+  unreachable: boolean;
+  nowMs: number;
+}) {
   const warnings = deriveOutboxWarnings({ status, unreachable, nowMs });
 
   if (!status && !unreachable) return null;
