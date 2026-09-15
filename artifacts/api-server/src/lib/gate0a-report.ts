@@ -131,7 +131,10 @@ export const gate0aReportSchema = z.object({
   }).strict().optional(),
   artifacts: z.record(z.string().max(512)).optional(),
   evidence: z.object({
-    logs: z.array(z.string().max(512)).max(200),
+    // A default hardware run (200 repeats) captures one logcat file per launch,
+    // so a real report references ~205 logs; the bound leaves headroom for
+    // larger --repeat series while staying finite.
+    logs: z.array(z.string().max(512)).max(1000),
     screenshots: z.array(z.string().max(512)).max(200),
     rawReferences: z.array(z.string().max(512)).max(500),
   }).strict(),

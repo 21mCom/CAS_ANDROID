@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { after, beforeEach, test } from "node:test";
 import app from "../app";
 import { db, pool } from "@workspace/db";
@@ -232,6 +236,107 @@ test("Gate 0A import rejects blocked preflight reports", async () => {
   assert.deepEqual(await response.json(), {
     error: "Gate 0A report is blocked; resolve the preflight blockers and import the completed report.",
   });
+});
+
+test("Gate 0A import accepts a full hardware-run report over 200,000 bytes end-to-end", async () => {
+  // A real Pixel run with the default 200-repeat series produces a ~250 KB
+  // report; the import path must accept that volume through HTTP, not just in
+  // the schema validator. Pad repeat samples until the serialized body passes
+  // the byte size a real hardware report reaches.
+  const hardwareReport = {
+    ...validGate0aReport,
+    events: [...validGate0aReport.events] as Array<Record<string, unknown>>,
+  };
+  let repeats = 0;
+  while (JSON.stringify(hardwareReport).length <= 200_000) {
+    repeats += 1;
+    hardwareReport.events.push({
+      type: "LAUNCH_SAMPLE",
+      wallClockMs: 1724673600456 + repeats,
+      elapsedRealtimeMs: 987987 + repeats,
+      message: `repeat-${String(repeats).padStart(3, "0")} hardware launch sample`,
+    });
+  }
+  const bodyText = JSON.stringify(hardwareReport);
+  assert.ok(bodyText.length > 200_000, `expected a real-run-sized body, got ${bodyText.length}`);
+  assert.ok(bodyText.length <= 512 * 1024, "test body must stay under the 512 KB API limit");
+
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: bodyText,
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { accepted: boolean; summary: { eventCount: number } };
+  assert.equal(body.accepted, true);
+  assert.equal(body.summary.eventCount, hardwareReport.events.length);
+});
+
+test("Gate 0A import accepts the exact harness-writer hardware-run report over HTTP", async () => {
+  // Generate the report under test with the repo-only fixture generator, which
+  // runs the harness's own write_report() against a seeded default Pixel 11 run
+  // (200 repeats, per-repeat logcat references). The generator is deliberately
+  // not part of the packaged field kit, so shipped tooling cannot manufacture
+  // physical evidence without a device.
+  const generatorPath = fileURLToPath(
+    new URL("../../../../scripts/generate-gate0a-hardware-report-fixture.sh", import.meta.url),
+  );
+  const outDir = await mkdtemp(join(tmpdir(), "gate0a-hw-fixture-"));
+  const { stdout } = await promisify(execFile)(
+    "bash",
+    [generatorPath, "--out-dir", outDir],
+  );
+  const reportPath = stdout.match(/GATE0A_HW_FIXTURE_OK report=(\S+)/)?.[1]?.trim();
+  assert.ok(reportPath, "generator did not report a successful fixture write");
+  const reportText = await readFile(reportPath, "utf-8");
+  // The documented hardware report is ~250 KB: the fixture must stay above the
+  // old 200,000-byte UI gate so a regressed size limit cannot go unnoticed,
+  // and within the 512 KB transport bound.
+  assert.ok(
+    reportText.length > 200_000,
+    `hardware report must exceed the old 200 KB UI gate: ${reportText.length} bytes`,
+  );
+  assert.ok(
+    reportText.length <= 512 * 1024,
+    `hardware report exceeds the 512 KB import limit: ${reportText.length} bytes`,
+  );
+  const generated = JSON.parse(reportText) as {
+    evidence: { logs: string[]; screenshots: string[] };
+    summary: { eventCount: number };
+  };
+  // The documented run's exact volume: 219 events (200 repeats), a logcat
+  // reference per launch/navigation sample, retained repeat screenshots.
+  assert.equal(generated.summary.eventCount, 219);
+  assert.ok(
+    generated.evidence.logs.length > 200,
+    "expected the real per-repeat logcat reference volume",
+  );
+  assert.ok(generated.evidence.screenshots.length > 0, "expected retained repeat screenshots");
+
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: reportText,
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { accepted: boolean; summary: { eventCount: number } };
+  assert.equal(body.accepted, true);
+  assert.equal(body.summary.eventCount, generated.summary.eventCount);
+});
+
+test("Gate 0A import rejects an intentionally oversized report", async () => {
+  // The express JSON body limit (512kb) must reject reports beyond the maximum
+  // supported hardware-run size before they reach validation.
+  const oversized = `{"pad":"${"x".repeat(600 * 1024)}"}`;
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: oversized,
+  });
+
+  assert.equal(response.status, 413);
 });
 
 test("Gate 0A import rejects malformed reports", async () => {

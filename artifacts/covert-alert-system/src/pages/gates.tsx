@@ -3,6 +3,7 @@ import { ArrowRight, Check, ChevronDown, CircleAlert, Download, FileJson, Rotate
 import { Link } from 'wouter';
 import { useFieldTest, type GateStatus, type ObservationResult } from '@/hooks/use-field-test';
 import { EvidenceLabel, SectionKicker, StatusPill } from '@/components/field-ui';
+import { assertGate0aReportSize } from '@/lib/gate0a-import';
 
 type GateFilter = 'all' | 'needs-work' | 'verified';
 
@@ -33,7 +34,7 @@ export default function Gates() {
     setImportError(null);
     setImportMessage(null);
     try {
-      if (importFile.size > 200_000) throw new Error('The report is too large to import safely.');
+      assertGate0aReportSize(importFile.size);
       const summary = await importGate0AReport(await importFile.text());
       const evidenceLabel = summary.evidenceClass === 'physical-device-observation'
         ? 'physical Pixel evidence'

@@ -26,7 +26,11 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json({ limit: "256kb" }));
+// Bounded to the maximum supported Gate 0A hardware-run report (a real Pixel
+// run with the default 200-repeat series is ~250 KB) with headroom; the web
+// importer in artifacts/covert-alert-system/src/pages/gates.tsx enforces the
+// same 512 KB bound before uploading.
+app.use(express.json({ limit: "512kb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
