@@ -15,6 +15,10 @@ import { validateGate0aImport, type Gate0aReport } from "../lib/gate0a-report";
 const router: IRouter = Router();
 
 export const DELIVERY_LEASE_MS = 30_000;
+// A delivery that keeps being rejected after this many attempts is abandoned
+// (DEAD_LETTER) so a permanently failing provider cannot cycle an alert
+// QUEUED -> FAILED forever.
+export const MAX_DELIVERY_ATTEMPTS = 8;
 
 function formatGate0aNotes(report: Gate0aReport): string {
   const timestampLines = report.events.map((event, index) =>
@@ -86,7 +90,15 @@ function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeo
     id: incident.id, status: incident.status, priority: incident.priority,
     triggerCount: incident.triggerCount, createdAt: incident.createdAt.toISOString(),
     events: events.map((event) => ({ id: event.id, type: event.type, priority: event.priority, time: event.createdAt.toISOString(), detail: event.detail })),
-    outbox: outbox.map((item) => ({ id: item.id, transport: item.transport, state: item.state, priority: item.priority })),
+    outbox: outbox.map((item) => ({
+      id: item.id,
+      transport: item.transport,
+      state: item.state,
+      priority: item.priority,
+      attempts: item.attempts,
+      lastError: item.lastError,
+      terminal: item.state === "SENT" || item.state === "DEAD_LETTER",
+    })),
   };
 }
 
@@ -260,6 +272,7 @@ export async function processCasOutbox(options: {
     claimed: 0,
     sent: 0,
     failed: 0,
+    deadLettered: 0,
     deliveries: [],
   };
 
@@ -294,14 +307,25 @@ export async function processCasOutbox(options: {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failed = await completeCasOutboxItem(
-        claimed,
-        workerId,
-        "FAILED",
-        new Date(),
-        message,
-      );
-      if (failed) {
+      const exhausted = claimed.attempts >= MAX_DELIVERY_ATTEMPTS;
+      const completed = exhausted
+        ? await deadLetterCasOutboxItem(claimed, workerId, new Date(), message)
+        : await completeCasOutboxItem(
+            claimed,
+            workerId,
+            "FAILED",
+            new Date(),
+            message,
+          );
+      if (completed && exhausted) {
+        result.deadLettered += 1;
+        result.deliveries.push({
+          id: claimed.id,
+          transport: claimed.transport,
+          state: "DEAD_LETTER",
+          attempts: claimed.attempts,
+        });
+      } else if (completed) {
         result.failed += 1;
         result.deliveries.push({
           id: claimed.id,
@@ -329,6 +353,47 @@ const defaultCasDeliverySender: CasDeliverySender = async () => {
 };
 
 const MAX_RETRY_DELAY_MS = 60_000;
+
+/**
+ * Moves an exhausted delivery to the terminal DEAD_LETTER state and journals
+ * the abandonment on the incident in the same transaction, so responders can
+ * see that no further delivery attempts will be made. The claim query never
+ * selects DEAD_LETTER rows, so the item stops being retried immediately.
+ */
+async function deadLetterCasOutboxItem(
+  item: typeof casOutbox.$inferSelect,
+  workerId: string,
+  now: Date,
+  error: string,
+) {
+  return db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(casOutbox)
+      .set({
+        state: "DEAD_LETTER",
+        claimedBy: null,
+        claimedAt: null,
+        lastError: error,
+      })
+      .where(
+        sql`${casOutbox.id} = ${item.id}
+          AND ${casOutbox.state} = 'PROCESSING'
+          AND ${casOutbox.claimedBy} = ${workerId}`,
+      )
+      .returning({ id: casOutbox.id });
+    if (!updated) return undefined;
+
+    await tx.insert(casIncidentEvents).values({
+      id: `${item.id}-dead-letter-${now.getTime()}`,
+      incidentId: item.incidentId,
+      type: "DELIVERY_ABANDONED",
+      priority: item.priority,
+      detail: `${item.transport} delivery abandoned after ${item.attempts} attempts; provider kept rejecting it (last error: ${error}). No further retries will be made.`,
+      createdAt: now,
+    });
+    return updated;
+  });
+}
 
 async function completeCasOutboxItem(
   item: typeof casOutbox.$inferSelect,
@@ -378,10 +443,11 @@ export type CasOutboxWorkerResult = {
   claimed: number;
   sent: number;
   failed: number;
+  deadLettered: number;
   deliveries: Array<{
     id: string;
     transport: string;
-    state: "SENT" | "FAILED" | "LOST";
+    state: "SENT" | "FAILED" | "DEAD_LETTER" | "LOST";
     attempts: number;
   }>;
 };

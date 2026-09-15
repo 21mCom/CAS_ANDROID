@@ -62,8 +62,11 @@ export type KernelEvent = {
 export type OutboxItem = {
   id: string;
   transport: 'SMS' | 'XMPP';
-  state: 'QUEUED' | 'DISPATCHING' | 'SENT' | 'WAITING';
+  state: 'QUEUED' | 'PROCESSING' | 'FAILED' | 'SENT' | 'DEAD_LETTER';
   priority: 'P1' | 'P2';
+  attempts: number;
+  lastError: string | null;
+  terminal: boolean;
 };
 
 export type ActiveIncident = {

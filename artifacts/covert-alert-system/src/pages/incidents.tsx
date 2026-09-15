@@ -57,7 +57,7 @@ export default function Incidents() {
                 </div>
                 <div>
                   <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Independent P1 outbox</p>
-                  <div className="mt-1 flex flex-wrap gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] text-[#687271]">{item.transport} · {item.state}</span>)}</div>
+                  <div className="mt-1 flex flex-wrap gap-2">{activeIncident.outbox.map((item) => <span key={item.id} title={item.state === 'DEAD_LETTER' ? `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}` : undefined} className={`border px-2 py-1 font-mono-ui text-[10px] ${item.state === 'DEAD_LETTER' ? 'border-[#914136] bg-[#914136]/10 font-bold text-[#914136]' : item.state === 'FAILED' ? 'border-[#a06712] bg-[#fbfbf7] text-[#a06712]' : 'border-[#c6cbc3] bg-[#fbfbf7] text-[#687271]'}`}>{item.transport} · {item.state === 'DEAD_LETTER' ? `DEAD LETTER · abandoned after ${item.attempts} attempts` : item.state}</span>)}</div>
                 </div>
               </div>
             )}

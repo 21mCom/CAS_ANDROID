@@ -15,9 +15,10 @@ import {
   casIncidents,
   casOutbox,
 } from "@workspace/db/schema";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import {
   DELIVERY_LEASE_MS,
+  MAX_DELIVERY_ATTEMPTS,
   claimCasOutboxItem,
   processCasOutbox,
 } from "./cas";
@@ -597,6 +598,186 @@ test("failed delivery records the error for retry", async () => {
   assert.equal(failedRow.state, "FAILED");
   assert.equal(failedRow.lastError, "transport unavailable");
   assert.equal(failedRow.attempts, 1);
+});
+
+test("a delivery under the attempt cap is retried after a failure", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const send = async () => {
+    throw new Error("provider rejected request");
+  };
+
+  const first = await processCasOutbox({ workerId: "retry-worker", maxItems: 1, send });
+  assert.equal(first.failed, 1);
+  assert.equal(first.deadLettered, 0);
+
+  const itemId = first.deliveries[0].id;
+  const [failedRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, itemId));
+  assert.equal(failedRow.state, "FAILED");
+  assert.equal(failedRow.attempts, 1);
+  assert.ok(failedRow.attempts < MAX_DELIVERY_ATTEMPTS);
+
+  // Back off has elapsed, so the item must be claimable again. Hold the
+  // sibling item back (both rows share one createdAt) so the claim is
+  // deterministic.
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+    .where(eq(casOutbox.id, itemId));
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${itemId}`);
+
+  const second = await processCasOutbox({ workerId: "retry-worker", maxItems: 1, send });
+  assert.equal(second.claimed, 1);
+  assert.equal(second.failed, 1);
+  assert.equal(second.deadLettered, 0);
+
+  const [retriedRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, itemId));
+  assert.equal(retriedRow.state, "FAILED");
+  assert.equal(retriedRow.attempts, 2);
+
+  // No abandonment is journaled while the item is still retryable.
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "DELIVERY_ABANDONED").length, 0);
+});
+
+test("a delivery reaching the attempt cap is dead-lettered and never claimed again", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const send = async () => {
+    throw new Error("provider permanently rejects recipient");
+  };
+
+  // Drive one outbox item to the cap. Attempts increment on each claim, so
+  // after MAX_DELIVERY_ATTEMPTS - 1 failures the item sits one attempt below
+  // the terminal claim. Hold the sibling item back with a future backoff so
+  // only the target is exercised.
+  const itemId = (
+    await db.select({ id: casOutbox.id }).from(casOutbox).where(eq(casOutbox.incidentId, id)).orderBy(asc(casOutbox.createdAt)).limit(1)
+  )[0].id;
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${itemId}`);
+
+  for (let attempt = 1; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+    const run = await processCasOutbox({ workerId: "cap-worker", maxItems: 10, send });
+    const delivery = run.deliveries.find((entry) => entry.id === itemId);
+    assert.ok(delivery, `attempt ${attempt}: item was not claimed`);
+    assert.equal(delivery.state, "FAILED");
+    assert.equal(run.deadLettered, 0);
+    // Clear the backoff so the next loop iteration can claim immediately.
+    await db
+      .update(casOutbox)
+      .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+      .where(eq(casOutbox.id, itemId));
+  }
+
+  // The claim at the cap moves the item to the terminal state.
+  const capped = await processCasOutbox({ workerId: "cap-worker", maxItems: 10, send });
+  const deadLettered = capped.deliveries.find((entry) => entry.id === itemId);
+  assert.ok(deadLettered);
+  assert.equal(deadLettered.state, "DEAD_LETTER");
+  assert.equal(deadLettered.attempts, MAX_DELIVERY_ATTEMPTS);
+  assert.equal(capped.deadLettered, 1);
+
+  const [terminalRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, itemId));
+  assert.equal(terminalRow.state, "DEAD_LETTER");
+  assert.equal(terminalRow.attempts, MAX_DELIVERY_ATTEMPTS);
+  assert.equal(terminalRow.lastError, "provider permanently rejects recipient");
+  assert.equal(terminalRow.claimedBy, null);
+
+  // The abandonment is journaled exactly once so responders see it.
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  const abandoned = events.filter((event) => event.type === "DELIVERY_ABANDONED");
+  assert.equal(abandoned.length, 1);
+  assert.match(abandoned[0].detail, /abandoned after 8 attempts/);
+  assert.match(abandoned[0].detail, /provider permanently rejects recipient/);
+
+  // The dead-lettered item is never claimed again, even after its backoff
+  // window would have elapsed.
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+    .where(eq(casOutbox.id, itemId));
+  const after = await processCasOutbox({ workerId: "cap-worker", maxItems: 10, send });
+  assert.equal(after.deliveries.some((entry) => entry.id === itemId), false);
+  assert.equal(after.deadLettered, 0);
+
+  const [stillTerminal] = await db.select().from(casOutbox).where(eq(casOutbox.id, itemId));
+  assert.equal(stillTerminal.state, "DEAD_LETTER");
+  assert.equal(stillTerminal.attempts, MAX_DELIVERY_ATTEMPTS);
+});
+
+test("the state view surfaces dead-lettered deliveries distinctly", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Force one item directly to its final claim so the worker dead-letters it.
+  // Both items share one createdAt, so hold the sibling back with a future
+  // backoff to make the claim deterministic.
+  const [target] = await db
+    .select({ id: casOutbox.id })
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, id))
+    .orderBy(asc(casOutbox.createdAt))
+    .limit(1);
+  await db
+    .update(casOutbox)
+    .set({ attempts: MAX_DELIVERY_ATTEMPTS - 1 })
+    .where(eq(casOutbox.id, target.id));
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${target.id}`);
+
+  const run = await processCasOutbox({
+    workerId: "view-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("recipient unknown");
+    },
+  });
+  assert.equal(run.deadLettered, 1);
+
+  const state = await fetch(`${baseUrl}/cas/state`);
+  assert.equal(state.status, 200);
+  const body = (await state.json()) as {
+    activeIncident: {
+      id: string;
+      outbox: Array<{
+        id: string;
+        state: string;
+        attempts: number;
+        lastError: string | null;
+        terminal: boolean;
+      }>;
+    };
+  };
+  assert.equal(body.activeIncident.id, id);
+  const dead = body.activeIncident.outbox.find((item) => item.id === target.id);
+  assert.ok(dead);
+  assert.equal(dead.state, "DEAD_LETTER");
+  assert.equal(dead.terminal, true);
+  assert.equal(dead.attempts, MAX_DELIVERY_ATTEMPTS);
+  assert.equal(dead.lastError, "recipient unknown");
+  const pending = body.activeIncident.outbox.find((item) => item.id !== target.id);
+  assert.ok(pending);
+  assert.equal(pending.state, "QUEUED");
+  assert.equal(pending.terminal, false);
 });
 
 test("delivery stays duplicate-free after a worker crash", async () => {
