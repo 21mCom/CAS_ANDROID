@@ -1,4 +1,5 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
+- [CAS provider gateway contract](cas-provider-gateway-contract.md) — 409 counts as delivered only with the replay header; HTTPS-only endpoints; redirects never followed.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.

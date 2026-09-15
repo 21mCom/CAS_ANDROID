@@ -5,6 +5,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  createServer as createHttpServer,
+  type Server as HttpServer,
+} from "node:http";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { after, beforeEach, test } from "node:test";
@@ -22,6 +26,11 @@ import {
   claimCasOutboxItem,
   processCasOutbox,
 } from "./cas";
+import {
+  createCasDeliverySender,
+  createSmsProvider,
+  createXmppProvider,
+} from "../lib/delivery-providers";
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -966,6 +975,341 @@ test("separate API processes accept one concurrent ACK and journal one event", a
       stopApiProcess(first.child),
       stopApiProcess(second.child),
     ]);
+  }
+});
+
+type StubProviderRequest = {
+  idempotencyKey: string | undefined;
+  authorization: string | undefined;
+  payload: Record<string, unknown>;
+};
+
+type StubProviderResponse = number | { status: number; headers?: Record<string, string> };
+
+async function startStubProvider(handler: (request: StubProviderRequest) => StubProviderResponse | Promise<StubProviderResponse>) {
+  const requests: StubProviderRequest[] = [];
+  const server: HttpServer = createHttpServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", async () => {
+      const request: StubProviderRequest = {
+        idempotencyKey: req.headers["idempotency-key"] as string | undefined,
+        authorization: req.headers.authorization,
+        payload: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+      };
+      requests.push(request);
+      const handled = await handler(request);
+      const status = typeof handled === "number" ? handled : handled.status;
+      const extraHeaders = typeof handled === "number" ? {} : handled.headers ?? {};
+      res.writeHead(status, { "Content-Type": "text/plain", ...extraHeaders });
+      res.end(`stub status ${status}`);
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/submit`,
+    requests,
+    close: async () => {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+test("SMS and XMPP adapters send through their providers with outbox-ID idempotency keys", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id: incidentId } = (await trigger.json()) as { id: string };
+
+  const provider = await startStubProvider(() => 200);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({
+        url: provider.url,
+        token: "sms-token",
+        from: "+15550000",
+        recipients: ["+15550001", "+15550002"],
+      }),
+      xmpp: createXmppProvider({
+        url: provider.url,
+        token: "xmpp-token",
+        from: "cas@example.org",
+        recipients: ["ops@example.org"],
+      }),
+    });
+
+    const result = await processCasOutbox({ workerId: "provider-worker", send });
+    assert.equal(result.claimed, 2);
+    assert.equal(result.sent, 2);
+    assert.equal(result.failed, 0);
+
+    const outbox = await db
+      .select()
+      .from(casOutbox)
+      .where(eq(casOutbox.incidentId, incidentId));
+    assert.ok(outbox.every((item) => item.state === "SENT"));
+
+    // Two SMS recipients plus one XMPP recipient reached the provider.
+    assert.equal(provider.requests.length, 3);
+    const outboxIds = outbox.map((item) => item.id);
+    for (const request of provider.requests) {
+      assert.ok(request.idempotencyKey);
+      const [outboxId, recipient] = request.idempotencyKey!.split(":");
+      assert.ok(outboxIds.includes(outboxId));
+      assert.equal(request.payload.idempotencyKey, request.idempotencyKey);
+      assert.equal(request.payload.to, recipient);
+      assert.ok(String(request.payload.body).includes(incidentId));
+    }
+
+    const smsRequests = provider.requests.filter((request) => request.authorization === "Bearer sms-token");
+    assert.deepEqual(
+      smsRequests.map((request) => request.idempotencyKey).sort(),
+      [`${incidentId}-sms:+15550001`, `${incidentId}-sms:+15550002`],
+    );
+    assert.ok(smsRequests.every((request) => request.payload.from === "+15550000"));
+
+    const xmppRequests = provider.requests.filter((request) => request.authorization === "Bearer xmpp-token");
+    assert.equal(xmppRequests.length, 1);
+    assert.equal(xmppRequests[0].idempotencyKey, `${incidentId}-xmpp:ops@example.org`);
+    assert.equal(xmppRequests[0].payload.stanzaId, `${incidentId}-xmpp:ops@example.org`);
+    assert.equal(xmppRequests[0].payload.from, "cas@example.org");
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a provider outage fails the delivery as retryable and keeps the outbox record", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const provider = await startStubProvider(() => 503);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "outage-worker", send });
+    assert.equal(result.failed, 2);
+    assert.equal(result.sent, 0);
+
+    const outbox = await db.select().from(casOutbox);
+    assert.equal(outbox.length, 2);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^server-outage \(retryable\):/);
+      assert.match(item.lastError ?? "", /HTTP 503/);
+      assert.equal(item.attempts, 1);
+      assert.ok(item.nextAttemptAt.getTime() > Date.now());
+      assert.equal(item.sentAt, null);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a provider authentication failure is classified as permanent", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const provider = await startStubProvider(() => 403);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "auth-worker", send });
+    assert.equal(result.failed, 2);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^authentication \(permanent\):/);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a provider idempotency conflict on replay counts as delivered, not a duplicate", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  // The provider remembers keys it already accepted and answers replays with
+  // the documented 409 + X-Idempotency-Replayed contract, which is how a
+  // retried worker learns the first attempt did deliver.
+  const acceptedKeys = new Set<string>();
+  const provider = await startStubProvider((request) => {
+    if (acceptedKeys.has(request.idempotencyKey!)) {
+      return { status: 409, headers: { "X-Idempotency-Replayed": "true" } };
+    }
+    acceptedKeys.add(request.idempotencyKey!);
+    return 200;
+  });
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+
+    const first = await processCasOutbox({ workerId: "replay-worker-a", send });
+    assert.equal(first.sent, 2);
+
+    // Simulate a worker that reclaimed the lease after a crash: force the rows
+    // back to QUEUED and let a second worker replay the same idempotency keys.
+    await db.update(casOutbox).set({ state: "QUEUED", sentAt: null, nextAttemptAt: new Date() });
+    const second = await processCasOutbox({ workerId: "replay-worker-b", send });
+    assert.equal(second.sent, 2);
+    assert.equal(second.failed, 0);
+
+    const outbox = await db.select().from(casOutbox);
+    assert.ok(outbox.every((item) => item.state === "SENT"));
+    // Each recipient key hit the provider exactly twice: the original send and
+    // the replay; the provider suppressed the duplicate via the stable key.
+    assert.equal(provider.requests.length, 4);
+    assert.equal(acceptedKeys.size, 2);
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a bare 409 on first submission fails as rejected, never as sent", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  // A 409 without the documented X-Idempotency-Replayed header is an ordinary
+  // conflict; the alert must not be marked delivered.
+  const provider = await startStubProvider(() => 409);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "conflict-worker", send });
+    assert.equal(result.sent, 0);
+    assert.equal(result.failed, 2);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^rejected \(permanent\):/);
+      assert.match(item.lastError ?? "", /not a recognized idempotent replay/);
+      assert.equal(item.sentAt, null);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+test("a non-HTTPS provider endpoint is refused before any alert content is sent", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const send = createCasDeliverySender({
+    sms: createSmsProvider({ url: "http://sms-gateway.example.com/submit", recipients: ["+15550001"] }),
+    xmpp: createXmppProvider({ url: "http://xmpp-gateway.example.com/submit", recipients: ["ops@example.org"] }),
+  });
+  const result = await processCasOutbox({ workerId: "cleartext-worker", send });
+  assert.equal(result.sent, 0);
+  assert.equal(result.failed, 2);
+
+  const outbox = await db.select().from(casOutbox);
+  for (const item of outbox) {
+    assert.equal(item.state, "FAILED");
+    assert.match(item.lastError ?? "", /^not-configured \(permanent\):/);
+    assert.match(item.lastError ?? "", /must use HTTPS/);
+    assert.equal(item.sentAt, null);
+  }
+});
+
+test("provider redirects are never followed and never mark an alert sent", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  // A redirect target that would happily return 200 if fetch followed the
+  // redirect — which must never happen, since 301/302 would fake delivery and
+  // 307/308 could forward alert content to an untrusted origin.
+  let targetHits = 0;
+  const target: HttpServer = createHttpServer((_req, res) => {
+    targetHits += 1;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("redirect target");
+  });
+  target.listen(0, "127.0.0.1");
+  await once(target, "listening");
+  const targetUrl = `http://127.0.0.1:${(target.address() as AddressInfo).port}/final`;
+
+  // SMS gets a 302 (body-dropping redirect), XMPP gets a 308 (payload-forwarding redirect).
+  const provider = await startStubProvider((request) =>
+    String(request.payload.to).startsWith("+")
+      ? { status: 302, headers: { Location: targetUrl } }
+      : { status: 308, headers: { Location: targetUrl } });
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "redirect-worker", send });
+    assert.equal(result.sent, 0);
+    assert.equal(result.failed, 2);
+    assert.equal(targetHits, 0);
+
+    const outbox = await db.select().from(casOutbox);
+    for (const item of outbox) {
+      assert.equal(item.state, "FAILED");
+      assert.match(item.lastError ?? "", /^rejected \(permanent\):/);
+      assert.match(item.lastError ?? "", /redirects are never followed/);
+      assert.equal(item.sentAt, null);
+    }
+  } finally {
+    await provider.close();
+    target.close();
+    await once(target, "close");
+  }
+});
+
+test("an unreachable provider is classified as a retryable network failure", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const portServer = createServer();
+  portServer.listen(0, "127.0.0.1");
+  await once(portServer, "listening");
+  const deadPort = (portServer.address() as AddressInfo).port;
+  portServer.close();
+  await once(portServer, "close");
+
+  const send = createCasDeliverySender({
+    sms: createSmsProvider({ url: `http://127.0.0.1:${deadPort}/submit`, recipients: ["+15550001"] }),
+    xmpp: createXmppProvider({ url: `http://127.0.0.1:${deadPort}/submit`, recipients: ["ops@example.org"] }),
+  });
+  const result = await processCasOutbox({ workerId: "offline-worker", send });
+  assert.equal(result.failed, 2);
+
+  const outbox = await db.select().from(casOutbox);
+  for (const item of outbox) {
+    assert.equal(item.state, "FAILED");
+    assert.match(item.lastError ?? "", /^network \(retryable\):/);
+  }
+});
+
+test("a transport without a configured provider fails explicitly and keeps the record", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+
+  const send = createCasDeliverySender({});
+  const result = await processCasOutbox({ workerId: "unconfigured-worker", send });
+  assert.equal(result.claimed, 2);
+  assert.equal(result.sent, 0);
+  assert.equal(result.failed, 2);
+
+  const outbox = await db.select().from(casOutbox);
+  assert.equal(outbox.length, 2);
+  for (const item of outbox) {
+    assert.equal(item.state, "FAILED");
+    assert.match(item.lastError ?? "", /^not-configured \(permanent\):/);
+    assert.equal(item.attempts, 1);
   }
 });
 
