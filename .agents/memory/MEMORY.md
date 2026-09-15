@@ -12,3 +12,4 @@
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
 - [Launch smoke detection lessons](launch-smoke-detection-selftest.md) — am start -W exits 0 on onCreate crashes; tail -200 alone can miss the fatal block — grep it explicitly.
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — local emulator IS possible: workspace volume (home has ~5G quota), nix-store libX11, -no-accel TCG, ~7min cold boot.
+- [Protected broadcasts need adb root](protected-broadcasts-adb.md) — shell uid cannot send BOOT_COMPLETED on API 35; root the google_apis emulator first.

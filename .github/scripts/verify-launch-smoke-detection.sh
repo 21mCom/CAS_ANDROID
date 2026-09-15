@@ -61,10 +61,21 @@ for needle in "am start" "pidof com.covertalert.pixeltest" "logcat -d" "Smoke te
 done
 
 # ---------------------------------------------------------------------------
-# Fake adb. Behaviour is driven by three env vars exported per scenario:
-#   SMOKE_AM_EXIT        exit code for `adb shell am start ...`
-#   SMOKE_PID            printed by `adb shell pidof ...` (empty = no process)
-#   SMOKE_LOGCAT_FIXTURE file served by `adb logcat -d`
+# Fake adb. Behaviour is driven by env vars exported per scenario:
+#   SMOKE_AM_EXIT            exit code for `adb shell am start ...`
+#   SMOKE_AM_BROADCAST_EXIT  if set, exit code for `adb shell am broadcast ...`
+#   SMOKE_PID                printed by `adb shell pidof ...` (empty = no process)
+#   SMOKE_LOGCAT_FIXTURE     file served by `adb logcat -d`
+#   SMOKE_LOGCAT_FIXTURE_PHASE_<n>
+#                            if set, fixture served after the n-th `logcat -c`
+#                            (the job re-clears logcat before each entry-point
+#                            check: 1=MainActivity, 2=PROXY_TRIGGER,
+#                            3=BOOT_COMPLETED broadcast)
+#   SMOKE_STATE              state file used to count `logcat -c` calls
+#   SMOKE_SHELL_UID          uid reported by `adb shell id` (default 0 = root,
+#                            as after a successful `adb root` on the rootable
+#                            google_apis image; set to 2000 to model a
+#                            non-rootable image where adbd stays as shell)
 # ---------------------------------------------------------------------------
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
@@ -77,14 +88,36 @@ case "${1:-}" in
     echo "Success"
     exit 0
     ;;
+  root)
+    echo "restarting adbd as root"
+    exit 0
+    ;;
+  wait-for-device)
+    exit 0
+    ;;
   logcat)
-    if [ "${2:-}" = "-c" ]; then exit 0; fi
-    cat "$SMOKE_LOGCAT_FIXTURE"
+    n=0
+    if [ -f "$SMOKE_STATE" ]; then n="$(cat "$SMOKE_STATE")"; fi
+    if [ "${2:-}" = "-c" ]; then
+      echo $((n + 1)) > "$SMOKE_STATE"
+      exit 0
+    fi
+    phase_var="SMOKE_LOGCAT_FIXTURE_PHASE_$n"
+    cat "${!phase_var:-$SMOKE_LOGCAT_FIXTURE}"
     exit 0
     ;;
   shell)
     case "${2:-}" in
       am)
+        if [[ " $* " == *" broadcast "* ]] && [ -n "${SMOKE_AM_BROADCAST_EXIT:-}" ]; then
+          if [ "$SMOKE_AM_BROADCAST_EXIT" -eq 0 ]; then
+            echo "Broadcasting: Intent { act=android.intent.action.BOOT_COMPLETED pkg=com.covertalert.pixeltest }"
+            echo "Broadcast completed: result=0"
+          else
+            echo "SecurityException: Permission Denial: not allowed to send broadcast android.intent.action.BOOT_COMPLETED" >&2
+          fi
+          exit "$SMOKE_AM_BROADCAST_EXIT"
+        fi
         if [ "$SMOKE_AM_EXIT" -eq 0 ]; then
           echo "Starting: Intent { cmp=com.covertalert.pixeltest/.MainActivity }"
           echo "Status: ok"
@@ -97,6 +130,15 @@ case "${1:-}" in
         ;;
       pidof)
         if [ -n "$SMOKE_PID" ]; then echo "$SMOKE_PID"; fi
+        exit 0
+        ;;
+      id)
+        uid="${SMOKE_SHELL_UID:-0}"
+        if [ "$uid" = "0" ]; then
+          echo "uid=0(root) gid=0(root) groups=0(root)"
+        else
+          echo "uid=2000(shell) gid=2000(shell) groups=2000(shell)"
+        fi
         exit 0
         ;;
     esac
@@ -114,7 +156,8 @@ FAILURES=0
 
 run_scenario() {
   local name="$1" expected_exit="$2" am_exit="$3" pid="$4" fixture="$5"
-  shift 5
+  local am_broadcast_exit="$6" phase3_fixture="$7"
+  shift 7
   # Remaining args: strings that must appear in the job output.
   local work="$TMP_ROOT/$name"
   mkdir -p "$work/apk"
@@ -126,6 +169,9 @@ run_scenario() {
     cd "$work"
     export PATH="$BIN_DIR:$PATH"
     export SMOKE_AM_EXIT="$am_exit" SMOKE_PID="$pid" SMOKE_LOGCAT_FIXTURE="$fixture"
+    export SMOKE_STATE="$work/adb-state"
+    if [ -n "$am_broadcast_exit" ]; then export SMOKE_AM_BROADCAST_EXIT="$am_broadcast_exit"; fi
+    if [ -n "$phase3_fixture" ]; then export SMOKE_LOGCAT_FIXTURE_PHASE_3="$phase3_fixture"; fi
     bash "$EXTRACTED"
   ) > "$out" 2>&1
   local rc=$?
@@ -157,30 +203,48 @@ echo "workflow:  $WORKFLOW"
 echo "extracted: $(wc -l < "$EXTRACTED") lines of script under test"
 echo
 
-# 1. Healthy launch -> job must stay GREEN.
-run_scenario "healthy-launch" 0 0 "2100" "$FIXTURES/healthy-logcat.txt" \
-  "Smoke test passed"
+# 1. Healthy launch -> job must stay GREEN through all three entry points.
+run_scenario "healthy-launch" 0 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "" \
+  "Smoke test passed" "BootReceiver (BOOT_COMPLETED) exercised"
 
 # 2. Crash in onCreate after `am start -W` returns success (the realistic
 #    crash-on-launch shape: am start exits 0, then the process dies).
 #    -> job must go RED via the pidof check, with the logcat excerpt shown.
-run_scenario "crash-after-successful-am-start" 1 0 "" "$FIXTURES/crash-logcat.txt" \
+run_scenario "crash-after-successful-am-start" 1 0 "" "$FIXTURES/crash-logcat.txt" "" "" \
   "crash on launch" "FATAL EXCEPTION" "DELIBERATE-CRASH-MARKER"
 
 # 3. Fatal exception in logcat while a (restarted) process is still alive.
 #    -> job must go RED via the logcat grep, with the excerpt shown.
-run_scenario "fatal-logcat-with-live-process" 1 0 "2100" "$FIXTURES/crash-logcat.txt" \
+run_scenario "fatal-logcat-with-live-process" 1 0 "2100" "$FIXTURES/crash-logcat.txt" "" "" \
   "Fatal crash detected in logcat" "FATAL EXCEPTION" "DELIBERATE-CRASH-MARKER"
 
 # 4. `am start` itself fails. -> job must go RED with the am-start error.
-run_scenario "am-start-failure" 1 1 "" "$FIXTURES/healthy-logcat.txt" \
+run_scenario "am-start-failure" 1 1 "" "$FIXTURES/healthy-logcat.txt" "" "" \
   "am start failed"
 
 # 5. Another package being force-finished during the window must NOT fail
 #    our launch -> proves the 'Force finishing activity' pattern is scoped
 #    to com.covertalert.pixeltest.
-run_scenario "other-package-force-finish-stays-green" 0 0 "2100" "$FIXTURES/other-app-force-finish-logcat.txt" \
+run_scenario "other-package-force-finish-stays-green" 0 0 "2100" "$FIXTURES/other-app-force-finish-logcat.txt" "" "" \
   "Smoke test passed"
+
+# 6. BootReceiver crashes on the BOOT_COMPLETED broadcast while the activity
+#    phases were healthy -> job must go RED via the phase-3 logcat grep,
+#    with the receiver crash excerpt shown.
+run_scenario "boot-receiver-crash" 1 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "$FIXTURES/boot-crash-logcat.txt" \
+  "Fatal crash detected in logcat after BOOT_COMPLETED broadcast" "FATAL EXCEPTION" "BOOT-RECEIVER-CRASH-MARKER"
+
+# 7. The BOOT_COMPLETED broadcast itself fails to send even as root
+#    -> job must go RED with the broadcast error.
+run_scenario "boot-broadcast-failure" 1 0 "2100" "$FIXTURES/healthy-logcat.txt" 1 "" \
+  "am broadcast failed" "BOOT_COMPLETED"
+
+# 8. `adb root` does not yield a root shell (e.g. someone switches the job to
+#    a non-rootable google_play image) -> the protected BOOT_COMPLETED
+#    broadcast cannot be sent; job must go RED at the explicit uid check
+#    instead of dying later on a SecurityException.
+SMOKE_SHELL_UID=2000 run_scenario "adb-root-unavailable" 1 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "" \
+  "adb root did not yield a root shell"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

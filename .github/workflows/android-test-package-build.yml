@@ -125,7 +125,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot emulator and launch MainActivity + PROXY_TRIGGER
+    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED
     needs: assemble-debug
     runs-on: macos-latest
     timeout-minutes: 20
@@ -158,7 +158,7 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity
+      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ steps.tool-requirements.outputs.api-level }}
@@ -230,4 +230,44 @@ jobs:
               adb logcat -d | tail -200
               exit 1
             fi
-            echo "Smoke test passed: MainActivity and TriggerActivity (PROXY_TRIGGER) launched, process alive (pid $pid), no fatal logcat entries."
+            echo "TriggerActivity check passed: PROXY_TRIGGER launched, process alive (pid $pid), no fatal logcat entries."
+            # Third entry point: BootReceiver handles BOOT_COMPLETED (the
+            # field device must survive a reboot). A crash here (bad
+            # direct-boot assumption, Theme/context misuse) would otherwise
+            # only be discovered on the field device after a reboot.
+            # BOOT_COMPLETED is a protected broadcast: the default adb shell
+            # user (uid 2000) is NOT permitted to send it on API 35
+            # (SecurityException, verified on a real emulator), but the
+            # google_apis image is rootable — restart adbd as root first.
+            adb root
+            adb wait-for-device
+            if ! adb shell id | grep -q "uid=0"; then
+              echo "::error::adb root did not yield a root shell — cannot send the protected BOOT_COMPLETED broadcast."
+              exit 1
+            fi
+            # Re-clear logcat so the checks below only see output from this
+            # broadcast.
+            adb logcat -c
+            if ! adb shell am broadcast -a android.intent.action.BOOT_COMPLETED -p com.covertalert.pixeltest; then
+              echo "::error::am broadcast failed — BOOT_COMPLETED was not delivered to BootReceiver."
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            sleep 8
+            # A crashing receiver kills the hosting app process, so the
+            # process started by MainActivity above must still be alive.
+            pid="$(adb shell pidof com.covertalert.pixeltest || true)"
+            if [ -z "$pid" ]; then
+              echo "::error::App process is not running 8s after BOOT_COMPLETED — BootReceiver crashed."
+              adb logcat -d | grep -B2 -A30 'FATAL EXCEPTION' || true
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            crashes="$(adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime: FATAL|Force finishing activity com\.covertalert\.pixeltest' || true)"
+            if [ -n "$crashes" ]; then
+              echo "::error::Fatal crash detected in logcat after BOOT_COMPLETED broadcast."
+              echo "$crashes"
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), and BootReceiver (BOOT_COMPLETED) exercised, process alive (pid $pid), no fatal logcat entries."
