@@ -36,6 +36,14 @@ try {
 const result = validateGate0aImport(report);
 if (!result.ok) {
   console.error(`REJECTED: ${result.error}`);
+  // Print every structured issue (path + message) so the CI log shows each
+  // failing field, not just the first few embedded in the error summary.
+  if (result.issues) {
+    console.error(`Failing fields (${result.issues.length}):`);
+    for (const issue of result.issues) {
+      console.error(`  - ${issue.path ? `${issue.path}: ` : ""}${issue.message}`);
+    }
+  }
   console.error("The CovertAlertSystem web app would refuse to import this Gate 0A report.");
   process.exit(1);
 }

@@ -136,7 +136,27 @@ router.get("/cas/state", async (_req, res, next) => {
 
 router.post("/cas/bootstrap", async (req, res, next) => {
   try {
-    const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
+    const body = z.object({
+      setup: z.array(z.object({
+        id: z.string(),
+        label: z.string(),
+        detail: z.string(),
+        group: z.string(),
+        complete: z.boolean(),
+        mode: z.string(),
+      })),
+      gates: z.array(z.object({
+        id: z.string(),
+        index: z.string(),
+        name: z.string(),
+        short: z.string(),
+        status: z.string(),
+        criterion: z.string(),
+        evidence: z.array(z.string()),
+        nextAction: z.string(),
+        owner: z.string(),
+      })),
+    }).parse(req.body);
     const existing = await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness).limit(1);
     if (existing.length === 0) {
       await db.transaction(async (tx) => {
@@ -150,13 +170,6 @@ router.post("/cas/bootstrap", async (req, res, next) => {
 
 router.post("/cas/incidents/test", async (req, res, next) => {
   try {
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
-    const now = new Date(); const id = `test-${now.getTime()}`;
     const now = new Date(); const id = `test-${now.getTime()}`;
     await db.insert(casIncidents).values({ id, priority: "P3", status: "RESOLVED", triggerCount: 1, createdAt: now, updatedAt: now });
     await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: "Local test action completed. No message was sent and no device action was triggered.", createdAt: now });
