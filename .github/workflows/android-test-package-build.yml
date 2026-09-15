@@ -138,6 +138,9 @@ jobs:
             pid="$(adb shell pidof com.covertalert.pixeltest || true)"
             if [ -z "$pid" ]; then
               echo "::error::App process is not running 8s after launch — crash on launch."
+              # Surface the fatal block itself first: on a slow or noisy
+              # emulator the crash can scroll out of a plain tail -200.
+              adb logcat -d | grep -B2 -A30 'FATAL EXCEPTION' || true
               adb logcat -d | tail -200
               exit 1
             fi

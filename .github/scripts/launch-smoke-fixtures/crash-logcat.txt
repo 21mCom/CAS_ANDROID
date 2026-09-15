@@ -1,0 +1,16 @@
+--------- beginning of main
+09-15 10:00:00.100  1560  1580 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.covertalert.pixeltest/.MainActivity} from uid 2000
+09-15 10:00:00.240  2100  2100 I pixeltest: Late-enabling -Xcheck:jni
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: FATAL EXCEPTION: main
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: Process: com.covertalert.pixeltest, PID: 2100
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.covertalert.pixeltest/com.covertalert.pixeltest.MainActivity}: java.lang.IllegalStateException: DELIBERATE-CRASH-MARKER
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3685)
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3822)
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:101)
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2300)
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: Caused by: java.lang.IllegalStateException: DELIBERATE-CRASH-MARKER
+09-15 10:00:00.900  2100  2100 E AndroidRuntime: 	at com.covertalert.pixeltest.MainActivity.onCreate(MainActivity.kt:29)
+09-15 10:00:01.100  1560  2105 W ActivityTaskManager:   Force finishing activity com.covertalert.pixeltest/.MainActivity
+09-15 10:00:01.320  1560  1580 I ActivityManager: Process com.covertalert.pixeltest (pid 2100) has died: fg TOP
+09-15 10:00:01.340  1560  1580 I WindowManager: WIN DEATH: Window{abc1234 u0 com.covertalert.pixeltest/com.covertalert.pixeltest.MainActivity}
