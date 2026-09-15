@@ -361,6 +361,35 @@ test("Gate 0A import rejects malformed reports with the failing field", async ()
   ]);
 });
 
+test("Gate 0A import reports every failing field when a report has more than three problems", async () => {
+  const broken = {
+    ...validGate0aReport,
+    schema: "cas-gate0a-report-v0",
+    reportType: "gate0b-run",
+    startedAtUtc: "not-a-timestamp",
+    finishedAtUtc: "also-not-a-timestamp",
+    coverPackage: "",
+  };
+  const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(broken),
+  });
+
+  assert.equal(response.status, 400);
+  const body = await response.json() as { error: string; issues: { path: string; message: string }[] };
+  // The summary stays short, but the structured list carries every failure.
+  assert.deepEqual(body.issues.map((issue) => issue.path), [
+    "schema",
+    "reportType",
+    "startedAtUtc",
+    "finishedAtUtc",
+    "coverPackage",
+  ]);
+  assert.ok(body.issues.every((issue) => issue.message.length > 0));
+  assert.match(body.error, /\(and 2 more issues\)$/);
+});
+
 test("Gate 0A import rejects physical evidence from an unapproved Pixel model", async () => {
   const wrongModel = {
     ...validGate0aReport,

@@ -205,7 +205,15 @@ export type Gate0aValidationResult =
   | { ok: true; report: Gate0aReport }
   | { ok: false; error: string; issues?: Gate0aValidationIssue[] };
 
-const MAX_REPORTED_ISSUES = 3;
+/**
+ * The structured issue list carries up to this many entries so an operator
+ * importing a badly truncated or schema-drifted report can see every failing
+ * field, while staying bounded for a 10k-event report where every event is
+ * invalid. The plain-text error summary stays short (MAX_SUMMARY_ISSUES) and
+ * points at the full list for the remainder.
+ */
+const MAX_REPORTED_ISSUES = 50;
+const MAX_SUMMARY_ISSUES = 3;
 /**
  * Applies the exact accept/reject rules of POST /api/cas/gate0a/import to an
  * already-parsed JSON value. Both the route and the CI validator call this so
@@ -230,8 +238,11 @@ export function validateGate0aImport(body: unknown): Gate0aValidationResult {
 }
 
 /**
- * Summarizes the top zod issues into a message a field operator can act on
- * (which field failed and why) plus a structured issue list for clients.
+ * Summarizes the top zod issues into a short message a field operator can act
+ * on (which field failed and why) plus a structured issue list for clients.
+ * The list carries up to MAX_REPORTED_ISSUES entries so the gates panel can
+ * show every failing field; the message embeds only the first
+ * MAX_SUMMARY_ISSUES and counts the rest.
  */
 function describeSchemaIssues(error: z.ZodError): { error: string; issues: Gate0aValidationIssue[] } {
   const issues = error.issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => ({
@@ -239,10 +250,12 @@ function describeSchemaIssues(error: z.ZodError): { error: string; issues: Gate0
     message: issue.message,
   }));
   const detail = issues
+    .slice(0, MAX_SUMMARY_ISSUES)
     .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message))
     .join("; ");
-  const overflow = error.issues.length > MAX_REPORTED_ISSUES
-    ? ` (and ${error.issues.length - MAX_REPORTED_ISSUES} more issue${error.issues.length - MAX_REPORTED_ISSUES === 1 ? "" : "s"})`
+  const overflowCount = error.issues.length - Math.min(error.issues.length, MAX_SUMMARY_ISSUES);
+  const overflow = error.issues.length > MAX_SUMMARY_ISSUES
+    ? ` (and ${overflowCount} more issue${overflowCount === 1 ? "" : "s"})`
     : "";
   return {
     error: `Invalid cas-gate0a-report-v2 report — ${detail}${overflow}`,

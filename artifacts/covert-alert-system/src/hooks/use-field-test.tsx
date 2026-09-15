@@ -49,6 +49,18 @@ export type Gate0AImportSummary = {
   warningCount: number;
 };
 
+export type Gate0AImportIssue = { path?: string; message?: string };
+
+/** Import rejection that carries the server's structured per-field issue list. */
+export class Gate0AImportError extends Error {
+  issues: Gate0AImportIssue[];
+  constructor(message: string, issues: Gate0AImportIssue[]) {
+    super(message);
+    this.name = 'Gate0AImportError';
+    this.issues = issues;
+  }
+}
+
 export type KernelStatus = 'INACTIVE' | 'ACTIVE_UNACKED' | 'ACTIVE_ACKED' | 'RESOLVED';
 
 export type KernelEvent = {
@@ -261,13 +273,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         summary?: Gate0AImportSummary;
       };
       if (!response.ok) {
-        const detail = (body.issues ?? [])
-          .map((issue) => (issue.path ? `${issue.path}: ${issue.message ?? 'Invalid value'}` : issue.message))
-          .filter((line): line is string => Boolean(line))
-          .join('; ');
+        const issues = body.issues ?? [];
         const reason = body.error || 'Gate 0A report was rejected.';
-        // The server error already embeds the top issues; only append when it does not.
-        throw new Error(detail && !reason.includes(detail) ? `${reason} (${detail})` : reason);
+        // The server error embeds only the top issues; the structured list
+        // carries every reported failing field for the gates panel to render.
+        throw new Gate0AImportError(reason, issues);
       }
       const observation = body.observation;
       if (!observation) throw new Error('Gate 0A report was accepted without an observation.');
