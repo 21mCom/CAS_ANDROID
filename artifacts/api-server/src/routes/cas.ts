@@ -232,6 +232,48 @@ async function appendTransition(id: string, from: string, to: string, type: stri
 router.post("/cas/incidents/:id/ack", (req, res, next) => appendTransition(req.params.id, "ACTIVE_UNACKED", "ACTIVE_ACKED", "RESPONDER_ACK", "Responder acknowledgement accepted; location would continue.", res, next).catch(next));
 router.post("/cas/incidents/:id/resolve", (req, res, next) => appendTransition(req.params.id, "ACTIVE_ACKED", "RESOLVED", "RESPONDER_RESOLVE", "Authenticated resolution appended to the journal.", res, next).catch(next));
 
+/**
+ * Operator recovery for an abandoned delivery: moves a DEAD_LETTER item back
+ * to QUEUED with attempts reset and the lease cleared so the worker claims it
+ * on its next pass, and journals the manual recovery so the timeline shows
+ * abandonment followed by re-queue. Only DEAD_LETTER items may be re-queued;
+ * anything else still has the regular retry path (or is already delivered).
+ */
+router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const now = new Date();
+    const result = await db.transaction(async (tx) => {
+      // Lock the row before checking its state so a concurrent worker cannot
+      // complete or re-claim the item between the check and the update.
+      await tx.execute(sql`SELECT id FROM cas_outbox WHERE id = ${id} FOR UPDATE`);
+      const rows = await tx.select().from(casOutbox).where(eq(casOutbox.id, id)).limit(1);
+      const item = rows[0];
+      if (!item) return "missing" as const;
+      if (item.state !== "DEAD_LETTER") return "conflict" as const;
+      await tx.update(casOutbox).set({
+        state: "QUEUED",
+        attempts: 0,
+        claimedBy: null,
+        claimedAt: null,
+        nextAttemptAt: now,
+      }).where(eq(casOutbox.id, id));
+      await tx.insert(casIncidentEvents).values({
+        id: `${id}-requeued-${now.getTime()}`,
+        incidentId: item.incidentId,
+        type: "DELIVERY_REQUEUED",
+        priority: item.priority,
+        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again.`,
+        createdAt: now,
+      });
+      return "requeued" as const;
+    });
+    if (result === "missing") return res.status(404).json({ error: "Outbox item not found" });
+    if (result === "conflict") return res.status(409).json({ error: "Only a DEAD_LETTER delivery can be re-queued" });
+    return res.json({ id, state: "QUEUED" });
+  } catch (error) { return next(error); }
+});
+
 router.patch("/cas/setup/:id", async (req, res, next) => {
   try {
     const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);

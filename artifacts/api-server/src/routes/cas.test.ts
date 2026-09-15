@@ -818,6 +818,125 @@ test("the state view surfaces dead-lettered deliveries distinctly", async () => 
   assert.equal(pending.terminal, false);
 });
 
+test("a re-queued dead-letter delivery becomes claimable and deliverable again", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Drive one item to its final claim so the worker dead-letters it. Both
+  // items share one createdAt, so hold the sibling back with a future backoff
+  // to keep every claim deterministic.
+  const [target] = await db
+    .select({ id: casOutbox.id })
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, id))
+    .orderBy(asc(casOutbox.createdAt))
+    .limit(1);
+  await db
+    .update(casOutbox)
+    .set({ attempts: MAX_DELIVERY_ATTEMPTS - 1 })
+    .where(eq(casOutbox.id, target.id));
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${target.id}`);
+
+  const abandoned = await processCasOutbox({
+    workerId: "requeue-worker",
+    maxItems: 1,
+    send: async () => {
+      throw new Error("provider permanently rejects recipient");
+    },
+  });
+  assert.equal(abandoned.deadLettered, 1);
+  const [deadRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, target.id));
+  assert.equal(deadRow.state, "DEAD_LETTER");
+
+  // The responder fixes the provider problem and re-queues the delivery.
+  const requeue = await fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, { method: "POST" });
+  assert.equal(requeue.status, 200);
+  const requeued = (await requeue.json()) as { id: string; state: string };
+  assert.equal(requeued.id, target.id);
+  assert.equal(requeued.state, "QUEUED");
+
+  const [resetRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, target.id));
+  assert.equal(resetRow.state, "QUEUED");
+  assert.equal(resetRow.attempts, 0);
+  assert.equal(resetRow.claimedBy, null);
+  assert.equal(resetRow.claimedAt, null);
+  assert.ok(resetRow.nextAttemptAt.getTime() <= Date.now());
+
+  // The journal shows abandonment followed by the manual recovery, in order.
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id))
+    .orderBy(asc(casIncidentEvents.createdAt));
+  const abandonedIndex = events.findIndex((event) => event.type === "DELIVERY_ABANDONED");
+  const requeuedEvents = events.filter((event) => event.type === "DELIVERY_REQUEUED");
+  assert.ok(abandonedIndex >= 0);
+  assert.equal(requeuedEvents.length, 1);
+  assert.ok(events.indexOf(requeuedEvents[0]) > abandonedIndex);
+  assert.match(requeuedEvents[0].detail, /re-queued the abandoned SMS delivery/);
+  assert.match(requeuedEvents[0].detail, /provider permanently rejects recipient/);
+
+  // The worker claims the re-queued item on its next pass and, with the
+  // provider fixed, delivers it.
+  const recovered = await processCasOutbox({
+    workerId: "requeue-worker",
+    maxItems: 1,
+    send: async () => {},
+  });
+  assert.equal(recovered.claimed, 1);
+  assert.equal(recovered.sent, 1);
+  assert.equal(recovered.deliveries[0].id, target.id);
+  assert.equal(recovered.deliveries[0].state, "SENT");
+
+  const [sentRow] = await db.select().from(casOutbox).where(eq(casOutbox.id, target.id));
+  assert.equal(sentRow.state, "SENT");
+  assert.equal(sentRow.attempts, 1);
+});
+
+test("re-queue refuses deliveries that are not dead-lettered", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+  const items = await db
+    .select({ id: casOutbox.id })
+    .from(casOutbox)
+    .where(eq(casOutbox.incidentId, id))
+    .orderBy(asc(casOutbox.createdAt));
+  assert.equal(items.length, 2);
+
+  // A QUEUED item still has the regular retry path; re-queue is a conflict.
+  const queuedRequeue = await fetch(`${baseUrl}/cas/outbox/${items[0].id}/requeue`, { method: "POST" });
+  assert.equal(queuedRequeue.status, 409);
+
+  // A SENT item is already delivered; re-queue is a conflict.
+  await db
+    .update(casOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() + 3_600_000) })
+    .where(eq(casOutbox.id, items[0].id));
+  const sent = await processCasOutbox({
+    workerId: "requeue-guard-worker",
+    maxItems: 1,
+    send: async () => {},
+  });
+  assert.equal(sent.sent, 1);
+  assert.equal(sent.deliveries[0].id, items[1].id);
+  const sentRequeue = await fetch(`${baseUrl}/cas/outbox/${items[1].id}/requeue`, { method: "POST" });
+  assert.equal(sentRequeue.status, 409);
+
+  // An unknown item is a 404, and none of the refusals touch the journal.
+  const missing = await fetch(`${baseUrl}/cas/outbox/no-such-item/requeue`, { method: "POST" });
+  assert.equal(missing.status, 404);
+  const events = await db
+    .select()
+    .from(casIncidentEvents)
+    .where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "DELIVERY_REQUEUED").length, 0);
+});
+
 test("delivery stays duplicate-free after a worker crash", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
   assert.equal(trigger.status, 201);

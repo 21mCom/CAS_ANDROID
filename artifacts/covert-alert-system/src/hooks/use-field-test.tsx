@@ -109,6 +109,7 @@ type FieldTestContextValue = FieldTestState & {
   triggerKernel: () => void;
   acknowledgeKernel: () => void;
   resolveKernel: () => void;
+  requeueOutboxItem: (id: string) => void;
   resetDemo: () => void;
 };
 const initialGates: Gate[] = [
@@ -305,6 +306,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     triggerKernel: () => { void fetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload); },
     acknowledgeKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload); },
     resolveKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload); },
+    requeueOutboxItem: (id) => { void fetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST' }).then(reload); },
     resetDemo: () => { void reload(); },
   }), [state]);
 
