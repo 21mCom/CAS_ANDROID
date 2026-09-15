@@ -302,6 +302,7 @@ if ($ParserRegressionCheck) {
     # Drift test: an altered requirements file (different from the declared
     # values) must change the JDK pass/fail decisions. This catches a hardcoded
     # threshold in Test-JdkMeetsRequirement that a same-value comparison cannot.
+    # toolreq-gate: allow-begin -- deliberate drift fixture: the altered values must differ from tool-requirements.json to prove the thresholds are not hardcoded.
     $driftDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-drift-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $driftDirectory | Out-Null
     try {
@@ -329,6 +330,7 @@ if ($ParserRegressionCheck) {
     } finally {
         Remove-Item -Recurse -Force $driftDirectory -ErrorAction SilentlyContinue
     }
+    # toolreq-gate: allow-end
     foreach ($invalidOutput in @('', 'garbage')) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
             throw ('Java invalid-output regression: expected no version for "{0}".' -f $invalidOutput)

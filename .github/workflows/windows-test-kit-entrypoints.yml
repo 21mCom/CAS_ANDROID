@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
+      - ".github/scripts/check-tool-requirements-drift.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
       - "artifacts/covert-alert-system/android-test-package/tool-requirements.json"
+      - "artifacts/covert-alert-system/android-test-package/README.md"
+      - "artifacts/covert-alert-system/android-test-package/START-HERE-WINDOWS.md"
+      - "artifacts/covert-alert-system/android-test-package/docs/**"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
@@ -17,12 +21,16 @@ on:
   push:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
+      - ".github/scripts/check-tool-requirements-drift.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/android-test-package/scripts/**"
       - "artifacts/covert-alert-system/android-test-package/tool-requirements.json"
+      - "artifacts/covert-alert-system/android-test-package/README.md"
+      - "artifacts/covert-alert-system/android-test-package/START-HERE-WINDOWS.md"
+      - "artifacts/covert-alert-system/android-test-package/docs/**"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
@@ -126,6 +134,51 @@ jobs:
               }
           }
           Write-Host ("Packaged kit matches the repository checkout ({0} files verified)." -f $repoFiles.Count)
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Packaged docs and scripts must agree with tool-requirements.json
+        shell: pwsh
+        run: |
+          # tool-requirements.json declares the JDK minimum, SDK platform, and
+          # build-tools minimum once; the docs reference it. This gate greps the
+          # packaged kit for reintroduced literals that disagree with the
+          # declaration, so a future edit cannot silently fork the guidance again.
+          python .github/scripts/check-tool-requirements-drift.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-tool-requirements-drift.py exited $LASTEXITCODE" }
+
+      - name: A reintroduced stale literal must fail the drift gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: copy the packaged kit, inject literals that disagree
+          # with tool-requirements.json, and require the gate to turn red on the
+          # exact file/line. Only the copy is modified; the packaged kit stays
+          # clean for the entry-point checks below.
+          $driftCopy = Join-Path $env:RUNNER_TEMP 'toolreq-drift-negative'
+          if (Test-Path -LiteralPath $driftCopy) { Remove-Item -Recurse -Force $driftCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $driftCopy
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value ''
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value 'Requires JDK 21 or newer and platforms;android-34 with build-tools;34.0.0.'
+          # A declared-value occurrence first on the line must not hide a stale
+          # literal of the same kind later on the same line.
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value 'The kit declares JDK 17; do not confuse it with legacy JDK 21 setups.'
+          # The gate is expected to exit non-zero here; do not let pwsh 7.4+ turn
+          # the native command's exit code into a terminating error before the
+          # assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & python .github/scripts/check-tool-requirements-drift.py $driftCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The drift gate accepted reintroduced literals that disagree with tool-requirements.json.' }
+          if ($output -notmatch 'START-HERE-WINDOWS\.md') { throw 'The gate failed without naming the drifted file.' }
+          if ($output -notmatch 'JDK major literal' -or $output -notmatch 'SDK platform literal' -or $output -notmatch 'build-tools literal') {
+              throw 'The gate failed without identifying the drifted JDK, SDK platform, and build-tools literals.'
+          }
+          Write-Host 'Reintroduced stale literals turned the drift gate red, as required.'
 
       - name: Run entry-point checks against the packaged kit
         shell: pwsh
