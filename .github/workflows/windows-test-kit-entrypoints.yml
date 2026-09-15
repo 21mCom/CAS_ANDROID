@@ -180,6 +180,35 @@ jobs:
           }
           Write-Host 'Reintroduced stale literals turned the drift gate red, as required.'
 
+      - name: A fallback JDK minimum lagging the declaration must fail the drift gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: windows-preflight.ps1 carries a built-in fallback
+          # requirements block (used when tool-requirements.json is missing)
+          # whose bare 'jdkMinimumMajor = N' assignment matches no keyword
+          # literal form. Simulate the declaration moving to JDK 21 while the
+          # fallback stays behind and require the gate to turn red on the
+          # exact fallback line. Only the copy is modified.
+          $driftCopy = Join-Path $env:RUNNER_TEMP 'toolreq-fallback-negative'
+          if (Test-Path -LiteralPath $driftCopy) { Remove-Item -Recurse -Force $driftCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $driftCopy
+          $declaration = Join-Path $driftCopy 'tool-requirements.json'
+          $requirements = Get-Content -LiteralPath $declaration -Raw | ConvertFrom-Json
+          $requirements.jdk.minimumMajor = [int]$requirements.jdk.minimumMajor + 4
+          $requirements | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $declaration -Encoding Ascii
+          # The gate is expected to exit non-zero here; do not let pwsh 7.4+ turn
+          # the native command's exit code into a terminating error before the
+          # assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & python .github/scripts/check-tool-requirements-drift.py $driftCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The drift gate accepted a fallback JDK minimum that lags tool-requirements.json.' }
+          if ($output -notmatch 'windows-preflight\.ps1') { throw 'The gate failed without naming the preflight script.' }
+          if ($output -notmatch 'jdkMinimumMajor = ') { throw 'The gate failed without identifying the drifted fallback assignment.' }
+          Write-Host 'A lagging fallback JDK minimum turned the drift gate red, as required.'
+
       - name: Run entry-point checks against the packaged kit
         shell: pwsh
         run: |
