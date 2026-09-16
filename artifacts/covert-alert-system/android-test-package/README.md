@@ -7,11 +7,17 @@ evidence. It tests only the proxy-to-cover-app transition.
 
 ## Safety boundary
 
-This package has no SMS, network, location, camera, microphone, evidence
-capture, incident service, recipient, or production covert behavior. The
-`DeviceAdminReceiver` declares no policies; its only purpose is to report
+Gate 0A harness runs have no SMS, network, location, camera, microphone,
+evidence capture, incident service, recipient, or production covert behavior.
+The `DeviceAdminReceiver` declares no policies; its only purpose is to report
 whether the package was provisioned as device owner during the experiment.
 All timestamps and outcomes remain in device-local `SharedPreferences`.
+
+Separately from the harness, the MVP alert mode (see MVP-HANDOFF-WINDOWS.md)
+makes one HTTPS POST to the configured CAS server and texts the configured
+responder numbers directly from the handset's SIM (device-direct SMS), then
+reports the outcome back to the server. That path never runs during Gate 0A
+harness runs, and the harness report filter excludes its journal events.
 
 ## Build and install
 
@@ -152,7 +158,12 @@ physical Pixel evidence and cannot establish Gate 0A readiness.
 
 ### CAS handoff
 
-After a completed run, use the files in the printed run directory:
+After a completed run, use the files in the printed run directory.
+
+Alert-channel work (MVP alert loop, device-direct SMS/WhatsApp, XMPP/email
+provider drills) lives in `MVP-HANDOFF-WINDOWS.md`; the full verification
+matrix for the Windows operator is `HANDOFF-TEST-KIT.md` with
+`scripts\cas-api-drills.ps1`.
 
 ```text
 gate0a-results/<UTC timestamp>-<process id>/report.json

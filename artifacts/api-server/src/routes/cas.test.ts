@@ -30,6 +30,7 @@ import {
 } from "./cas";
 import {
   createCasDeliverySender,
+  createEmailProvider,
   createSmsProvider,
   createXmppProvider,
 } from "../lib/delivery-providers";
@@ -47,6 +48,30 @@ await once(server, "listening");
 const { port } = server.address() as AddressInfo;
 const baseUrl = `http://127.0.0.1:${port}/api`;
 const apiServerDirectory = fileURLToPath(new URL("../../", import.meta.url));
+
+// Isolate the suite from the deployment's shared environment: the workspace
+// may legitimately have CAS_SMS_DELIVERY_MODE=device, device channel lists,
+// or real provider URLs set, and ambient values would change what trigger
+// queues and what the claim query excludes. Tests that need a different mode
+// set it explicitly with save/restore helpers.
+process.env.CAS_SMS_DELIVERY_MODE = "gateway";
+delete process.env.CAS_DEVICE_CHANNELS;
+delete process.env.CAS_DEVICE_TOKEN;
+// Placeholder SMS provider config: gateway-mode triggers then queue an SMS
+// row that worker tests can claim with their injected senders; the
+// provider-free shape is exercised explicitly via withEnv.
+process.env.CAS_SMS_PROVIDER_URL = "https://sms-provider.invalid/submit";
+process.env.CAS_SMS_RECIPIENTS = "+1555000111";
+delete process.env.CAS_EMAIL_PROVIDER_URL;
+delete process.env.CAS_EMAIL_RECIPIENTS;
+// The trigger route only queues outbox items for channels that can actually
+// deliver, so the suite runs with a syntactically valid placeholder XMPP
+// config to keep the XMPP row that older tests expect. Nothing ever fetches
+// this URL: worker delivery in these tests always receives explicit adapters,
+// and the child API processes' 10-second worker never ticks within an
+// assertion window.
+process.env.CAS_XMPP_PROVIDER_URL = "http://127.0.0.1:9/cas-test-xmpp";
+process.env.CAS_XMPP_RECIPIENTS = "ops@example.org";
 
 async function clearCasData() {
   await db.delete(casIncidentEvents);
@@ -2163,4 +2188,621 @@ test("outbox status surfaces the worker heartbeat once ticks are recorded", asyn
   } finally {
     resetCasOutboxWorkerHeartbeat();
   }
+});
+
+// ---- Device-direct SMS mode (CAS_SMS_DELIVERY_MODE=device) ----
+// The alerting handset is the SMS delivery agent: the worker never claims SMS
+// items, the handset reports outcomes via the sms-receipt endpoint, and
+// re-queued items are picked up through the device-pending list.
+
+// Handset endpoints require the shared device token; device-mode tests
+// authenticate with this header.
+const DEVICE_TOKEN = "contract-test-device-token";
+const deviceAuth = { "X-CAS-Device-Token": DEVICE_TOKEN };
+
+async function withSmsDeliveryMode<T>(mode: "device" | "gateway", fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.CAS_SMS_DELIVERY_MODE;
+  const previousToken = process.env.CAS_DEVICE_TOKEN;
+  process.env.CAS_SMS_DELIVERY_MODE = mode;
+  // Device mode fails closed without a token, so tests opt into one here;
+  // the dedicated auth test covers the missing/wrong-token paths.
+  if (mode === "device") process.env.CAS_DEVICE_TOKEN = DEVICE_TOKEN;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.CAS_SMS_DELIVERY_MODE;
+    else process.env.CAS_SMS_DELIVERY_MODE = previous;
+    if (previousToken === undefined) delete process.env.CAS_DEVICE_TOKEN;
+    else process.env.CAS_DEVICE_TOKEN = previousToken;
+  }
+}
+
+test("device mode keeps the worker from claiming SMS items while XMPP still drains", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    assert.equal(trigger.status, 201);
+    const { id } = (await trigger.json()) as { id: string };
+
+    const sent: string[] = [];
+    const run = await processCasOutbox({
+      workerId: "device-mode-worker",
+      maxItems: 10,
+      send: async (item) => {
+        sent.push(item.transport);
+        throw new Error("no XMPP provider configured in test");
+      },
+    });
+
+    // The XMPP item is claimed as usual; the SMS item is the handset's job.
+    assert.deepEqual(sent, ["XMPP"]);
+    assert.equal(run.claimed, 1);
+
+    const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+    const sms = rows.find((row) => row.transport === "SMS");
+    const xmpp = rows.find((row) => row.transport === "XMPP");
+    assert.ok(sms && xmpp);
+    assert.equal(sms.state, "QUEUED");
+    assert.equal(sms.attempts, 0);
+    assert.equal(xmpp.state, "FAILED");
+
+    // The status endpoint tells the console who delivers SMS.
+    const status = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { smsDeliveryMode: string };
+    assert.equal(status.smsDeliveryMode, "device");
+  });
+  const status = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { smsDeliveryMode: string };
+  assert.equal(status.smsDeliveryMode, "gateway");
+});
+
+test("device-pending lists only handset-awaiting SMS items and refuses gateway mode", async () => {
+  const gatewayResponse = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
+  assert.equal(gatewayResponse.status, 409);
+
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+
+    const response = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { items: Array<{ id: string; incidentId: string }> };
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].incidentId, id);
+    assert.equal(body.items[0].id, `${id}-sms`);
+
+    // A delivered item drops off the pickup list.
+    const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(receipt.status, 200);
+    const after = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as { items: unknown[] };
+    assert.equal(after.items.length, 0);
+  });
+});
+
+test("an all-ok device receipt marks the SMS item SENT, journals it, and replays safely", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+
+    const post = () =>
+      fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({
+          results: [
+            { recipient: "+1555000111", ok: true },
+            { recipient: "+1555000222", ok: true },
+          ],
+        }),
+      });
+
+    const first = await post();
+    assert.equal(first.status, 200);
+    assert.deepEqual(await first.json(), { id, state: "SENT" });
+
+    const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(row.state, "SENT");
+    assert.ok(row.sentAt);
+    assert.equal(row.lastError, null);
+
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    const reported = events.filter((event) => event.type === "DELIVERY_REPORTED");
+    assert.equal(reported.length, 1);
+    assert.match(reported[0].detail, /2 responder\(s\)/);
+
+    // A retried receipt (handshake lost over a data outage) must not
+    // re-journal or error out.
+    const replay = await post();
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), { id, state: "SENT", replay: true });
+    const eventsAfter = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    assert.equal(eventsAfter.filter((event) => event.type === "DELIVERY_REPORTED").length, 1);
+  });
+});
+
+test("a failed device receipt dead-letters immediately and masks responder numbers", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+
+    const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({
+        results: [
+          { recipient: "+15557654321", ok: false, error: "RESULT_ERROR_NO_SERVICE" },
+          { recipient: "+1555000222", ok: true },
+        ],
+      }),
+    });
+    assert.equal(receipt.status, 200);
+    assert.deepEqual(await receipt.json(), { id, state: "DEAD_LETTER" });
+
+    const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(row.state, "DEAD_LETTER");
+    assert.ok(row.lastError);
+
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    const abandoned = events.filter((event) => event.type === "DELIVERY_ABANDONED");
+    assert.equal(abandoned.length, 1);
+    assert.match(abandoned[0].detail, /1 of 2 responder\(s\)/);
+    assert.match(abandoned[0].detail, /RESULT_ERROR_NO_SERVICE/);
+
+    // The journal and lastError are broadly visible; a full responder number
+    // must never appear in either, only the masked tail.
+    for (const text of [abandoned[0].detail, row.lastError ?? ""]) {
+      assert.ok(!text.includes("15557654321"), `unmasked recipient leaked into: ${text}`);
+      assert.ok(!text.includes("1555000222"), `unmasked recipient leaked into: ${text}`);
+      assert.match(text, /\u2022\u2022\u202221/);
+    }
+  });
+});
+
+test("device receipts reject unknown incidents, dead-lettered items, bad bodies, and gateway mode", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const unknown = await fetch(`${baseUrl}/cas/incidents/nope/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(unknown.status, 404);
+
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+
+    const empty = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [] }),
+    });
+    assert.equal(empty.status, 400);
+
+    const duplicates = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({
+        results: [
+          { recipient: "+1555000111", ok: true },
+          { recipient: "+1555000111", ok: true },
+        ],
+      }),
+    });
+    assert.equal(duplicates.status, 400);
+
+    // Dead-letter the item, then prove a late receipt cannot resurrect it.
+    await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: false, error: "RADIO_OFF" }] }),
+    });
+    const late = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(late.status, 409);
+    const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(row.state, "DEAD_LETTER");
+  });
+
+  // In gateway mode a device receipt must never mark an alert sent.
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const { id } = (await trigger.json()) as { id: string };
+  const gatewayReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...deviceAuth },
+    body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+  });
+  assert.equal(gatewayReceipt.status, 409);
+});
+
+test("the device-direct recovery loop: failed receipt, re-queue, handset pickup, delivered", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+
+    // 1. Misconfigured responder: the handset reports a permanent failure and
+    //    the item dead-letters.
+    const failed = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "not-a-number", ok: false, error: "ILLEGAL_DESTINATION" }] }),
+    });
+    assert.equal(failed.status, 200);
+    assert.deepEqual(await failed.json(), { id, state: "DEAD_LETTER" });
+    const [dead] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(dead.state, "DEAD_LETTER");
+
+    // 2. Operator fixes the handset's responder list and re-queues from the
+    //    console; the item becomes visible to the handset again.
+    const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Corrected the responder number on the handset." }),
+    });
+    assert.equal(requeue.status, 200);
+    const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
+      items: Array<{ id: string }>;
+    };
+    assert.deepEqual(pending.items.map((item) => item.id), [`${id}-sms`]);
+
+    // 3. The handset re-sends and reports success; the worker still never
+    //    touches SMS items.
+    const ok = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { id, state: "SENT" });
+
+    const sent: string[] = [];
+    await processCasOutbox({
+      workerId: "device-loop-worker",
+      maxItems: 10,
+      send: async (item) => {
+        sent.push(item.transport);
+        throw new Error("no XMPP provider configured in test");
+      },
+    });
+    assert.ok(!sent.includes("SMS"));
+
+    const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(row.state, "SENT");
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    const types = events.map((event) => event.type);
+    assert.ok(types.includes("DELIVERY_ABANDONED"));
+    assert.ok(types.includes("DELIVERY_REQUEUED"));
+    assert.ok(types.includes("DELIVERY_REPORTED"));
+  });
+});
+
+// ---- Multi-channel outbox: WhatsApp device channel + EMAIL gateway ----
+
+async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const previous: Record<string, string | undefined> = {};
+  for (const key of Object.keys(vars)) {
+    previous[key] = process.env[key];
+    if (vars[key] === undefined) delete process.env[key];
+    else process.env[key] = vars[key] as string;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const key of Object.keys(vars)) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key] as string;
+    }
+  }
+}
+
+test("trigger queues only channels that can deliver: no doomed rows for unconfigured providers", async () => {
+  // Device mode with SMS+WHATSAPP on the handset and no XMPP configured
+  // (suite placeholder unset): exactly the two deliverable rows, no XMPP row
+  // that could only ever dead-letter.
+  await withEnv(
+    {
+      CAS_SMS_DELIVERY_MODE: "device",
+      CAS_DEVICE_CHANNELS: "SMS,WHATSAPP",
+      CAS_DEVICE_TOKEN: DEVICE_TOKEN,
+      CAS_XMPP_PROVIDER_URL: undefined,
+      CAS_XMPP_RECIPIENTS: undefined,
+    },
+    async () => {
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+
+      const outbox = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+      assert.deepEqual(outbox.map((item) => item.transport).sort(), ["SMS", "WHATSAPP"]);
+
+      const queuedEvent = (await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id)))
+        .find((event) => event.type === "P1_QUEUED");
+      assert.match(queuedEvent?.detail ?? "", /SMS, WHATSAPP/);
+    },
+  );
+});
+
+test("trigger queues XMPP and EMAIL items when their providers are configured", async () => {
+  // The suite-wide XMPP placeholder config is active; this test adds EMAIL.
+  await withEnv(
+    {
+      CAS_EMAIL_PROVIDER_URL: "http://127.0.0.1:9/cas-test-email",
+      CAS_EMAIL_RECIPIENTS: "lead@example.org",
+    },
+    async () => {
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+
+      const outbox = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+      assert.deepEqual(outbox.map((item) => item.transport).sort(), ["EMAIL", "SMS", "XMPP"]);
+    },
+  );
+});
+
+test("whatsapp device channel: pending lists it, worker never claims it, receipt drives it", async () => {
+  await withEnv(
+    { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS,WHATSAPP" , CAS_DEVICE_TOKEN: DEVICE_TOKEN },
+    async () => {
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+
+      // device-pending lists both device channels with their transport.
+      const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
+        items: Array<{ id: string; incidentId: string; transport: string }>;
+      };
+      assert.deepEqual(
+        pending.items.filter((item) => item.incidentId === id).map((item) => item.transport).sort(),
+        ["SMS", "WHATSAPP"],
+      );
+
+      // The worker claims neither device channel; only the gateway-delivered
+      // XMPP item is claimed (send throws so nothing is delivered).
+      const sent: string[] = [];
+      await processCasOutbox({
+        workerId: "whatsapp-worker",
+        maxItems: 10,
+        send: async (item) => {
+          sent.push(item.transport);
+          throw new Error("no provider in test");
+        },
+      });
+      assert.deepEqual(sent, ["XMPP"]);
+      const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+      const whatsapp = rows.find((row) => row.transport === "WHATSAPP");
+      assert.ok(whatsapp);
+      assert.equal(whatsapp.state, "QUEUED");
+      assert.equal(whatsapp.attempts, 0);
+
+      // A WhatsApp failure receipt dead-letters with the responder masked.
+      const badReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({
+          channel: "WHATSAPP",
+          results: [{ recipient: "+1555000222", ok: false, error: "WHATSAPP_NOT_INSTALLED" }],
+        }),
+      });
+      assert.equal(badReceipt.status, 200);
+      assert.deepEqual(await badReceipt.json(), { id, state: "DEAD_LETTER" });
+      const deadRow = (await db.select().from(casOutbox)
+        .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.transport} = 'WHATSAPP'`))[0];
+      assert.match(deadRow.lastError ?? "", /WHATSAPP_NOT_INSTALLED/);
+      assert.match(deadRow.lastError ?? "", /•••22/);
+      assert.ok(!deadRow.lastError?.includes("+1555000222"));
+
+      // Re-queue puts it back on the handset's pickup list.
+      const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-whatsapp/requeue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(requeue.status, 200);
+      const pendingAgain = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
+        items: Array<{ id: string; transport: string }>;
+      };
+      assert.ok(pendingAgain.items.some((item) => item.id === `${id}-whatsapp` && item.transport === "WHATSAPP"));
+
+      // A successful receipt marks it SENT; a replay is a cheap no-op.
+      const okReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000222", ok: true }] }),
+      });
+      assert.equal(okReceipt.status, 200);
+      assert.deepEqual(await okReceipt.json(), { id, state: "SENT" });
+      const replay = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000222", ok: true }] }),
+      });
+      assert.equal(replay.status, 200);
+      assert.deepEqual(await replay.json(), { id, state: "SENT", replay: true });
+
+      const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+      const types = events.map((event) => event.type);
+      assert.ok(types.includes("DELIVERY_ABANDONED"));
+      assert.ok(types.includes("DELIVERY_REQUEUED"));
+      assert.ok(types.includes("DELIVERY_REPORTED"));
+      const reported = events.find((event) => event.type === "DELIVERY_REPORTED");
+      assert.match(reported?.detail ?? "", /handed the WhatsApp alert/);
+    },
+  );
+});
+
+test("device receipt for a channel the console did not queue is refused", async () => {
+  await withEnv(
+    { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS" , CAS_DEVICE_TOKEN: DEVICE_TOKEN },
+    async () => {
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+
+      const response = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000222", ok: true }] }),
+      });
+      assert.equal(response.status, 409);
+      const body = (await response.json()) as { error: string };
+      assert.match(body.error, /not an enabled device channel/);
+
+      // The legacy sms-receipt alias still forces the SMS channel even if the
+      // body names a different one, so old APKs cannot cross channels.
+      const alias = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000111", ok: true }] }),
+      });
+      assert.equal(alias.status, 200);
+      assert.deepEqual(await alias.json(), { id, state: "SENT" });
+      const smsRow = (await db.select().from(casOutbox)
+        .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.transport} = 'SMS'`))[0];
+      assert.equal(smsRow.state, "SENT");
+    },
+  );
+});
+
+test("EMAIL adapter submits subject and body through its provider with outbox-ID idempotency keys", async () => {
+  const provider = await startStubProvider(() => 200);
+  try {
+    const email = createEmailProvider({
+      url: provider.url,
+      token: "email-token",
+      from: "cas@example.org",
+      recipients: ["lead@example.org", "backup@example.org"],
+    });
+    await email.send(
+      { incidentId: "inc-email-1", transport: "EMAIL", priority: "P1", body: "CAS P1 alert body" },
+      "inc-email-1-email",
+    );
+    assert.equal(provider.requests.length, 2);
+    assert.equal(provider.requests[0].authorization, "Bearer email-token");
+    assert.equal(provider.requests[0].idempotencyKey, "inc-email-1-email:lead@example.org");
+    assert.equal(provider.requests[0].payload.to, "lead@example.org");
+    assert.equal(provider.requests[0].payload.from, "cas@example.org");
+    assert.equal(provider.requests[0].payload.subject, "CAS P1 alert inc-email-1");
+    assert.equal(provider.requests[0].payload.body, "CAS P1 alert body");
+  } finally {
+    await provider.close();
+  }
+});
+
+// ---- Handset endpoint authentication (CAS_DEVICE_TOKEN) ----
+
+test("handset endpoints require the device token and stay closed when none is configured", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    assert.equal(trigger.status, 201);
+    const { id } = (await trigger.json()) as { id: string };
+
+    // Enumeration is closed without a token, and with a wrong one.
+    const noHeader = await fetch(`${baseUrl}/cas/outbox/device-pending`);
+    assert.equal(noHeader.status, 401);
+    const wrongToken = await fetch(`${baseUrl}/cas/outbox/device-pending`, {
+      headers: { "X-CAS-Device-Token": "not-the-token" },
+    });
+    assert.equal(wrongToken.status, 401);
+
+    // State mutation is closed too: a forged all-success receipt must not
+    // mark an unsent alert SENT.
+    const forged = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(forged.status, 401);
+    const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
+    assert.equal(row.state, "QUEUED");
+
+    // The real handset's token works.
+    const authed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
+    assert.equal(authed.status, 200);
+  });
+
+  // Fail closed: device mode without CAS_DEVICE_TOKEN configured refuses
+  // every handset call rather than running unauthenticated.
+  await withEnv({ CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_TOKEN: undefined }, async () => {
+    const closed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
+    assert.equal(closed.status, 503);
+  });
+});
+
+// ---- Trigger queues only channels that can deliver ----
+
+test("trigger queues only the handset's requested device channels plus configured providers", async () => {
+  await withEnv(
+    {
+      CAS_SMS_DELIVERY_MODE: "device",
+      CAS_DEVICE_CHANNELS: "SMS,WHATSAPP",
+      CAS_DEVICE_TOKEN: DEVICE_TOKEN,
+    },
+    async () => {
+      // Handset with the WhatsApp checkbox off asks for SMS only; the
+      // console must not queue a WHATSAPP row nobody will report against.
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceChannels: ["SMS"] }),
+      });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+      const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+      assert.deepEqual(rows.map((row) => row.transport).sort(), ["SMS", "XMPP"]);
+
+      // Requesting enabled channels again folds into the active incident.
+      const folded = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceChannels: ["SMS", "WHATSAPP"] }),
+      });
+      assert.equal(folded.status, 200);
+      assert.equal(((await folded.json()) as { reused: boolean }).reused, true);
+    },
+  );
+
+  await withEnv(
+    {
+      CAS_SMS_DELIVERY_MODE: "device",
+      CAS_DEVICE_CHANNELS: "SMS",
+      CAS_DEVICE_TOKEN: DEVICE_TOKEN,
+    },
+    async () => {
+      // A valid channel the console has not enabled is a loud 409.
+      const conflict = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceChannels: ["WHATSAPP"] }),
+      });
+      assert.equal(conflict.status, 409);
+
+      // Unknown channel names are rejected outright.
+      const bad = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceChannels: ["PIGEON"] }),
+      });
+      assert.equal(bad.status, 400);
+    },
+  );
+});
+
+test("gateway mode without an SMS provider queues no undeliverable SMS row", async () => {
+  await withEnv(
+    {
+      CAS_SMS_DELIVERY_MODE: "gateway",
+      CAS_SMS_PROVIDER_URL: undefined,
+      CAS_SMS_RECIPIENTS: undefined,
+    },
+    async () => {
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+      const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+      assert.deepEqual(rows.map((row) => row.transport), ["XMPP"]);
+    },
+  );
 });

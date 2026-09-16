@@ -1,5 +1,5 @@
-import { Router, type IRouter, type Response, type NextFunction } from "express";
-import { randomUUID } from "node:crypto";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
@@ -14,11 +14,13 @@ import { z } from "zod";
 import { validateGate0aImport, type Gate0aReport } from "../lib/gate0a-report";
 import {
   CasProviderError,
+  configuredProviderTransports,
   createCasDeliverySender,
   formatProviderError,
   loadConfiguredProviders,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
+import { deviceAccessToken, deviceChannels, maskRecipient, smsDeliveryMode, type DeviceChannel } from "../lib/cas-device-delivery";
 import { detectSecretInNote } from "../lib/note-secrets";
 
 const router: IRouter = Router();
@@ -196,10 +198,231 @@ router.get("/cas/outbox/status", async (_req, res, next) => {
             message: lastError.lastError,
           }
         : null,
+      // Tells the console who delivers SMS: the worker ("gateway") or the
+      // alerting handset ("device"), so a QUEUED SMS item in device mode is
+      // read as "waiting for the handset's receipt", not a stalled worker.
+      // deviceChannels lists which transports the handset delivers itself in
+      // device mode (CAS_DEVICE_CHANNELS).
+      smsDeliveryMode: smsDeliveryMode(),
+      deviceChannels: deviceChannels(),
+      // False means the handset endpoints are closed (503): receipts cannot
+      // arrive until CAS_DEVICE_TOKEN is set and entered on the handset.
+      deviceAuthConfigured: deviceAccessToken() !== undefined,
       worker: getCasOutboxWorkerHeartbeat(),
     });
   } catch (error) { return next(error); }
 });
+
+/**
+ * The handset endpoints (device-pending, device-receipt) enumerate and
+ * mutate delivery state, so they require the shared device token. In device
+ * mode the token is mandatory: with CAS_DEVICE_TOKEN unset they stay closed
+ * (503) rather than let any network client mark an unsent alert SENT.
+ * Returns true when the request may proceed.
+ */
+function requireDeviceToken(req: Request, res: Response): boolean {
+  const expected = deviceAccessToken();
+  if (!expected) {
+    res.status(503).json({
+      error: "Device access is not configured on this console (CAS_DEVICE_TOKEN unset); handset endpoints stay closed until it is set.",
+    });
+    return false;
+  }
+  const presented = Buffer.from(req.get("x-cas-device-token") ?? "");
+  const expectedBuffer = Buffer.from(expected);
+  if (presented.length !== expectedBuffer.length || !timingSafeEqual(presented, expectedBuffer)) {
+    res.status(401).json({ error: "Missing or invalid device token" });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Device-direct pickup list for the alerting handset. In device mode the
+ * worker never claims the handset-delivered channels (CAS_DEVICE_CHANNELS),
+ * so after an operator re-queues an abandoned delivery the handset learns
+ * about it here, re-sends it itself, and reports the outcome to the receipt
+ * endpoint. Read-only: the receipt call is the state transition, so polling
+ * can never claim or mutate anything.
+ */
+router.get("/cas/outbox/device-pending", async (req, res, next) => {
+  try {
+    const channels = deviceChannels();
+    if (channels.length === 0) {
+      return res.status(409).json({
+        error: "Device pickup is only available when CAS_SMS_DELIVERY_MODE=device; items are delivered by the server-side provider worker.",
+      });
+    }
+    if (!requireDeviceToken(req, res)) return;
+    const now = new Date();
+    const items = await db
+      .select({
+        id: casOutbox.id,
+        incidentId: casOutbox.incidentId,
+        transport: casOutbox.transport,
+        priority: casOutbox.priority,
+        createdAt: casOutbox.createdAt,
+      })
+      .from(casOutbox)
+      .where(
+        sql`${casOutbox.transport} IN (${sql.join(channels.map((channel) => sql`${channel}`), sql`, `)})
+          AND (
+            ${casOutbox.state} = 'QUEUED'
+            OR (${casOutbox.state} = 'FAILED' AND ${casOutbox.nextAttemptAt} <= ${now})
+          )`,
+      )
+      .orderBy(asc(casOutbox.createdAt))
+      .limit(20);
+    return res.json({
+      items: items.map((item) => ({
+        id: item.id,
+        incidentId: item.incidentId,
+        transport: item.transport,
+        priority: item.priority,
+        createdAt: item.createdAt.toISOString(),
+      })),
+    });
+  } catch (error) { return next(error); }
+});
+
+const deviceReceiptSchema = z.object({
+  channel: z.enum(["SMS", "WHATSAPP"]).default("SMS"),
+  results: z
+    .array(
+      z.object({
+        recipient: z.string().trim().min(1).max(40),
+        ok: z.boolean(),
+        error: z.string().trim().min(1).max(120).optional(),
+      }),
+    )
+    .min(1)
+    .max(20),
+});
+
+/**
+ * Device-direct receipt: the alerting handset reports the outcome of a
+ * channel it delivered itself (SMS over its own SIM, or WhatsApp via a
+ * tap-to-send handoff). All recipients OK transitions the outbox item to
+ * SENT; any failure dead-letters it immediately — the handset is the only
+ * delivery agent for these channels, so there is no server-side retry, and
+ * the recovery path is the operator fixing the responder configuration and
+ * re-queuing.
+ *
+ * Replay-safe: a duplicate receipt for an already-SENT item returns 200
+ * without re-journaling, because the handset may retry its report after a
+ * data outage.
+ */
+async function handleDeviceReceipt(
+  req: Request<{ id: string }>,
+  res: Response,
+  next: NextFunction,
+  channelOverride?: "SMS",
+) {
+  try {
+    const channels = deviceChannels();
+    if (channels.length === 0) {
+      return res.status(409).json({
+        error: "Device receipts are only accepted when CAS_SMS_DELIVERY_MODE=device; in gateway mode the server-side provider delivers and a device receipt could falsely mark an alert sent.",
+      });
+    }
+    if (!requireDeviceToken(req, res)) return;
+    const body = deviceReceiptSchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      return res.status(400).json({ error: "Invalid device receipt", issues: body.error.issues });
+    }
+    const channel = channelOverride ?? body.data.channel;
+    if (!channels.includes(channel)) {
+      return res.status(409).json({
+        error: `${channel} is not an enabled device channel (CAS_DEVICE_CHANNELS=${channels.join(",")}); the handset must not report receipts for channels the console did not queue.`,
+      });
+    }
+    const recipients = body.data.results.map((result) => result.recipient);
+    if (new Set(recipients).size !== recipients.length) {
+      return res.status(400).json({ error: "Invalid device receipt: duplicate recipient entries" });
+    }
+
+    const incidentId = req.params.id;
+    const now = new Date();
+    const failed = body.data.results.filter((result) => !result.ok);
+    const failureSummary = failed
+      .map((result) => `${result.error ?? "unknown error"} (${maskRecipient(result.recipient)})`)
+      .join("; ");
+    const total = body.data.results.length;
+
+    const result = await db.transaction(async (tx) => {
+      // Lock the incident's channel row before reading its state so a
+      // concurrent receipt (or a re-queue landing mid-report) cannot
+      // double-transition it.
+      const rows = await tx.execute(sql`
+        SELECT ${casOutbox.id} AS id, ${casOutbox.state} AS state
+        FROM cas_outbox
+        WHERE ${casOutbox.incidentId} = ${incidentId} AND ${casOutbox.transport} = ${channel}
+        FOR UPDATE
+      `);
+      const item = rows.rows[0] as { id?: string; state?: string } | undefined;
+      if (!item?.id || !item.state) return "missing" as const;
+      if (item.state === "SENT") return "already-sent" as const;
+      if (item.state !== "QUEUED" && item.state !== "FAILED") {
+        return "conflict" as const;
+      }
+
+      if (failed.length === 0) {
+        await tx
+          .update(casOutbox)
+          .set({ state: "SENT", claimedBy: null, claimedAt: null, lastError: null, sentAt: now })
+          .where(eq(casOutbox.id, item.id));
+        await tx.insert(casIncidentEvents).values({
+          id: `${item.id}-device-delivered-${now.getTime()}`,
+          incidentId,
+          type: "DELIVERY_REPORTED",
+          priority: "P1",
+          detail:
+            channel === "SMS"
+              ? `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM (device-direct mode; no gateway involved).`
+              : `Handset confirmed it handed the WhatsApp alert to WhatsApp for ${total} responder(s) (tap-to-send handoff; the free WhatsApp app has no unattended-send API, so SENT means handed to WhatsApp, not delivery-confirmed).`,
+          createdAt: now,
+        });
+        return "sent" as const;
+      }
+
+      await tx
+        .update(casOutbox)
+        .set({ state: "DEAD_LETTER", claimedBy: null, claimedAt: null, lastError: `device-reported failure: ${failureSummary}` })
+        .where(eq(casOutbox.id, item.id));
+      await tx.insert(casIncidentEvents).values({
+        id: `${item.id}-device-failed-${now.getTime()}`,
+        incidentId,
+        type: "DELIVERY_ABANDONED",
+        priority: "P1",
+        detail:
+          channel === "SMS"
+            ? `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. Fix the responder configuration on the handset and re-queue this delivery; the handset picks re-queued items up from the device-pending list.`
+            : `Handset reported it could not hand the WhatsApp alert to WhatsApp for ${failed.length} of ${total} responder(s): ${failureSummary}. Check WhatsApp is installed and the responder numbers are correct on the handset, then re-queue this delivery.`,
+        createdAt: now,
+      });
+      return "dead-lettered" as const;
+    });
+
+    if (result === "missing") {
+      return res.status(404).json({ error: `No ${channel} outbox item for this incident` });
+    }
+    if (result === "already-sent") {
+      return res.json({ id: incidentId, state: "SENT", replay: true });
+    }
+    if (result === "conflict") {
+      return res.status(409).json({ error: `${channel} outbox item is being delivered or was abandoned; re-queue it before the handset retries` });
+    }
+    return res.json({ id: incidentId, state: result === "sent" ? "SENT" : "DEAD_LETTER" });
+  } catch (error) { return next(error); }
+}
+
+// Kept as a fixed-SMS alias of the device receipt endpoint: the first
+// device-direct APKs only know this route, and SMS is their only channel.
+router.post("/cas/incidents/:id/sms-receipt", (req, res, next) =>
+  handleDeviceReceipt(req, res, next, "SMS"));
+
+router.post("/cas/incidents/:id/device-receipt", (req, res, next) =>
+  handleDeviceReceipt(req, res, next));
 
 router.post("/cas/bootstrap", async (req, res, next) => {
   try {
@@ -244,8 +467,35 @@ router.post("/cas/incidents/test", async (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
-router.post("/cas/incidents/trigger", async (_req, res, next) => {
+// The handset declares which device channels it will actually deliver for
+// this alert (e.g. the WhatsApp checkbox); the console queues the
+// intersection with the channels it has enabled, so a channel nobody will
+// deliver never creates an outbox row that can only dead-letter. An omitted
+// list means "every enabled device channel" (API drills and older APKs).
+const triggerSchema = z.object({
+  deviceChannels: z.array(z.enum(["SMS", "WHATSAPP"])).max(4).optional(),
+});
+
+router.post("/cas/incidents/trigger", async (req, res, next) => {
   try {
+    const parsed = triggerSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid trigger request", issues: parsed.error.issues });
+    }
+    const enabledDevice = deviceChannels();
+    const requested = parsed.data.deviceChannels;
+    const notEnabled = (requested ?? []).filter((channel) => !enabledDevice.includes(channel));
+    if (notEnabled.length > 0) {
+      // Loud mismatch, not a silent drop: the handset learns the console did
+      // not queue that channel, still sends its alert directly, and journals
+      // the outcome without an outbox row to report against.
+      return res.status(409).json({
+        error: `Requested device channel(s) not enabled on this console: ${notEnabled.join(", ")} (enabled: ${enabledDevice.join(", ") || "none"}). The handset should still send its alert directly and journal the mismatch.`,
+      });
+    }
+    const deviceTransports: DeviceChannel[] = requested === undefined
+      ? enabledDevice
+      : enabledDevice.filter((channel) => requested.includes(channel));
     const result = await db.transaction(async (tx) => {
       // Serialize the active-incident check with its insert/update. A regular
       // transaction does not prevent two READ COMMITTED transactions from
@@ -266,14 +516,33 @@ router.post("/cas/incidents/trigger", async (_req, res, next) => {
 
       const id = `sim-${now.getTime()}-${randomUUID()}`;
       await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now });
+      // Queue one outbox item per channel that can actually deliver this
+      // alert: the handset's requested∩enabled device channels, plus every
+      // provider-configured gateway channel that is not device-delivered.
+      // A channel nobody can deliver must not create a row that can only
+      // dead-letter — that noise trains responders to ignore the alarm.
+      const transports: string[] = [
+        ...deviceTransports,
+        ...configuredProviderTransports().filter(
+          (transport) => !(enabledDevice as string[]).includes(transport),
+        ),
+      ];
       await tx.insert(casIncidentEvents).values([
         { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: "Durable trigger received and incident identity committed.", createdAt: now },
-        { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: "SMS and XMPP outbox items queued independently.", createdAt: now },
+        { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: transports.length > 0 ? `${transports.join(", ")} outbox items queued independently.` : "No outbox items queued: no deliverable channel was requested/enabled on the handset or provider-configured on the console.", createdAt: now },
       ]);
-      await tx.insert(casOutbox).values([
-        { id: `${id}-sms`, incidentId: id, transport: "SMS", state: "QUEUED", priority: "P1", createdAt: now },
-        { id: `${id}-xmpp`, incidentId: id, transport: "XMPP", state: "QUEUED", priority: "P1", createdAt: now },
-      ]);
+      if (transports.length > 0) {
+        await tx.insert(casOutbox).values(
+          transports.map((transport) => ({
+            id: `${id}-${transport.toLowerCase()}`,
+            incidentId: id,
+            transport,
+            state: "QUEUED",
+            priority: "P1",
+            createdAt: now,
+          })),
+        );
+      }
       return { id, reused: false };
     });
     return res.status(result.reused ? 200 : 201).json(result);
@@ -653,6 +922,12 @@ export type CasOutboxWorkerResult = {
 // between provider acceptance and the SENT mark.
 export async function claimCasOutboxItem(workerId: string, now: Date) {
   const staleBefore = new Date(now.getTime() - DELIVERY_LEASE_MS);
+  // In device mode the alerting handset is the delivery agent for the
+  // CAS_DEVICE_CHANNELS transports (it reports back through the device
+  // receipt endpoint), so the worker must never claim them — there is no
+  // server-side provider to send them through, and every claim would fail as
+  // "not-configured" while racing the handset's receipt.
+  const deviceOnly = deviceChannels();
   return db.transaction(async (tx) => {
     const candidates = await tx.execute(sql`
       SELECT id
@@ -671,6 +946,7 @@ export async function claimCasOutboxItem(workerId: string, now: Date) {
         FROM cas_transport_cooldowns
         WHERE next_allowed_at > ${now}
       )
+      ${deviceOnly.length > 0 ? sql`AND transport NOT IN (${sql.join(deviceOnly.map((transport) => sql`${transport}`), sql`, `)})` : sql``}
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED

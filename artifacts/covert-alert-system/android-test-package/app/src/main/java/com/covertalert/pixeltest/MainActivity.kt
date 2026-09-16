@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -21,18 +22,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : Activity() {
-    private lateinit var coverInput: EditText
+    private lateinit var coverStatus: TextView
     private lateinit var serverInput: EditText
+    private lateinit var tokenInput: EditText
+    private lateinit var respondersInput: EditText
     private lateinit var reportView: TextView
     @Volatile private var alertInFlight = false
+
+    private val smsPermissionGranted: Boolean
+        get() = checkSelfPermission(android.Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         TestStore.record(this, "OBSERVER_SCREEN_OPENED", mapOf("activityState" to if (state == null) "cold" else "warm"))
-        coverInput = EditText(this).apply {
-            hint = "Cover package, e.g. com.google.android.apps.maps"
-            setText(TestStore.coverPackage(this@MainActivity))
-            isSingleLine = true
+        coverStatus = TextView(this).apply {
+            textSize = 13f
+            setPadding(0, 8, 0, 0)
         }
         reportView = TextView(this).apply {
             textSize = 12f
@@ -50,14 +55,18 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nGate 0A runs stay local-only: no SMS, network, location, evidence capture, or production behavior.\nMVP mode (below) is the only networked path: one POST to the CAS alert server."
+            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nGate 0A runs stay local-only: no SMS, network, location, evidence capture, or production behavior.\nMVP mode (below) is the only networked path: one POST to the CAS alert server, then this handset texts responders directly from its own SIM (no gateway)."
             textSize = 13f
         })
-        root.addView(coverInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
-        root.addView(button("Save cover app") {
-            val value = coverInput.text.toString().trim()
-            TestStore.setCoverPackage(this, value)
-            TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to value, "validInstalledPackage" to isInstalled(value)))
+        root.addView(coverStatus, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
+        root.addView(button("Select cover app") { pickCoverApp() })
+        root.addView(button("Clear cover app (manual trigger only)") {
+            // Same event type and fields as a picker selection so the Gate 0A
+            // import contract (which only accepts harness event types) is
+            // unaffected; an empty package means manual trigger.
+            TestStore.setCoverPackage(this, "")
+            TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to "", "validInstalledPackage" to false))
+            refreshCoverStatus()
             refreshReport()
         })
         serverInput = EditText(this).apply {
@@ -66,7 +75,7 @@ class MainActivity : Activity() {
             isSingleLine = true
         }
         root.addView(TextView(this).apply {
-            text = "MVP alert loop (personal device)\nSends one trigger POST to the CAS API. Watch the console Incidents view for the new incident."
+            text = "MVP alert loop (personal device)\nSends one trigger POST to the CAS API, then texts each responder from this SIM and reports the outcome back. If the server is unreachable the SMS still goes out (the console then has no incident). Watch the console Incidents view for the new incident."
             textSize = 13f
             setPadding(0, 24, 0, 4)
         })
@@ -77,7 +86,52 @@ class MainActivity : Activity() {
             TestStore.record(this, "ALERT_SERVER_CONFIGURED", mapOf("configured" to value.isNotBlank(), "https" to value.startsWith("https://")))
             refreshReport()
         })
+        tokenInput = EditText(this).apply {
+            hint = "Device access token (same value as the server's CAS_DEVICE_TOKEN secret)"
+            setText(TestStore.deviceToken(this@MainActivity))
+            isSingleLine = true
+        }
+        root.addView(tokenInput, LinearLayout.LayoutParams(-1, -2))
+        root.addView(button("Save device token") {
+            val value = tokenInput.text.toString()
+            TestStore.setDeviceToken(this, value)
+            TestStore.record(this, "DEVICE_TOKEN_CONFIGURED", mapOf("configured" to TestStore.deviceToken(this).isNotBlank()))
+            refreshReport()
+        })
+        respondersInput = EditText(this).apply {
+            hint = "Responder numbers, comma-separated, e.g. +15551234567"
+            setText(TestStore.smsResponders(this@MainActivity).joinToString(", "))
+            isSingleLine = true
+        }
+        root.addView(respondersInput, LinearLayout.LayoutParams(-1, -2))
+        root.addView(button("Save responder numbers") {
+            val value = respondersInput.text.toString().trim()
+            TestStore.setSmsResponders(this, value)
+            TestStore.record(this, "SMS_RESPONDERS_CONFIGURED", mapOf("count" to TestStore.smsResponders(this).size))
+            refreshReport()
+        })
+        root.addView(CheckBox(this).apply {
+            text = "Also alert via WhatsApp (opens each chat pre-filled; you tap send)"
+            isChecked = TestStore.whatsAppEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, checked ->
+                TestStore.setWhatsAppEnabled(this@MainActivity, checked)
+                TestStore.record(this@MainActivity, "WHATSAPP_TOGGLED", mapOf(
+                    "enabled" to checked,
+                    "whatsAppInstalled" to WhatsAppAlerter.isInstalled(this@MainActivity),
+                ))
+                refreshReport()
+            }
+        })
+        root.addView(button("Grant SMS permission") {
+            if (smsPermissionGranted) {
+                TestStore.record(this, "SMS_PERMISSION", mapOf("outcome" to "ALREADY_GRANTED"))
+            } else {
+                requestPermissions(arrayOf(android.Manifest.permission.SEND_SMS), REQUEST_SEND_SMS)
+            }
+            refreshReport()
+        })
         root.addView(button("Send MVP alert now") { sendMvpAlert() })
+        root.addView(button("Check re-queued deliveries") { checkRequeued() })
         root.addView(button("Request pinned proxy shortcut") {
             val manager = getSystemService<android.content.pm.ShortcutManager>()
             if (manager == null || !manager.isRequestPinShortcutSupported) {
@@ -110,6 +164,7 @@ class MainActivity : Activity() {
         })
         root.addView(reportView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 12 })
         setContentView(ScrollView(this).apply { addView(root) })
+        refreshCoverStatus()
         refreshReport()
     }
 
@@ -123,25 +178,90 @@ class MainActivity : Activity() {
         super.onBackPressed()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_SEND_SMS) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            TestStore.record(this, "SMS_PERMISSION", mapOf("outcome" to if (granted) "GRANTED" else "DENIED"))
+            refreshReport()
+        }
+    }
+
     private fun sendMvpAlert() {
         if (alertInFlight) return
         val baseUrl = serverInput.text.toString().trim()
         TestStore.setAlertServerUrl(this, baseUrl)
-        if (baseUrl.isBlank()) {
-            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no server URL configured"))
+        TestStore.setSmsResponders(this, respondersInput.text.toString())
+        if (TestStore.smsResponders(this).isEmpty()) {
+            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no responder numbers configured"))
+            refreshReport()
+            return
+        }
+        if (!smsPermissionGranted) {
+            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "SEND_SMS permission not granted; requesting it now — tap Send again after granting"))
+            requestPermissions(arrayOf(android.Manifest.permission.SEND_SMS), REQUEST_SEND_SMS)
             refreshReport()
             return
         }
         alertInFlight = true
-        TestStore.record(this, "MVP_ALERT_ATTEMPT", mapOf("https" to baseUrl.startsWith("https://")))
+        TestStore.record(this, "MVP_ALERT_ATTEMPT", mapOf(
+            "https" to baseUrl.startsWith("https://"),
+            "responders" to TestStore.smsResponders(this).size,
+        ))
         reportView.text = "Sending MVP alert..."
         Thread {
-            val result = AlertSender.trigger(baseUrl)
-            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
+            if (baseUrl.isBlank()) {
+                TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no server URL configured; texting responders directly without an incident"))
+                sendSmsFromHandset(null)
+            } else {
+                val result = AlertSender.trigger(this@MainActivity, baseUrl)
+                TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
+                if (result.ok && result.reused) {
+                    // The repeat tap folded into the still-active incident and
+                    // the console queued no new deliveries, so the handset
+                    // must not re-send physical messages either.
+                    TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS/WhatsApp"))
+                } else {
+                    // Device-direct: even when the trigger POST fails (no
+                    // data, server down) the alert still leaves this handset
+                    // by SMS.
+                    sendSmsFromHandset(if (result.ok) result.incidentId else null)
+                    if (TestStore.whatsAppEnabled(this@MainActivity)) {
+                        sendWhatsAppFromHandset(if (result.ok) result.incidentId else null)
+                    }
+                }
+            }
             runOnUiThread {
                 alertInFlight = false
                 refreshReport()
             }
+        }.start()
+    }
+
+    private fun sendSmsFromHandset(incidentId: String?) {
+        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
+        TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
+    }
+
+    private fun sendWhatsAppFromHandset(incidentId: String?) {
+        // Tap-to-send: opens one WhatsApp chat per responder with the alert
+        // pre-filled; the console's WHATSAPP item is marked from the handoff
+        // receipt (SENT there means handed to WhatsApp, not delivered).
+        val outcome = WhatsAppAlerter.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
+        TestStore.record(this, "MVP_WHATSAPP_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
+    }
+
+    private fun checkRequeued() {
+        val baseUrl = serverInput.text.toString().trim()
+        TestStore.setAlertServerUrl(this, baseUrl)
+        Thread {
+            val outcome = DeviceSmsSender.sendRequeued(this)
+            TestStore.record(this, "REQUEUE_CHECK", mapOf("detail" to outcome))
+            if (TestStore.whatsAppEnabled(this@MainActivity)) {
+                val waOutcome = WhatsAppAlerter.sendRequeued(this@MainActivity)
+                TestStore.record(this@MainActivity, "WHATSAPP_REQUEUE_CHECK", mapOf("detail" to waOutcome))
+            }
+            runOnUiThread { refreshReport() }
         }.start()
     }
 
@@ -151,8 +271,52 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
-    private fun isInstalled(packageName: String): Boolean =
-        packageName.isNotBlank() && runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess
+    /**
+     * Lists the device's launchable apps (MAIN/LAUNCHER is declared in the
+     * manifest's package-visibility queries) and lets the operator pick the
+     * cover app. The selection persists in TestStore and is what
+     * TriggerActivity launches on a proxy trigger.
+     */
+    private fun pickCoverApp() {
+        val intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(intent, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }
+            .sortedBy { it.first.lowercase() }
+        if (apps.isEmpty()) {
+            TestStore.record(this, "COVER_PICKER_EMPTY", mapOf("reason" to "no launchable apps visible"))
+            refreshReport()
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Select cover app")
+            .setItems(apps.map { "${it.first}\n${it.second}" }.toTypedArray()) { _, which ->
+                val (_, pkg) = apps[which]
+                TestStore.setCoverPackage(this, pkg)
+                TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to pkg, "validInstalledPackage" to true))
+                refreshCoverStatus()
+                refreshReport()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun refreshCoverStatus() {
+        if (!::coverStatus.isInitialized) return
+        val pkg = TestStore.coverPackage(this)
+        coverStatus.text = if (pkg.isBlank()) {
+            "Cover app: none — proxy trigger is manual only"
+        } else {
+            // Follow the selection by label so the operator can confirm the
+            // right app without memorizing package names.
+            val label = runCatching {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            }.getOrDefault(pkg)
+            "Cover app: $label ($pkg)"
+        }
+    }
 
     private fun environmentLabel(): String =
         if (isEmulator()) {
@@ -278,3 +442,5 @@ class MainActivity : Activity() {
 object IntentFactory {
     fun proxy() = android.content.Intent("com.covertalert.pixeltest.action.PROXY_TRIGGER")
 }
+
+private const val REQUEST_SEND_SMS = 41

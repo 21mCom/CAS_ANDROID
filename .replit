@@ -22,3 +22,16 @@ timeoutMs = 20000
 [nix]
 channel = "stable-25_05"
 packages = ["android-tools", "gradle", "jdk17"]
+
+[userenv]
+
+[userenv.shared]
+CAS_SMS_DELIVERY_MODE = "device"
+CAS_DEVICE_CHANNELS = "SMS,WHATSAPP"
+CAS_DEV_PROVIDER_SINK = "1"
+CAS_EMAIL_FROM = "cas-alerts@responder.example"
+CAS_EMAIL_PROVIDER_URL = "http://127.0.0.1:8080/api/cas/dev/provider-inbox/email"
+CAS_EMAIL_RECIPIENTS = "ops-lead@responder.example"
+CAS_XMPP_FROM_JID = "cas-alerts@responder.example"
+CAS_XMPP_PROVIDER_URL = "http://127.0.0.1:8080/api/cas/dev/provider-inbox/xmpp"
+CAS_XMPP_RECIPIENTS = "ops-lead@responder.example"

@@ -1,6 +1,7 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep the registry module and worker instrumentation in lockstep.
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
+- [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.

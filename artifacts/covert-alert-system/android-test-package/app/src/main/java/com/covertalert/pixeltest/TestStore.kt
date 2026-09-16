@@ -11,12 +11,41 @@ object TestStore {
     private const val EVENTS = "events"
     private const val COVER_PACKAGE = "cover_package"
     private const val ALERT_SERVER_URL = "alert_server_url"
+    private const val SMS_RESPONDERS = "sms_responders"
+    private const val WHATSAPP_ENABLED = "whatsapp_enabled"
+    private const val DEVICE_TOKEN = "device_access_token"
+
+    /** Whether alerts also hand off to WhatsApp (tap-to-send) after the SMS. */
+    fun setWhatsAppEnabled(context: Context, enabled: Boolean) =
+        storage(context).edit().putBoolean(WHATSAPP_ENABLED, enabled).apply()
+
+    fun whatsAppEnabled(context: Context): Boolean =
+        storage(context).getBoolean(WHATSAPP_ENABLED, false)
+
+    /**
+     * Shared handset credential (X-CAS-Device-Token) for the console's
+     * device pickup/receipt endpoints; must match the server's
+     * CAS_DEVICE_TOKEN secret or those calls are refused (401).
+     */
+    fun setDeviceToken(context: Context, value: String) =
+        storage(context).edit().putString(DEVICE_TOKEN, value.trim()).apply()
+
+    fun deviceToken(context: Context): String =
+        storage(context).getString(DEVICE_TOKEN, "").orEmpty()
 
     fun setAlertServerUrl(context: Context, value: String) =
         storage(context).edit().putString(ALERT_SERVER_URL, value.trim()).apply()
 
     fun alertServerUrl(context: Context): String =
         storage(context).getString(ALERT_SERVER_URL, "").orEmpty()
+
+    fun setSmsResponders(context: Context, value: String) =
+        storage(context).edit().putString(SMS_RESPONDERS, value.trim()).apply()
+
+    /** Responder numbers for device-direct SMS, configured on the handset. */
+    fun smsResponders(context: Context): List<String> =
+        storage(context).getString(SMS_RESPONDERS, "").orEmpty()
+            .split(",").map { it.trim() }.filter { it.isNotBlank() }
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

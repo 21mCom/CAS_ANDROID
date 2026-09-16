@@ -25,6 +25,12 @@ import type { CasDeliverySender } from "../routes/cas";
  *   CAS_XMPP_FROM_JID       sender JID (optional)
  *   CAS_XMPP_RECIPIENTS     comma-separated recipient JIDs (required)
  *
+ * EMAIL:
+ *   CAS_EMAIL_PROVIDER_URL   HTTPS endpoint of the mail submission API
+ *   CAS_EMAIL_PROVIDER_TOKEN bearer token for the provider (optional)
+ *   CAS_EMAIL_FROM           sender address (optional)
+ *   CAS_EMAIL_RECIPIENTS     comma-separated recipient addresses (required)
+ *
  * Provider URL policy: endpoints must be HTTPS because submissions carry
  * bearer credentials and alert content. Plain HTTP is accepted only for
  * loopback hosts (localhost / 127.0.0.1 / ::1) so tests can run a local stub.
@@ -171,7 +177,7 @@ function providerUrlError(url: string): string | undefined {
 }
 
 export type ProviderAdapter = {
-  transport: "SMS" | "XMPP";
+  transport: "SMS" | "XMPP" | "EMAIL";
   send: (message: CasAlertMessage, idempotencyKey: string) => Promise<void>;
 };
 
@@ -363,6 +369,26 @@ export function createXmppProvider(config: ProviderConfig): ProviderAdapter {
   };
 }
 
+export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
+  return {
+    transport: "EMAIL",
+    send: (message, idempotencyKey) =>
+      submitToProvider(
+        "EMAIL",
+        config,
+        (recipient, key) => ({
+          to: recipient,
+          from: config.from,
+          subject: `CAS ${message.priority} alert ${message.incidentId}`,
+          body: message.body,
+          idempotencyKey: key,
+        }),
+        message,
+        idempotencyKey,
+      ),
+  };
+}
+
 function parseRecipients(raw: string | undefined): string[] {
   return (raw ?? "")
     .split(",")
@@ -372,7 +398,7 @@ function parseRecipients(raw: string | undefined): string[] {
 
 function readConfig(
   env: NodeJS.ProcessEnv,
-  prefix: "CAS_SMS" | "CAS_XMPP",
+  prefix: "CAS_SMS" | "CAS_XMPP" | "CAS_EMAIL",
   fromKey: string,
 ): ProviderConfig | undefined {
   const url = env[`${prefix}_PROVIDER_URL`];
@@ -390,6 +416,7 @@ function readConfig(
 export type CasProviderAdapters = {
   sms?: ProviderAdapter;
   xmpp?: ProviderAdapter;
+  email?: ProviderAdapter;
 };
 
 export function loadConfiguredProviders(
@@ -397,10 +424,29 @@ export function loadConfiguredProviders(
 ): CasProviderAdapters {
   const sms = readConfig(env, "CAS_SMS", "CAS_SMS_FROM");
   const xmpp = readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID");
+  const email = readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM");
   return {
     sms: sms ? createSmsProvider(sms) : undefined,
     xmpp: xmpp ? createXmppProvider(xmpp) : undefined,
+    email: email ? createEmailProvider(email) : undefined,
   };
+}
+
+/**
+ * Gateway transports with a complete provider configuration (URL plus at
+ * least one recipient). The trigger route only queues outbox items for these
+ * channels — an unconfigured channel must not create an outbox row that can
+ * only ever dead-letter, because that noise trains responders to ignore the
+ * dead-letter alarm.
+ */
+export function configuredProviderTransports(
+  env: NodeJS.ProcessEnv = process.env,
+): Array<"SMS" | "XMPP" | "EMAIL"> {
+  const transports: Array<"SMS" | "XMPP" | "EMAIL"> = [];
+  if (readConfig(env, "CAS_SMS", "CAS_SMS_FROM")) transports.push("SMS");
+  if (readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID")) transports.push("XMPP");
+  if (readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM")) transports.push("EMAIL");
+  return transports;
 }
 
 /**
@@ -418,7 +464,9 @@ export function createCasDeliverySender(
         ? adapters.sms
         : item.transport === "XMPP"
           ? adapters.xmpp
-          : undefined;
+          : item.transport === "EMAIL"
+            ? adapters.email
+            : undefined;
     if (!adapter) {
       throw new CasProviderError(
         "not-configured",
