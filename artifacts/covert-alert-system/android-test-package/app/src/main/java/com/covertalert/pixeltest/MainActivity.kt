@@ -171,6 +171,17 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::reportView.isInitialized) refreshReport()
+        // A previous process may have died after the SMS left the SIM but
+        // before its receipt landed (or with radio results still owed);
+        // recover those batches and retry any receipts the console has not
+        // accepted yet now that the app — and likely data — is back.
+        DeviceSmsSender.recoverUnfinishedBatches(this)
+        Thread {
+            DeviceSmsSender.retryPendingReceipts(this)?.let { outcome ->
+                TestStore.record(this, "RECEIPT_RETRY", mapOf("detail" to outcome))
+                runOnUiThread { if (::reportView.isInitialized) refreshReport() }
+            }
+        }.start()
     }
 
     override fun onBackPressed() {
@@ -255,6 +266,13 @@ class MainActivity : Activity() {
         val baseUrl = serverInput.text.toString().trim()
         TestStore.setAlertServerUrl(this, baseUrl)
         Thread {
+            // Flush receipts the console has not accepted yet before asking
+            // it for pending items, so the device-pending list reflects
+            // deliveries this handset already completed.
+            DeviceSmsSender.retryPendingReceipts(this)?.let { retryOutcome ->
+                TestStore.record(this, "RECEIPT_RETRY", mapOf("detail" to retryOutcome))
+            }
+            DeviceSmsSender.recoverUnfinishedBatches(this)
             val outcome = DeviceSmsSender.sendRequeued(this)
             TestStore.record(this, "REQUEUE_CHECK", mapOf("detail" to outcome))
             if (TestStore.whatsAppEnabled(this@MainActivity)) {

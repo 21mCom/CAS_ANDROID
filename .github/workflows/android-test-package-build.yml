@@ -6,14 +6,39 @@ on:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - "artifacts/covert-alert-system/android-test-package/**"
+      - "scripts/test-receipt-durability.sh"
+      - "scripts/receipt-durability/**"
   push:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - "artifacts/covert-alert-system/android-test-package/**"
+      - "scripts/test-receipt-durability.sh"
+      - "scripts/receipt-durability/**"
   workflow_dispatch:
 
 jobs:
+  receipt-durability:
+    name: Receipt durability harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The script downloads its own pinned kotlinc + org.json jar into
+      # scripts/.cache (sha256-verified) and proves the handset's
+      # batch→receipt handoff survives process death at every boundary.
+      - name: Run receipt durability harness
+        run: scripts/test-receipt-durability.sh
+
   assemble-debug:
     name: Compile Gate 0A debug APK
     runs-on: ubuntu-latest
