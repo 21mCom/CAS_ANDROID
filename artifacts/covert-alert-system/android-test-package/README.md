@@ -292,7 +292,7 @@ built or measured:
 | Platform tools | `platform-tools\adb.exe` exists and `platform-tools` is on `PATH`; `adb version` succeeds |
 | Android platform | The `platforms\android-<apiLevel>\android.jar` declared in `tool-requirements.json` exists |
 | Build tools | An Android Build-Tools release at or above the minimum declared in `tool-requirements.json` exists |
-| Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release |
+| Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release. A missing or invalid `gradle-version.txt` blocks the preflight outright — the kit carries no fallback release, so restore the complete, unmodified test kit |
 | Physical target | An approved physical device appears as `device` in `adb devices -l`; `unauthorized` and `offline` are blocking states |
 | Emulator target | `emulator\emulator.exe` exists; use the pinned lifecycle command to create/start and validate the emulator |
 

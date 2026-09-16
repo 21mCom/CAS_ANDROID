@@ -399,6 +399,9 @@ if ($ParserRegressionCheck) {
         }
     }
 
+    # Deliberate self-test fixtures: these concrete versions exercise the
+    # alignment rules; they are not a fallback release. The preflight itself
+    # fails closed when gradle-version.txt is missing (proven below).
     $gradleAlignmentCases = @(
         @{ Actual = '8.9.0'; Expected = '8.9'; Alignment = 'aligned' },
         @{ Actual = '8.9.1'; Expected = '8.9'; Alignment = 'aligned' },
@@ -419,6 +422,52 @@ if ($ParserRegressionCheck) {
     }
     if ($null -ne (Get-ExpectedGradleVersion (Join-Path $scriptDirectory '..\does-not-exist.txt'))) {
         throw 'Gradle version-file regression: a missing version file must not produce a version.'
+    }
+
+    # Missing/invalid Gradle-declaration regression: the preflight must refuse
+    # to guess the Gradle release. Run a copy of this script with a valid
+    # tool-requirements.json but no (or an invalid) gradle-version.txt and
+    # require a BLOCKED gradle.expected-version outcome with exit code 2 —
+    # there is no built-in fallback release anymore, so a broken kit can no
+    # longer be downgraded to a WARN with a substituted Gradle version.
+    foreach ($gradleFixture in @('missing', 'invalid')) {
+        $gradleBrokenKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-gradle-{0}-{1}' -f $gradleFixture, [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $gradleBrokenKitDirectory 'scripts') | Out-Null
+        try {
+            $gradleBrokenPreflight = Join-Path $gradleBrokenKitDirectory 'scripts\windows-preflight.ps1'
+            Copy-Item -Path $PSCommandPath -Destination $gradleBrokenPreflight
+            # The preflight dot-sources the shared tool-requirements parser and
+            # reads the tool declaration; copy both so the only broken piece in
+            # this fixture is the Gradle declaration.
+            Copy-Item -Path $script:SharedToolRequirementsParser -Destination (Join-Path $gradleBrokenKitDirectory 'scripts')
+            Copy-Item -Path (Join-Path $scriptDirectory '..\tool-requirements.json') -Destination $gradleBrokenKitDirectory
+            if ($gradleFixture -eq 'invalid') {
+                # apifloor-gate: allow-begin -- deliberate invalid-declaration fixture: the unparsable content must be concrete to prove the declaration is rejected, not derived.
+                'not-a-gradle-release' | Set-Content -Path (Join-Path $gradleBrokenKitDirectory 'gradle-version.txt') -Encoding Ascii
+                # apifloor-gate: allow-end
+            }
+            $currentPowerShell = (Get-Process -Id $PID).Path
+            $gradleBrokenOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gradleBrokenPreflight -OutputDirectory (Join-Path $gradleBrokenKitDirectory 'results') 2>&1)
+            $gradleBrokenExitCode = $LASTEXITCODE
+            $gradleBrokenText = ($gradleBrokenOutput | Out-String)
+            if ($gradleBrokenExitCode -ne 2) {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight exited {1}; a broken kit must abort with exit 2. Output: {2}' -f $gradleFixture, $gradleBrokenExitCode, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -notmatch '\[BLOCKED\] Gradle version declaration') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight did not fail the gradle.expected-version check. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -notmatch 'Restore the complete, unmodified test kit') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight did not tell the operator to restore the kit. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -match 'Gradle command') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight continued past the missing declaration and guessed the Gradle release. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if (Get-ChildItem -Path $gradleBrokenKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight wrote a result file for a broken kit.' -f $gradleFixture)
+            }
+        } finally {
+            Remove-Item -Recurse -Force $gradleBrokenKitDirectory -ErrorAction SilentlyContinue
+        }
     }
 
     $javaShimDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-java-regression-' + [guid]::NewGuid().ToString('N'))
@@ -549,6 +598,28 @@ Add-Check `
     -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.'
 $jdkRequirementText = 'JDK {0} or newer' -f $toolRequirements.jdkMinimumMajor
 $buildToolsRequirementText = 'Build-tools {0} or newer' -f $toolRequirements.buildToolsMinimum
+
+$gradleVersionFile = Join-Path $scriptDirectory '..\gradle-version.txt'
+$expectedGradle = Get-ExpectedGradleVersion $gradleVersionFile
+if ($null -eq $expectedGradle) {
+    # A missing or invalid gradle-version.txt means the kit was tampered with
+    # or incompletely copied. There is no built-in fallback: substituting a
+    # guessed Gradle release would downgrade a broken kit to a WARN and let a
+    # field run build with a release CI never exercised, so the preflight
+    # stops here, the same way it does for a missing tool-requirements.json.
+    Add-Check `
+        -Id 'gradle.expected-version' `
+        -Name 'Gradle version declaration' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed ('{0} is missing or does not contain a version.' -f $gradleVersionFile) `
+        -Expected 'gradle-version.txt declares the Gradle release CI builds with.' `
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess the Gradle release when this file is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue without a valid gradle-version.txt. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
+}
+$expectedGradleText = ('Gradle {0} (the release CI builds with)' -f $expectedGradle)
 
 $sdkRoot = $null
 $sdkRootCandidates = @(
@@ -898,23 +969,9 @@ if ($bashPath) {
         -NextSteps @('Install approved Git for Windows, close and reopen this window, then rerun the preflight.')
 }
 
-$gradleVersionFile = Join-Path $scriptDirectory '..\gradle-version.txt'
-$expectedGradle = Get-ExpectedGradleVersion $gradleVersionFile
-if ($null -eq $expectedGradle) {
-    Add-Check `
-        -Id 'gradle.expected-version' `
-        -Name 'Gradle version declaration' `
-        -Status 'WARN' `
-        -Required $false `
-        -Observed ('{0} is missing or does not contain a version.' -f $gradleVersionFile) `
-        -Expected 'gradle-version.txt declares the Gradle release CI builds with.' `
-        -NextSteps @('Restore the complete, unmodified test kit; the Gradle version cannot be compared against CI without this file.')
-    $expectedGradleText = 'Gradle 8.9 or newer'
-    $expectedGradle = [version]'8.9.0'
-} else {
-    $expectedGradleText = ('Gradle {0} (the release CI builds with)' -f $expectedGradle)
-}
-
+# The Gradle declaration was validated fail-closed next to the tool
+# requirements above: a kit that reached this line carries a parsed
+# gradle-version.txt in $expectedGradle / $expectedGradleText.
 $gradlePath = Find-CommandPath 'gradle.exe'
 if (-not $gradlePath) {
     $gradlePath = Find-CommandPath 'gradle'

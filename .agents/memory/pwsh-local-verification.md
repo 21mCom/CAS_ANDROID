@@ -11,4 +11,6 @@ Two scripting gotchas that cost verification rounds: with `$ErrorActionPreferenc
 
 **Why:** Two verification rounds were lost to a wiped nix profile and to foreground timeouts before these quirks were understood.
 
+windows-preflight.ps1 cannot run to completion on Linux: the Git Bash candidate list does `Join-Path $env:ProgramFiles ...`, which throws a null-Path bind error (with `$ErrorActionPreference = 'Stop'`) because ProgramFiles is unset off-Windows. Only the early fail-closed paths (missing/invalid declarations, which exit 2 before the environment probes) are locally exercisable end-to-end; a full happy-path run must be left to the windows-latest CI workflow.
+
 **How to apply:** Parse-check a script with `[System.Management.Automation.Language.Parser]::ParseFile`. To exercise functions in scripts whose self-test blocks are Windows-only (e.g. the Gate 0A preflight's `-ParserRegressionCheck` asserts a `C:\Users\...` path and needs `ComSpec`), extract the `FunctionDefinitionAst` nodes for the target functions, dot-source them, and run the cases in a standalone harness. Leave the full self-test to the windows-latest CI workflow.
