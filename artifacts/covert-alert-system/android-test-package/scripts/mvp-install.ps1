@@ -22,7 +22,9 @@ function Stop-Run {
     param([string]$Message)
     Write-Host ''
     Write-Host "BLOCKED: $Message" -ForegroundColor Red
-    Read-Host 'Press Enter to close'
+    if (-not $env:CAS_NO_PAUSE) {
+        Read-Host 'Press Enter to close'
+    }
     exit 2
 }
 

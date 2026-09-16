@@ -181,6 +181,52 @@ function Invoke-BlockedRunPropagationCheck {
     return $text
 }
 
+function Invoke-MvpInstallBlockedExitCheck {
+    param(
+        [Parameter(Mandatory = $true)][string]$EntrypointDirectory,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+
+    # mvp-install.ps1 documents exit code 2 for a blocked install. Its Stop-Run
+    # used to Read-Host before exiting, so in a non-interactive run the prompt
+    # threw and the process exited 1 instead — a blocked MVP install was
+    # indistinguishable from a script error and CI could not assert it. With
+    # CAS_NO_PAUSE set, a missing or invalid tool-requirements.json must exit
+    # exactly 2 with the BLOCKED message, the same escape hatch the other kit
+    # launchers honor.
+    $scenarios = @(
+        @{ Name = 'missing'; WriteInvalid = $false },
+        @{ Name = 'invalid'; WriteInvalid = $true }
+    )
+    foreach ($scenario in $scenarios) {
+        $packageCopy = Join-Path $WorkingDirectory ('mvp-install-blocked-' + $scenario.Name)
+        $scriptsCopy = Join-Path $packageCopy 'scripts'
+        New-Item -ItemType Directory -Path $scriptsCopy -Force | Out-Null
+        Copy-Item -Path (Join-Path $EntrypointDirectory '*.ps1') -Destination $scriptsCopy
+        if ($scenario.WriteInvalid) {
+            Set-Content -Path (Join-Path $packageCopy 'tool-requirements.json') -Value '{ this is not valid json' -Encoding Ascii
+        }
+        $env:CAS_NO_PAUSE = '1'
+        try {
+            $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $scriptsCopy 'mvp-install.ps1') 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
+        }
+        $text = ($output | Out-String).Trim()
+        if ($exitCode -ne 2) {
+            throw ('mvp-install.ps1 exited {0} instead of the documented blocked exit code 2 with a {1} tool-requirements.json; a blocked MVP install is indistinguishable from a script error. Output: {2}' -f $exitCode, $scenario.Name, $text)
+        }
+        if ($text -notmatch 'BLOCKED') {
+            throw ('mvp-install.ps1 did not print the BLOCKED message with a {0} tool-requirements.json: {1}' -f $scenario.Name, $text)
+        }
+        if ($text -notmatch 'tool-requirements\.json') {
+            throw ('mvp-install.ps1 did not name tool-requirements.json in its BLOCKED message with a {0} declaration: {1}' -f $scenario.Name, $text)
+        }
+    }
+    return 'mvp-install.ps1 blocked exits verified (exit 2 + BLOCKED message for missing and invalid tool-requirements.json).'
+}
+
 $temporaryWorkingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-windows-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryWorkingDirectory | Out-Null
 try {
@@ -208,6 +254,8 @@ try {
 
     $preflightPath = Join-Path $entrypointDirectory 'windows-preflight.ps1'
     Invoke-ParserRegressionCheck -ScriptPath $preflightPath | Write-Host
+
+    Invoke-MvpInstallBlockedExitCheck -EntrypointDirectory $entrypointDirectory -WorkingDirectory $temporaryWorkingDirectory | Write-Host
 
     $gate0aLauncherPath = Join-Path $entrypointDirectory 'pixel11-gate0a.ps1'
     Invoke-HarnessFailurePropagationCheck -ScriptPath $gate0aLauncherPath -LauncherName 'pixel11-gate0a.ps1' | Write-Host
