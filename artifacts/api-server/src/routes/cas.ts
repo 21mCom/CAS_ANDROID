@@ -19,6 +19,7 @@ import {
   loadConfiguredProviders,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
+import { detectSecretInNote } from "../lib/note-secrets";
 
 const router: IRouter = Router();
 
@@ -298,31 +299,9 @@ async function appendTransition(id: string, from: string, to: string, type: stri
 router.post("/cas/incidents/:id/ack", (req, res, next) => appendTransition(req.params.id, "ACTIVE_UNACKED", "ACTIVE_ACKED", "RESPONDER_ACK", "Responder acknowledgement accepted; location would continue.", res, next).catch(next));
 router.post("/cas/incidents/:id/resolve", (req, res, next) => appendTransition(req.params.id, "ACTIVE_ACKED", "RESOLVED", "RESPONDER_RESOLVE", "Authenticated resolution appended to the journal.", res, next).catch(next));
 
-/**
- * Obvious secret shapes that must never reach the incident journal. The
- * journal is append-only and broadly visible, so a responder note that pastes
- * an actual credential would leak it permanently; these notes are rejected
- * outright. Describing the fix ("rotated the SMS provider credentials") is
- * always fine — only the secret shapes themselves match.
- */
-const NOTE_SECRET_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\b(?:sk|pk)_(?:live|test)_[0-9A-Za-z]{8,}\b/, label: "a provider API key" },
-  { pattern: /\bsk-[0-9A-Za-z_-]{16,}\b/, label: "a provider API key" },
-  { pattern: /\bAIza[0-9A-Za-z_-]{20,}\b/, label: "a Google API key" },
-  { pattern: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, label: "a Slack token" },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/, label: "an AWS access key" },
-  { pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{16,}\b|\bgithub_pat_[0-9A-Za-z_]{20,}\b/, label: "a GitHub token" },
-  { pattern: /\bBearer\s+[0-9A-Za-z._~+/=-]{8,}\b/i, label: "a bearer token" },
-  { pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, label: "a private key block" },
-  { pattern: /\b(?:password|passwd|pwd|secret|api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret)\s*[:=]\s*["']?\S{4,}/i, label: "a password or key in key=value form" },
-];
-
-function detectSecretInNote(note: string): string | null {
-  for (const { pattern, label } of NOTE_SECRET_PATTERNS) {
-    if (pattern.test(note)) return label;
-  }
-  return null;
-}
+// NOTE_SECRET_PATTERNS and detectSecretInNote live in ../lib/note-secrets so
+// the one-off journal audit (scripts/audit-journal-secrets.ts) scans pre-guard
+// entries with the exact shapes this guard rejects.
 
 /**
  * Operator recovery for an abandoned delivery: moves a DEAD_LETTER item back

@@ -40,6 +40,7 @@ import {
   registerCasOutboxWorkerHeartbeat,
   resetCasOutboxWorkerHeartbeat,
 } from "../lib/cas-outbox-status";
+import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -1085,6 +1086,42 @@ test("re-queue rejects notes that contain credentials and journals nothing", asy
   const requeued = events.filter((event) => event.type === "DELIVERY_REQUEUED");
   assert.equal(requeued.length, legitimateNotes.length);
   assert.match(requeued[0].detail, /Responder note: Rotated the SMS provider credentials/);
+});
+
+test("journal audit flags pre-guard DELIVERY_REQUEUED entries that pasted a credential", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Simulate entries written before the guard shipped: stored verbatim, one
+  // carrying a pasted credential, one a legitimate fix description.
+  const secret = "sk_live_4eC39HqLyjWDarjtT1zdp7dc";
+  await db.insert(casIncidentEvents).values([
+    {
+      id: `${id}-legacy-leak`,
+      incidentId: id,
+      type: "DELIVERY_REQUEUED",
+      priority: "P1",
+      detail: `Responder re-queued the abandoned sms delivery. Responder note: rotated to ${secret}`,
+      createdAt: new Date("2026-09-10T00:00:00Z"),
+    },
+    {
+      id: `${id}-legacy-clean`,
+      incidentId: id,
+      type: "DELIVERY_REQUEUED",
+      priority: "P1",
+      detail: "Responder re-queued the abandoned sms delivery. Responder note: Rotated the SMS provider credentials.",
+      createdAt: new Date("2026-09-11T00:00:00Z"),
+    },
+  ]);
+
+  const { scanned, hits } = await findJournalSecretLeaks();
+  assert.ok(scanned >= 2);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].eventId, `${id}-legacy-leak`);
+  assert.match(hits[0].patternLabel, /provider API key/);
+  // The audit output must never carry the secret value itself.
+  assert.ok(!JSON.stringify(hits).includes(secret));
 });
 
 test("re-queue refuses deliveries that are not dead-lettered", async () => {
