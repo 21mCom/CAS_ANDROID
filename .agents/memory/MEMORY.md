@@ -11,6 +11,7 @@
 - [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
+- [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
 - [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor and jdkfloor gates catch matching comparisons in scripts; fixtures may need all three marker prefixes.
 - [CAS tool-requirements validator parity](cas-toolreq-validator-parity.md) — the ps1 parser and the Bash harness's sed parse must accept/reject identically; the parity harness proves it and both files carry lockstep comments.
 - [Gate 0A harness python3 shim coupling](gate0a-harness-python3-shim.md) — CI shadows python3 with a broken shim, so harness code before write_report must not call python3; the fixture generator extracts write_report and needs its globals.

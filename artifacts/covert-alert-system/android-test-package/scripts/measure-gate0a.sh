@@ -467,6 +467,13 @@ install_or_identify_package() {
     printf '%s\n' "$package_path" > "$RUN_DIR/package-path.txt"
     write_env "package" "$PACKAGE"
     write_env "packagePath" "$package_path"
+    # Report the actual INTERNET grant state from the installed package instead of
+    # assuming it: MVP builds declare INTERNET for the operator-triggered alert POST.
+    if grep -q 'android.permission.INTERNET: granted=true' "$RUN_DIR/package-dump.txt"; then
+        write_env "internetGranted" "true"
+    else
+        write_env "internetGranted" "false"
+    fi
     record_event "package-identification" "pass" "Disposable test package identified" \
         "package=$PACKAGE" "packagePath=$package_path" "packageDump=$RUN_DIR/package-dump.txt"
 }
@@ -866,7 +873,9 @@ report = {
         "android.permission.ACCESS_FINE_LOCATION": False,
         "android.permission.RECORD_AUDIO": False,
         "android.permission.CAMERA": False,
-        "android.permission.INTERNET": False,
+        # Probed from the installed package dump by the run (MVP builds declare
+        # INTERNET); defaults to False for device-free report self-tests.
+        "android.permission.INTERNET": env.get("internetGranted", "false") == "true",
     },
     "shortcut": {
         "pinSupported": False,

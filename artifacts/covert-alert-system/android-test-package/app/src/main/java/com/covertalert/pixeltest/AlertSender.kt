@@ -31,8 +31,14 @@ object AlertSender {
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream
                 val body = stream?.bufferedReader()?.readText().orEmpty()
                 if (code in 200..299) {
+                    // A 2xx without a usable incident id means something else answered
+                    // (proxy fallback, HTML page) and no incident was committed.
                     val id = runCatching { JSONObject(body).optString("id") }.getOrDefault("")
-                    Result(true, "HTTP $code incident=$id")
+                    if (id.isNotBlank()) {
+                        Result(true, "HTTP $code incident=$id")
+                    } else {
+                        Result(false, "HTTP $code but no incident id in response")
+                    }
                 } else {
                     Result(false, "HTTP $code ${body.take(200)}")
                 }

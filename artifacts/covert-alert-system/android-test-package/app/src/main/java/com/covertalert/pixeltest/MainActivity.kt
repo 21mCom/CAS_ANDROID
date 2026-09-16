@@ -251,8 +251,23 @@ class MainActivity : Activity() {
                 .put("screenshots", JSONArray())
                 .put("rawReferences", JSONArray()))
             .put("warnings", JSONArray().put("Host USB authorization and package identity preflight is required."))
-            .put("events", TestStore.events(this))
+            // Gate 0A import contract accepts only harness event types; the on-device
+            // journal also records MVP alert activity, so filter it out of the report.
+            .put("events", gate0aEventsOnly(TestStore.events(this)))
         return report
+    }
+
+    private fun gate0aEventsOnly(events: JSONArray): JSONArray {
+        val allowed = setOf(
+            "BACK_OBSERVED", "COVER_CONFIGURED", "COVER_LAUNCH_OUTCOME",
+            "OBSERVER_SCREEN_OPENED", "PROXY_TRIGGER", "REPORT_COPIED", "SHORTCUT_OUTCOME"
+        )
+        return JSONArray().apply {
+            for (i in 0 until events.length()) {
+                val event = events.optJSONObject(i) ?: continue
+                if (event.optString("type") in allowed) put(event)
+            }
+        }
     }
 
     private fun refreshReport() {

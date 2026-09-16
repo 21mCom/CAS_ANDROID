@@ -24,6 +24,9 @@ object TestStore {
     fun coverPackage(context: Context): String =
         storage(context).getString(COVER_PACKAGE, "").orEmpty()
 
+    // MVP alert sends happen on a worker thread while UI/receiver writes can race
+    // on the main thread; the journal is a single JSON document, so serialize it.
+    @Synchronized
     fun record(context: Context, type: String, fields: Map<String, Any?> = emptyMap()) {
         val prefs = storage(context)
         val event = JSONObject().put("type", type)

@@ -98,3 +98,17 @@ mtime_ms = 1789399840005
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/4e27c933-7db9-45eb-8989-df71b7da6859/43bc3375-df49-489f-a99b-6f30e38857d7"
 storage_version_token = "1789399890362711"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "re4NjTnv58EfKwaw6YGao"
+uri = "file://deliverables/CAS-Pixel11-MVP-Handoff.zip"
+type = "unspecified"
+title = "CAS Pixel 11 — MVP Handoff ZIP"
+description = "Hand-off packet for the Windows machine with the Pixel 11 attached: builds and installs the MVP app (real alert trigger to the CAS server), plus step-by-step instructions in MVP-HANDOFF-WINDOWS.md. SHA-256: c773b20fb6c9eacf425c810670d7bc7decc0fa348a3561921d32e02599819e5f"
+logical_id = "72e954c0-e926-4e80-92cc-d3990774c2a0"
+content_hash = "sha256:c773b20fb6c9eacf425c810670d7bc7decc0fa348a3561921d32e02599819e5f"
+size = 155458
+mtime_ms = 1789542866965
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/72e954c0-e926-4e80-92cc-d3990774c2a0/d964b594-078d-4cf6-a5ef-80753b732be5"
+storage_version_token = "1789542888217679"
+content_type = "application/octet-stream"
