@@ -6,6 +6,7 @@ on:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - ".github/scripts/check-tool-requirements-drift.py"
       - ".github/scripts/check-hardcoded-api-floor.py"
+      - ".github/scripts/check-hardcoded-jdk-minimum.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
       - ".github/scripts/check-tool-requirements-drift.py"
       - ".github/scripts/check-hardcoded-api-floor.py"
+      - ".github/scripts/check-hardcoded-jdk-minimum.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
@@ -200,6 +202,58 @@ jobs:
               throw 'The gate failed without identifying the hardcoded comparison and API keyword literal.'
           }
           Write-Host 'Hardcoded API-floor literals turned the gate red while the drift gate stayed green, as required.'
+
+      - name: Packaged scripts must not hardcode the JDK minimum
+        shell: pwsh
+        run: |
+          # The same bypass the API-floor gate closes exists on the JDK axis:
+          # a bare comparison like `-lt 17` carries no JDK keyword (so the
+          # drift gate never matches it) and sits below the API-floor gate's
+          # comparison band. This sibling gate rejects comparisons against
+          # plausible JDK majors in scripts outright, so scripts must derive
+          # the minimum from tool-requirements.json.
+          python .github/scripts/check-hardcoded-jdk-minimum.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-hardcoded-jdk-minimum.py exited $LASTEXITCODE" }
+
+      - name: A hardcoded JDK minimum matching the declaration must fail the JDK hardcode gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: inject bare comparisons EQUAL to the currently
+          # declared JDK minimum, so the drift gate (no keyword literal) and
+          # the API-floor gate (value below its comparison band) stay green
+          # and only the JDK hardcode gate can turn red. Only the copy is
+          # modified; the packaged kit stays clean for the entry-point checks
+          # below.
+          $hardcodeCopy = Join-Path $env:RUNNER_TEMP 'jdkfloor-hardcode-negative'
+          if (Test-Path -LiteralPath $hardcodeCopy) { Remove-Item -Recurse -Force $hardcodeCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $hardcodeCopy
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value 'if ([int]$javaMajor -lt 17) { Stop-Run "This build requires a newer Java runtime." }'
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value '[[ "$JAVA_MAJOR" -lt 17 ]] && die "java runtime too old"'
+          # The injected comparisons carry no keyword literal and sit below
+          # the API-floor band, so the drift gate and the API-floor gate must
+          # both still accept the copy. The native commands below are expected
+          # to exit non-zero; do not let pwsh 7.4+ turn the exit code into a
+          # terminating error before the assertions run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $driftOutput = & python .github/scripts/check-tool-requirements-drift.py $hardcodeCopy 2>&1 | Out-String
+          $driftCode = $LASTEXITCODE
+          Write-Host $driftOutput
+          if ($driftCode -ne 0) { throw 'Test setup broken: keyword-free comparisons must pass the drift gate; only the JDK hardcode gate may turn red.' }
+          $apiOutput = & python .github/scripts/check-hardcoded-api-floor.py $hardcodeCopy 2>&1 | Out-String
+          $apiCode = $LASTEXITCODE
+          Write-Host $apiOutput
+          if ($apiCode -ne 0) { throw 'Test setup broken: comparisons below the API band must pass the API-floor gate; only the JDK hardcode gate may turn red.' }
+          $output = & python .github/scripts/check-hardcoded-jdk-minimum.py $hardcodeCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The JDK hardcode gate accepted scripts that re-hardcode the declared JDK minimum.' }
+          if ($output -notmatch 'mvp-install\.ps1') { throw 'The gate failed without naming the drifted installer script.' }
+          if ($output -notmatch 'measure-gate0a\.sh') { throw 'The gate failed without naming the drifted harness script.' }
+          if ($output -notmatch 'JDK-major comparison') { throw 'The gate failed without identifying the hardcoded JDK-major comparisons.' }
+          Write-Host 'Hardcoded JDK-minimum comparisons turned the gate red while the drift and API-floor gates stayed green, as required.'
 
       - name: A reintroduced stale literal must fail the drift gate
         shell: pwsh

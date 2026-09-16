@@ -364,6 +364,7 @@ if ($ParserRegressionCheck) {
     # threshold in Test-JdkMeetsRequirement that a same-value comparison cannot.
     # toolreq-gate: allow-begin -- deliberate drift fixture: the altered values must differ from tool-requirements.json to prove the thresholds are not hardcoded.
     # apifloor-gate: allow-begin -- deliberate drift fixture: the altered values must hardcode non-declared numbers to prove the thresholds are derived, not fixed.
+    # jdkfloor-gate: allow-begin -- deliberate drift fixture: the altered-minimum assertion compares against a non-declared JDK major to prove the threshold is derived, not fixed.
     $driftDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-drift-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $driftDirectory | Out-Null
     try {
@@ -391,6 +392,7 @@ if ($ParserRegressionCheck) {
     } finally {
         Remove-Item -Recurse -Force $driftDirectory -ErrorAction SilentlyContinue
     }
+    # jdkfloor-gate: allow-end
     # apifloor-gate: allow-end
     # toolreq-gate: allow-end
     foreach ($invalidOutput in @('', 'garbage')) {
