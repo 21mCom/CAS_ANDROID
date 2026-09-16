@@ -14,6 +14,12 @@
     declaration; every caller fails closed with its own BLOCKED message and
     exit code 2. Never add a fallback default here: a broken kit must block,
     not guess.
+
+    The Gate 0A Bash harness (measure-gate0a.sh) carries a sed-based
+    validation of the same declaration; both sides must accept and reject the
+    same declarations. scripts/check-tool-requirements-parity.sh (run by the
+    windows-test-kit-entrypoints workflow) proves the two validators agree on
+    a shared fixture set; keep this parser and that block in lockstep.
 #>
 
 function Get-ToolRequirements {

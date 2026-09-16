@@ -167,13 +167,26 @@ load_pinned_device_constants() {
     # pinned-device derivation must not depend on the interpreter that test
     # breaks. The declaration file is small and kit-controlled, so strict
     # single-line extraction plus a consistency check is sufficient.
+    #
+    # The validation rules below mirror Get-ToolRequirements in
+    # cas-tool-requirements.ps1 (the shared parser every Windows entry point
+    # dot-sources): both sides must accept and reject the same declarations,
+    # or a kit could pass on the packaging workstation and fail in the field.
+    # scripts/check-tool-requirements-parity.sh proves the two validators agree
+    # on a shared fixture set; keep this block and that parser in lockstep.
     [[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
         die "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON; restore the complete, unmodified test kit before running this harness."
-    local declared_api declared_platform_api
+    local declared_api declared_platform_api declared_jdk_major declared_build_tools
     declared_api="$(sed -nE 's/^[[:space:]]*"apiLevel"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
     declared_platform_api="$(sed -nE 's/^[[:space:]]*"platform"[[:space:]]*:[[:space:]]*"android-([0-9]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
-    [[ "$declared_api" =~ ^[0-9]+$ && "$declared_platform_api" =~ ^[0-9]+$ && "$declared_api" == "$declared_platform_api" ]] ||
+    declared_jdk_major="$(sed -nE 's/^[[:space:]]*"minimumMajor"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    declared_build_tools="$(sed -nE 's/^[[:space:]]*"buildToolsMinimum"[[:space:]]*:[[:space:]]*"([^"]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    [[ "$declared_jdk_major" =~ ^[0-9]+$ && "$declared_jdk_major" -ge 1 ]] ||
+        die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (jdk.minimumMajor must be a positive integer); restore the complete, unmodified test kit before running this harness."
+    [[ "$declared_api" =~ ^[0-9]+$ && "$declared_platform_api" =~ ^[0-9]+$ && "$declared_api" -ge 1 && "$declared_api" == "$declared_platform_api" ]] ||
         die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (androidSdk.apiLevel and androidSdk.platform must be consistent); restore the complete, unmodified test kit before running this harness."
+    [[ "$declared_build_tools" =~ ^[0-9]+(\.[0-9]+)*$ ]] ||
+        die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (androidSdk.buildToolsMinimum must be a dotted version); restore the complete, unmodified test kit before running this harness."
     PINNED_AVD="CAS_Pixel_8a_API_${declared_api}"
     EMULATOR_API="$declared_api"
     MIN_PHYSICAL_API="$declared_api"

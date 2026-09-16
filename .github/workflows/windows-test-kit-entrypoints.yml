@@ -20,6 +20,8 @@ on:
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
       - "scripts/generate-gate0a-hardware-report-fixture.sh"
+      - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/fixtures/tool-requirements-parity/**"
   push:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
@@ -39,6 +41,8 @@ on:
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
       - "scripts/generate-gate0a-hardware-report-fixture.sh"
+      - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/fixtures/tool-requirements-parity/**"
   workflow_dispatch:
 
 # Field operators run the ZIP produced by package-windows-test-kit.ps1, not the
@@ -347,6 +351,77 @@ jobs:
         run: |
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1 -PackageRoot $env:PACKAGED_KIT_ROOT
           if ($LASTEXITCODE -ne 0) { throw "test-windows-entrypoints.ps1 exited $LASTEXITCODE" }
+
+  validator-parity:
+    name: PowerShell and Bash tool-requirements validators agree
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: package-kit
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download the packaged Windows test kit
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-test-kit
+          path: ${{ runner.temp }}
+
+      - name: Extract the packaged Windows test kit
+        shell: pwsh
+        run: |
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'packaged-windows-test-kit'
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-Windows-Test-Kit-v6.zip') -DestinationPath $extractRoot -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "PACKAGED_KIT_ROOT=$(Join-Path $extractRoot 'CAS-Pixel11-Windows-Test-Kit-v6')"
+
+      - name: Both validators must accept and reject the same declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The Windows entry points validate tool-requirements.json through the
+          # shared PowerShell parser; the Gate 0A Bash harness carries its own
+          # sed-based validation. Run the shared fixture set through BOTH sides
+          # of the packaged kit and require identical accept/reject verdicts, so
+          # a kit cannot pass on the workstation and fail in the field (or the
+          # reverse) when the two validators drift.
+          bash scripts/check-tool-requirements-parity.sh --kit-root "$(cygpath "$PACKAGED_KIT_ROOT")"
+
+      - name: A one-sided validator change must turn the parity check red
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Negative test: weaken ONLY the PowerShell parser copy so it accepts a
+          # declaration with no jdk section, then require the parity check to
+          # turn red on that fixture. Only the copy is modified; the packaged
+          # kit stays clean.
+          weakened="$RUNNER_TEMP/toolreq-parity-negative"
+          rm -rf "$weakened"
+          cp -r "$(cygpath "$PACKAGED_KIT_ROOT")" "$weakened"
+          parser="$weakened/scripts/cas-tool-requirements.ps1"
+          grep -q 'if (\$jdkMinimumMajor -lt 1 -or \$apiLevel -lt 1) {' "$parser" || {
+            echo "Test setup broken: the parser no longer contains the expected jdk plausibility check to weaken." >&2
+            exit 1
+          }
+          sed -i 's/if (\$jdkMinimumMajor -lt 1 -or \$apiLevel -lt 1) {/if ($apiLevel -lt 1) {/' "$parser"
+          set +e
+          output="$(bash scripts/check-tool-requirements-parity.sh --kit-root "$weakened" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The parity check accepted a kit whose PowerShell parser and Bash harness disagree." >&2
+            exit 1
+          fi
+          grep -q 'MISMATCH.*missing-jdk\.json' <<<"$output" || {
+            echo "The parity check failed without naming the fixture the two validators disagree on." >&2
+            exit 1
+          }
+          grep -q 'TOOLREQ_PARITY_FAILED' <<<"$output" || {
+            echo "The parity check failed without reporting the validator disagreement." >&2
+            exit 1
+          }
+          echo "A one-sided validator change turned the parity check red, as required."
 
   git-bash-report:
     name: Gate 0A report generation under Git Bash
