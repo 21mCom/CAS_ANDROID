@@ -109,7 +109,7 @@ type FieldTestContextValue = FieldTestState & {
   triggerKernel: () => void;
   acknowledgeKernel: () => void;
   resolveKernel: () => void;
-  requeueOutboxItem: (id: string, reason?: string) => void;
+  requeueOutboxItem: (id: string, reason?: string) => Promise<void>;
   resetDemo: () => void;
 };
 const initialGates: Gate[] = [
@@ -306,7 +306,16 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     triggerKernel: () => { void fetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload); },
     acknowledgeKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload); },
     resolveKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload); },
-    requeueOutboxItem: (id, reason) => { void fetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) }).then(reload); },
+    requeueOutboxItem: async (id, reason) => {
+      const response = await fetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
+      if (!response.ok) {
+        // Surface the server's rejection (e.g. a note that looks like a
+        // credential) so the responder can rephrase instead of retrying blind.
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `Re-queue was rejected (${response.status}).`);
+      }
+      await reload();
+    },
     resetDemo: () => { void reload(); },
   }), [state]);
 
