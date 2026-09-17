@@ -13,6 +13,11 @@ import {
 import { z } from "zod";
 import { validateGate0aImport, type Gate0aReport } from "../lib/gate0a-report";
 import {
+  bootstrapSchema,
+  gatePatchSchema,
+  setupPatchSchema,
+} from "../lib/cas-readiness-schema";
+import {
   CasProviderError,
   configuredProviderTransports,
   createCasDeliverySender,
@@ -491,32 +496,9 @@ router.post("/cas/incidents/:id/device-receipt", (req, res, next) =>
 // same shapes use-field-test seeds from — the first time it finds both
 // tables empty. Seed exactly that payload, and only into empty tables, so a
 // later console cannot overwrite an operator's curated readiness state.
-// Mirrors the console's Gate/SetupItem shapes (use-field-test.tsx); updatedAt
-// is server-managed, and unknown keys are stripped rather than rejected so a
-// newer console can still seed an older API.
-const bootstrapGateSchema = z.object({
-  id: z.string().min(1),
-  index: z.string(),
-  name: z.string(),
-  short: z.string(),
-  status: z.enum(["verified", "partial", "blocked", "not-started"]),
-  criterion: z.string(),
-  evidence: z.array(z.string()).default([]),
-  nextAction: z.string(),
-  owner: z.string(),
-});
-const bootstrapSetupSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  detail: z.string(),
-  group: z.string(),
-  complete: z.boolean().default(false),
-  mode: z.enum(["owner", "measured"]),
-});
-const bootstrapSchema = z.object({
-  gates: z.array(bootstrapGateSchema),
-  setup: z.array(bootstrapSetupSchema),
-});
+// The schemas live in lib/cas-readiness-schema.ts, which the console parity
+// test holds in lockstep with the console's Gate/SetupItem types and seed
+// fixtures; change one side without the other and CI goes red.
 
 router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
   try {
@@ -735,8 +717,10 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
 router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
   try {
     // Setup readiness items are toggled complete/incomplete from the console;
-    // this is cas_setup_readiness, not gate evidence.
-    const parsed = z.object({ complete: z.boolean() }).safeParse(req.body);
+    // this is cas_setup_readiness, not gate evidence. The payload schema is
+    // shared (lib/cas-readiness-schema.ts) so the console parity test fails
+    // if the two sides drift apart.
+    const parsed = setupPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid setup update", issues: parsed.error.issues });
     }
@@ -748,7 +732,7 @@ router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: s
 
 router.patch("/cas/gates/:id", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
   try {
-    const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
+    const body = gatePatchSchema.parse(req.body);
     const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Gate not found" });
     return res.json(row);

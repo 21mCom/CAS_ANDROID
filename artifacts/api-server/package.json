@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../scripts/run-cas-contract-tests.mjs",
     "test:review-db-cleanup": "node ../../scripts/test-review-database-cleanup.mjs",
-    "test:direct": "tsx --test src/routes/cas.test.ts src/lib/cas-outbox-worker.test.ts scripts/validate-gate0a-report.test.ts scripts/audit-journal-secrets.test.ts",
+    "test:direct": "tsx --test src/routes/cas.test.ts src/lib/cas-outbox-worker.test.ts src/lib/cas-readiness-schema.test.ts scripts/validate-gate0a-report.test.ts scripts/audit-journal-secrets.test.ts",
     "validate:gate0a-report": "tsx scripts/validate-gate0a-report.ts",
     "audit:journal-secrets": "tsx scripts/audit-journal-secrets.ts"
   },
