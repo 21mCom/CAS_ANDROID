@@ -1,0 +1,53 @@
+name: Push-token expiry watchdog
+
+# Why this exists:
+# Agent sessions in the Replit workspace push CI fixes to this repo using a
+# fine-grained PAT stored as the GITHUB_PAT workspace secret. The token has a
+# hard expiry (recorded below in PAT_EXPIRES_AT). When it lapses, every push
+# and workflow dispatch from the workspace fails with 401 and CI iteration
+# stalls. The non-PAT alternatives are confirmed broken (Replit's git
+# credential helper mints an invalid token; the Replit GitHub connector's app
+# is not installed on this repo, so API writes get 403).
+#
+# This job turns red 14 days before the recorded expiry so rotation happens
+# with lead time instead of being discovered as a surprise 401.
+#
+# How to rotate when this goes red:
+#   1. In GitHub, create a fresh fine-grained PAT scoped to ONLY this repo
+#      (21mCom/CAS_ANDROID) with Contents, Actions, and Workflows: Read and
+#      write. Pick the longest expiration GitHub allows.
+#   2. In the Replit workspace, replace the GITHUB_PAT secret with the new
+#      token (agent sessions can do this via the secrets flow).
+#   3. Verify with a test push or a workflow_dispatch using the new token.
+#   4. Read the new expiry from the github-authentication-token-expiration
+#      response header on any authenticated api.github.com call, then update
+#      PAT_EXPIRES_AT below and commit.
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily
+  workflow_dispatch:
+
+env:
+  PAT_EXPIRES_AT: "2026-12-16T07:18:47Z" # recorded expiry of the workspace GITHUB_PAT secret
+  WARN_DAYS: "14"
+
+jobs:
+  check-expiry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when the workspace push token is near expiry
+        run: |
+          expiry=$(date -u -d "$PAT_EXPIRES_AT" +%s)
+          now=$(date -u +%s)
+          days_left=$(( (expiry - now) / 86400 ))
+          echo "Workspace GITHUB_PAT expires at ${PAT_EXPIRES_AT} (${days_left} days left)"
+          if [ "$days_left" -lt 0 ]; then
+            echo "::error::The Replit workspace GITHUB_PAT has EXPIRED — CI pushes will fail with 401. Rotate it now: fresh fine-grained PAT (this repo only; Contents/Actions/Workflows read+write), replace the GITHUB_PAT workspace secret, prove a push, then update PAT_EXPIRES_AT in this file."
+            exit 1
+          fi
+          if [ "$days_left" -le "$WARN_DAYS" ]; then
+            echo "::error::The Replit workspace GITHUB_PAT expires in ${days_left} days — rotate it before CI pushes start failing. See this workflow's header comment for the rotation steps."
+            exit 1
+          fi
+          echo "OK: more than ${WARN_DAYS} days of token validity remain."
