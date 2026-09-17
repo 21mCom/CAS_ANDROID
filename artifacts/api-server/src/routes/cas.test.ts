@@ -15,9 +15,11 @@ import { after, beforeEach, test } from "node:test";
 import app from "../app";
 import { db, pool } from "@workspace/db";
 import {
+  casGateEvidence,
   casIncidentEvents,
   casIncidents,
   casOutbox,
+  casSetupReadiness,
   casTransportCooldowns,
 } from "@workspace/db/schema";
 import { asc, eq, sql } from "drizzle-orm";
@@ -229,7 +231,7 @@ const validGate0aReport = {
 test("Gate 0A import preserves raw timestamps and stays inconclusive", async () => {
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(validGate0aReport),
   });
 
@@ -266,7 +268,7 @@ test("Gate 0A import keeps emulator evidence distinct from physical evidence", a
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(emulatorReport),
   });
 
@@ -288,7 +290,7 @@ test("Gate 0A import rejects blocked preflight reports", async () => {
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(blocked),
   });
 
@@ -324,7 +326,7 @@ test("Gate 0A import accepts a full hardware-run report over 200,000 bytes end-t
 
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: bodyText,
   });
 
@@ -377,7 +379,7 @@ test("Gate 0A import accepts the exact harness-writer hardware-run report over H
 
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: reportText,
   });
 
@@ -393,7 +395,7 @@ test("Gate 0A import rejects an intentionally oversized report", async () => {
   const oversized = `{"pad":"${"x".repeat(600 * 1024)}"}`;
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: oversized,
   });
 
@@ -404,7 +406,7 @@ test("Gate 0A import rejects malformed reports with the failing field", async ()
   const malformed = { ...validGate0aReport, schema: "cas-gate0a-report-v0" };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(malformed),
   });
 
@@ -427,7 +429,7 @@ test("Gate 0A import reports every failing field when a report has more than thr
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(broken),
   });
 
@@ -452,7 +454,7 @@ test("Gate 0A import rejects physical evidence from an unapproved Pixel model", 
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(wrongModel),
   });
 
@@ -471,7 +473,7 @@ test("Gate 0A import rejects reports that cross the safety boundary", async () =
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(unsafe),
   });
 
@@ -490,7 +492,7 @@ test("Gate 0A import rejects unsafe JSON keys", async () => {
   };
   const response = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(unsafe),
   });
 
@@ -2987,6 +2989,113 @@ test("unauthenticated trigger and mutation requests are rejected with 401 and re
   } finally {
     setCasAuthRejectionRecorder();
   }
+});
+
+test("unauthenticated console write endpoints (bootstrap, test incident, setup/gate edits, import) are rejected with 401 and recorded", async () => {
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    const jsonHeaders = { "Content-Type": "application/json" };
+    const attempts: { make: () => Promise<Response>; method: string; path: string }[] = [
+      {
+        make: () => fetch(`${baseUrl}/cas/bootstrap`, { method: "POST", headers: jsonHeaders, body: JSON.stringify({ gates: [], setup: [] }) }),
+        method: "POST", path: "/api/cas/bootstrap",
+      },
+      {
+        make: () => fetch(`${baseUrl}/cas/incidents/test`, { method: "POST" }),
+        method: "POST", path: "/api/cas/incidents/test",
+      },
+      {
+        make: () => fetch(`${baseUrl}/cas/setup/sim-entry`, { method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ status: "verified" }) }),
+        method: "PATCH", path: "/api/cas/setup/sim-entry",
+      },
+      {
+        make: () => fetch(`${baseUrl}/cas/gates/proxy-launch`, { method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ status: "verified" }) }),
+        method: "PATCH", path: "/api/cas/gates/proxy-launch",
+      },
+      {
+        make: () => fetch(`${baseUrl}/cas/gate0a/import`, { method: "POST", headers: jsonHeaders, body: JSON.stringify({}) }),
+        method: "POST", path: "/api/cas/gate0a/import",
+      },
+    ];
+
+    const setupCountBefore = (await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness)).length;
+    const gatesCountBefore = (await db.select({ id: casGateEvidence.id }).from(casGateEvidence)).length;
+
+    for (const attempt of attempts) {
+      const response = await attempt.make();
+      assert.equal(response.status, 401, `${attempt.method} ${attempt.path}`);
+      assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="cas"');
+      const body = (await response.json()) as { error?: string };
+      assert.ok(body.error);
+    }
+
+    // A wrong credential is rejected exactly like a missing one.
+    const wrongToken = await fetch(`${baseUrl}/cas/incidents/test`, {
+      method: "POST",
+      headers: { authorization: "Bearer not-the-alert-token" },
+    });
+    assert.equal(wrongToken.status, 401);
+
+    // Nothing reached durable state: no test incident, no readiness writes.
+    assert.equal((await db.select({ id: casIncidents.id }).from(casIncidents)).length, 0);
+    assert.equal((await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness)).length, setupCountBefore);
+    assert.equal((await db.select({ id: casGateEvidence.id }).from(casGateEvidence)).length, gatesCountBefore);
+
+    // Every rejection was recorded with its route and reason — and without
+    // the presented credential.
+    assert.equal(rejections.length, 6);
+    assert.deepEqual(
+      rejections.map(({ method, path, reason }) => ({ method, path, reason })),
+      [
+        { method: "POST", path: "/api/cas/bootstrap", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/incidents/test", reason: "missing-token" },
+        { method: "PATCH", path: "/api/cas/setup/sim-entry", reason: "missing-token" },
+        { method: "PATCH", path: "/api/cas/gates/proxy-launch", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/gate0a/import", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/incidents/test", reason: "invalid-token" },
+      ],
+    );
+    assert.ok(!JSON.stringify(rejections).includes("not-the-alert-token"));
+  } finally {
+    setCasAuthRejectionRecorder();
+  }
+});
+
+test("the enrolled-device credential authorizes the console write endpoints", async () => {
+  // Every newly guarded endpoint lets the credentialed console through the
+  // gate; downstream validation (404 for unknown rows, 400 for malformed
+  // reports) still applies as before.
+  const testIncident = await fetch(`${baseUrl}/cas/incidents/test`, { method: "POST", headers: AUTH_HEADERS });
+  assert.notEqual(testIncident.status, 401);
+
+  const gateEdit = await fetch(`${baseUrl}/cas/gates/no-such-gate`, {
+    method: "PATCH",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "verified" }),
+  });
+  assert.equal(gateEdit.status, 404);
+
+  const setupEdit = await fetch(`${baseUrl}/cas/setup/no-such-entry`, {
+    method: "PATCH",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "verified" }),
+  });
+  assert.notEqual(setupEdit.status, 401);
+
+  const bootstrap = await fetch(`${baseUrl}/cas/bootstrap`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ gates: [], setup: [] }),
+  });
+  assert.notEqual(bootstrap.status, 401);
+
+  const importReport = await fetch(`${baseUrl}/cas/gate0a/import`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ not: "a report" }),
+  });
+  assert.equal(importReport.status, 400);
 });
 
 test("the enrolled-device credential authorizes trigger, ack, and resolve", async () => {

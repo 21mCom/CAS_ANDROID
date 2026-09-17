@@ -218,7 +218,10 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         if (!response.ok) throw new Error('Unable to load durable state');
         let remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
         if (remote.gates.length === 0 && remote.setup.length === 0) {
-          await fetch('/api/cas/bootstrap', {
+          // Seeding is a credentialed mutation: on a fresh server the
+          // operator is asked for the alert credential before anything is
+          // written, exactly like the incident actions.
+          await casAuthedFetch('/api/cas/bootstrap', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gates: initialGates, setup: initialSetup }),
@@ -244,7 +247,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<FieldTestContextValue>(() => ({
     ...state,
-    updateGateStatus: (id, nextStatus) => { void fetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload); },
+    updateGateStatus: (id, nextStatus) => { void casAuthedFetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload).catch(reportAuthError); },
     recordObservation: (id, observation) => setState((current) => ({
       ...current,
       fieldRun: { ...current.fieldRun, observations: { ...current.fieldRun.observations, [id]: observation }, decision: 'pending' },
@@ -263,7 +266,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       if (!report || typeof report !== 'object' || Array.isArray(report)) {
         throw new Error('The selected file must contain a Gate 0A JSON report.');
       }
-      const response = await fetch('/api/cas/gate0a/import', {
+      const response = await casAuthedFetch('/api/cas/gate0a/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(report),
@@ -302,8 +305,8 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       ...current,
       fieldRun: { ...current.fieldRun, decision, startedAt: current.fieldRun.startedAt || new Date().toISOString() },
     })),
-    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void fetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload); },
-    runTestIncident: () => { void fetch('/api/cas/incidents/test', { method: 'POST' }).then(reload); },
+    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void casAuthedFetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload).catch(reportAuthError); },
+    runTestIncident: () => { void casAuthedFetch('/api/cas/incidents/test', { method: 'POST' }).then(reload).catch(reportAuthError); },
     triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(reportAuthError); },
     acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(reportAuthError); },
     resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(reportAuthError); },

@@ -3,10 +3,12 @@ import type { RequestHandler } from "express";
 import { logger } from "./logger";
 
 /**
- * Credential gate for the CAS alert mutations (trigger, ack, resolve,
- * re-queue). The enrolled phone and the operator console both present the
- * shared alert token as `Authorization: Bearer <token>`; the token lives in
- * the CAS_ALERT_TOKEN secret on the server and is entered on each client.
+ * Credential gate for every CAS mutation: incident trigger/ack/resolve,
+ * outbox re-queue, readiness bootstrap, test incidents, setup/gate edits,
+ * and the Gate 0A report import. The enrolled phone and the operator console
+ * both present the shared alert token as `Authorization: Bearer <token>`;
+ * the token lives in the CAS_ALERT_TOKEN secret on the server and is entered
+ * on each client.
  *
  * Fail closed: with no CAS_ALERT_TOKEN configured every guarded request is
  * rejected, so a freshly deployed server can never silently run unlocked.

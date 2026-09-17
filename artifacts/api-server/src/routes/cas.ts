@@ -69,7 +69,10 @@ function formatGate0aNotes(report: Gate0aReport): string {
   ].join("\n");
 }
 
-router.post("/cas/gate0a/import", async (req, res, next) => {
+// Gated like every other console mutation: no harness host posts reports over
+// HTTP (CI validates them offline via scripts/validate-gate0a-report.ts), so
+// the only caller is the operator console, which holds the credential.
+router.post("/cas/gate0a/import", requireCasCredential, async (req, res, next) => {
   try {
     const validation = validateGate0aImport(req.body);
     if (!validation.ok) {
@@ -484,7 +487,7 @@ router.post("/cas/incidents/:id/sms-receipt", (req, res, next) =>
 router.post("/cas/incidents/:id/device-receipt", (req, res, next) =>
   handleDeviceReceipt(req, res, next));
 
-router.post("/cas/bootstrap", async (req, res, next) => {
+router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
   try {
     const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
     const existing = await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness).limit(1);
@@ -498,7 +501,7 @@ router.post("/cas/bootstrap", async (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
-router.post("/cas/incidents/test", async (req, res, next) => {
+router.post("/cas/incidents/test", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
   try {
     const now = new Date();
     const id = req.params.id;
@@ -517,8 +520,10 @@ const triggerSchema = z.object({
   deviceChannels: z.array(z.enum(["SMS", "WHATSAPP"])).max(4).optional(),
 });
 
-// Trigger and the incident/outbox mutations require the enrolled-device
-// credential; an unauthenticated request is rejected with 401 and recorded.
+// Every CAS mutation — trigger, incident/outbox transitions, readiness
+// bootstrap, test incident, setup/gate edits, and the Gate 0A import —
+// requires the enrolled-device credential; an unauthenticated request is
+// rejected with 401 and recorded.
 router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, next) => {
   try {
     const parsed = triggerSchema.safeParse(req.body ?? {});
@@ -666,7 +671,7 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
   } catch (error) { return next(error); }
 });
 
-router.patch("/cas/setup/:id", async (req, res, next) => {
+router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
   try {
     // Setup readiness items are toggled complete/incomplete from the console;
     // this is cas_setup_readiness, not gate evidence.
@@ -677,7 +682,7 @@ router.patch("/cas/setup/:id", async (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
-router.patch("/cas/gates/:id", async (req, res, next) => {
+router.patch("/cas/gates/:id", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
   try {
     const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
     const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();

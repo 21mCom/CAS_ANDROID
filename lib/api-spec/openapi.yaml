@@ -40,7 +40,9 @@ paths:
     post:
       operationId: recordCasTestIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201":
           description: Test incident recorded
           content:
@@ -51,12 +53,14 @@ paths:
       operationId: importCasGate0aReport
       tags: [cas]
       summary: Validate and import a native Gate 0A report
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Gate0aReport" }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200":
           description: Report accepted as an inconclusive physical observation
           content:
@@ -67,12 +71,14 @@ paths:
     post:
       operationId: bootstrapCasReadiness
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
             schema: { type: object, required: [gates, setup], properties: { gates: { type: array, items: { type: object, additionalProperties: true } }, setup: { type: array, items: { type: object, additionalProperties: true } } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201": { description: Readiness seeded }
   /cas/incidents/trigger:
     post:
@@ -166,6 +172,7 @@ paths:
     patch:
       operationId: updateCasSetup
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         required: true
@@ -173,11 +180,13 @@ paths:
           application/json:
             schema: { type: object, required: [complete], properties: { complete: { type: boolean } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Updated }
   /cas/gates/{id}:
     patch:
       operationId: updateCasGate
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         required: true
@@ -185,13 +194,14 @@ paths:
           application/json:
             schema: { type: object, required: [status], properties: { status: { type: string } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Updated }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Enrolled-device alert credential (server secret CAS_ALERT_TOKEN). Required on alert trigger and incident/outbox mutations; rejections return 401.
+      description: Enrolled-device alert credential (server secret CAS_ALERT_TOKEN). Required on every CAS mutation — alert trigger, incident/outbox mutations, readiness bootstrap, test incidents, setup/gate edits, and the Gate 0A import; rejections return 401.
   schemas:
     HealthStatus:
       type: object
