@@ -3064,10 +3064,11 @@ test("unauthenticated console write endpoints (bootstrap, test incident, setup/g
 
 test("the enrolled-device credential authorizes the console write endpoints", async () => {
   // Every newly guarded endpoint lets the credentialed console through the
-  // gate; downstream validation (404 for unknown rows, 400 for malformed
-  // reports) still applies as before.
+  // gate; downstream validation still applies as before. Each assertion names
+  // the exact expected status so a route regression (e.g. a 500 on a
+  // schema-valid body) cannot hide behind a non-401 check.
   const testIncident = await fetch(`${baseUrl}/cas/incidents/test`, { method: "POST", headers: AUTH_HEADERS });
-  assert.notEqual(testIncident.status, 401);
+  assert.equal(testIncident.status, 201);
 
   const gateEdit = await fetch(`${baseUrl}/cas/gates/no-such-gate`, {
     method: "PATCH",
@@ -3079,16 +3080,20 @@ test("the enrolled-device credential authorizes the console write endpoints", as
   const setupEdit = await fetch(`${baseUrl}/cas/setup/no-such-entry`, {
     method: "PATCH",
     headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "verified" }),
+    body: JSON.stringify({ complete: true }),
   });
-  assert.notEqual(setupEdit.status, 401);
+  assert.equal(setupEdit.status, 404);
 
+  // Schema-valid empty arrays are what the console posts on a fresh server
+  // before any checklist exists; this must seed nothing and succeed, not 500.
   const bootstrap = await fetch(`${baseUrl}/cas/bootstrap`, {
     method: "POST",
     headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify({ gates: [], setup: [] }),
   });
-  assert.notEqual(bootstrap.status, 401);
+  assert.equal(bootstrap.status, 201);
+  const bootstrapBody = (await bootstrap.json()) as { seeded?: boolean };
+  assert.equal(typeof bootstrapBody.seeded, "boolean");
 
   const importReport = await fetch(`${baseUrl}/cas/gate0a/import`, {
     method: "POST",

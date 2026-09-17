@@ -1,0 +1,23 @@
+== Build the production-encoder seed generator ==
+== Install, proxy, and prepare ==
+receipt-gate proxy :6099 -> :5099, flag /tmp/cas-receipt-block.j8t5Xn
+Performing Streamed Install
+Success
+== Phase 0: real send on this AVD must DIVIDE_FAILED-finalize immediately ==
+resolved prior active incident sim-1789646247621-b9b21f83-7187-4f1c-ac5a-3aedf30e21e1
+phase 0 OK: production code cannot leave an unfinished batch on this AVD (DIVIDE_FAILED finalizes in-line; sim-1789646857515-51b3ef25-b9fc-4060-91cf-016a18579311 DEAD_LETTER).
+== Scenario A: force-stop with the receipt POST in flight ==
+resolved prior active incident sim-1789646857515-51b3ef25-b9fc-4060-91cf-016a18579311
+force-stopped com.covertalert.pixeltest with its receipt POST still hanging in the proxy
+kill landed with sim-1789646882814-bb83a3e1-ec5b-4800-9d66-5b2965064665's receipt POST on the wire; console QUEUED; sim-1789646882814-bb83a3e1-ec5b-4800-9d66-5b2965064665's pending receipt durable
+offline resume retried and kept the receipt; console still QUEUED
+SCENARIO A PASSED: sim-1789646882814-bb83a3e1-ec5b-4800-9d66-5b2965064665 — force-stop with the receipt POST in flight, honest offline retry while blocked, receipt delivered after data returned, console QUEUED -> DEAD_LETTER, store drained. NO synthetic state.
+== Scenario B: unfinished batch at kill -> recovery + watchdog ==
+resolved prior active incident sim-1789646882814-bb83a3e1-ec5b-4800-9d66-5b2965064665
+seeded the unfinished-batch record via the production encoder (only state this AVD cannot produce — see phase 0)
+SCENARIO B PASSED: sim-1789647005927-348f5ca9-d9ca-4902-8d8e-dc632ff905d3 — SMS_BATCH_RECOVERY + watchdog finalize, receipt REPORTED, console QUEUED -> DEAD_LETTER, store drained.
+== Scenario C (supplementary): seeded success receipt -> retry lands SENT ==
+resolved prior active incident sim-1789647005927-348f5ca9-d9ca-4902-8d8e-dc632ff905d3
+SCENARIO C PASSED: sim-1789647123377-e85b16d4-3939-48d6-be3e-bc0c43b0dff9 — retried success receipt moved the console QUEUED -> SENT, store drained.
+Receipt-durability kill proof passed: scenario A via the real send path with no synthetic state; scenarios B/C with the seeded records this modem-less AVD cannot produce (hardware owns the full-fidelity run).
+HARNESS_EXIT=0 (background wrapper, run23, 2026-09-17)

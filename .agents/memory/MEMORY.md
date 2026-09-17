@@ -16,15 +16,14 @@
 - [GitHub CI access for CAS_ANDROID](github-ci-access.md) — the OAuth connector token is scope-less; pushes/Actions use the GITHUB_PAT secret and the public repo can be polled unauthenticated.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
 - [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
-- [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor/jdkfloor gates catch matching comparisons; fixtures may need all three marker prefixes.
-- [CAS tool-requirements validator parity](cas-toolreq-validator-parity.md) — the ps1 parser and the Bash harness's sed parse must accept/reject identically; the parity harness proves it.
+- [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor/jdkfloor gates catch scripted comparisons; fixtures may need all three markers.
+- [CAS tool-requirements validator parity](cas-toolreq-validator-parity.md) — ps1 parser and Bash harness sed parse must accept/reject identically; the parity harness proves it.
 - [Gate 0A harness python3 shim coupling](gate0a-harness-python3-shim.md) — CI shadows python3 with a broken shim, so harness code before write_report must not call python3.
 - [Launch smoke detection lessons](launch-smoke-detection-selftest.md) — am start -W exits 0 on onCreate crashes; tail -200 alone can miss the fatal block — grep it explicitly.
-- [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG, but the emulated cellular modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
-- [Protected broadcasts need adb root](protected-broadcasts-adb.md) — the shell uid can't send protected broadcasts on API 35; injected LOCKED_BOOT_COMPLETED post-unlock is NOT direct-boot coverage.
+- [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG with workspace-device state; its modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
+- [Protected broadcasts need adb root](protected-broadcasts-adb.md) — API 35 shell uid can't send protected broadcasts or start non-exported activities; LOCKED_BOOT_COMPLETED ≠ direct boot.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
-- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; a stale snapshot can revert a task that merged mid-task.
-- [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK locally; Gradle must match gradle-version.txt.
+- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; a stale snapshot can revert a task merged mid-task.
+- [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
-- [GitHub CI push/auth path](github-ci-push-auth.md) — git askpass times out and OAuth connection is read-only; push with the GITHUB_PAT secret via x-access-token URL.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
