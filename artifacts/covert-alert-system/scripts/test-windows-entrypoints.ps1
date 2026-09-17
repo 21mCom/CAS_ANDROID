@@ -57,11 +57,19 @@ function Invoke-HarnessFailurePropagationCheck {
     # The launcher runs a stub harness invocation that exits non-zero. The build
     # must fail if the launcher swallows that failure and exits 0 or prints the
     # success message, because a failed field run would then look successful.
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; a launcher reporting a failure over stderr is exactly
+    # the case this check must diagnose cleanly.
     $env:CAS_NO_PAUSE = '1'
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -HarnessFailureSimulation 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
     }
     $text = ($output | Out-String).Trim()
@@ -86,14 +94,22 @@ function Invoke-BlockedRunPropagationCheck {
 
     # With no Android SDK configured the launcher run is blocked. The build must
     # fail if the launcher reports that blocked run with exit code 0.
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; a launcher reporting a blocked run over stderr is
+    # exactly the case this check must diagnose cleanly.
     $savedSdkRoot = $env:ANDROID_SDK_ROOT
     $savedAndroidHome = $env:ANDROID_HOME
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     Remove-Item Env:\ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:\ANDROID_HOME -ErrorAction SilentlyContinue
     try {
         $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -Action status -OutputDirectory $OutputDirectory 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         if ($null -ne $savedSdkRoot) { $env:ANDROID_SDK_ROOT = $savedSdkRoot }
         if ($null -ne $savedAndroidHome) { $env:ANDROID_HOME = $savedAndroidHome }
     }
