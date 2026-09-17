@@ -20,10 +20,18 @@ function Invoke-StartupCheck {
     )
 
     Push-Location $WorkingDirectory
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -StartupSmokeCheck 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         Pop-Location
     }
     $text = ($output | Out-String).Trim()
@@ -39,8 +47,19 @@ function Invoke-StartupCheck {
 function Invoke-ParserRegressionCheck {
     param([Parameter(Mandatory = $true)][string]$ScriptPath)
 
-    $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -ParserRegressionCheck 2>&1)
-    $exitCode = $LASTEXITCODE
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -ParserRegressionCheck 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     $text = ($output | Out-String).Trim()
     if ($exitCode -ne 0 -or $text -notmatch 'CAS_PARSER_REGRESSION_OK windows-preflight') {
         throw ('PowerShell parser regression check failed for {0} (exit {1}): {2}' -f $ScriptPath, $exitCode, $text)
@@ -161,10 +180,18 @@ try {
     $wrapper = Join-Path $entrypointDirectory 'run-windows-preflight.cmd'
     $env:CAS_NO_PAUSE = '1'
     Push-Location $temporaryWorkingDirectory
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $wrapperOutput = @(& $env:ComSpec /d /c "`"$wrapper`" -StartupSmokeCheck" 2>&1)
         $wrapperExitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         Pop-Location
         Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
     }
