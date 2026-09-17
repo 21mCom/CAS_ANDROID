@@ -70,7 +70,11 @@ if (-not $bash) {
 if ($HarnessFailureSimulation) {
     Write-Host 'Harness failure simulation: no device is touched. A stub harness invocation exits non-zero' -ForegroundColor Yellow
     Write-Host 'so CI can prove this launcher surfaces a failed Gate 0A run as a non-zero exit.' -ForegroundColor Yellow
-    $arguments = @('-c', 'echo "CAS simulated Gate 0A harness failure" >&2; exit 3')
+    # Windows PowerShell 5.1 mangles embedded double quotes when it builds the
+    # native command line, so the stub command must stay quote-free; otherwise
+    # bash receives a truncated command and exits 0 instead of simulating a
+    # failed run.
+    $arguments = @('-c', 'echo CAS simulated Gate 0A harness failure >&2; exit 3')
 } else {
     $adb = Get-Command adb.exe -ErrorAction SilentlyContinue
     if (-not $adb) {
