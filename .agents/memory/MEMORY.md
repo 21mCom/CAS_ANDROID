@@ -12,6 +12,8 @@
 - [Gate 0A print guide](gate0a-print-guide.md) — verify rendered PDF pagination, selectable commands, and served-file integrity after guide changes.
 - [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
+- [Windows PowerShell 5.1 native traps](windows-powershell-51-native-traps.md) — powershell.exe mangles quoted native args and aborts 2>&1 captures on native stderr under EAP=Stop; pwsh 7 cannot reproduce either.
+- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — the OAuth connector token is scope-less; pushes/Actions use the GITHUB_PAT secret and the public repo can be polled unauthenticated.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
 - [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
 - [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor and jdkfloor gates catch matching comparisons in scripts; fixtures may need all three marker prefixes.

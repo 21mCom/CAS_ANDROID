@@ -77,7 +77,12 @@ if (-not $bash) {
 if ($HarnessFailureSimulation) {
     Write-Host 'Harness failure simulation: no device is touched. A stub harness invocation exits non-zero' -ForegroundColor Yellow
     Write-Host 'so CI can prove this launcher surfaces a failed Gate 0A run as a non-zero exit.' -ForegroundColor Yellow
-    $arguments = @('-c', 'echo "CAS simulated Gate 0A harness failure" >&2; exit 3')
+    # Windows PowerShell 5.1 mangles embedded double quotes when it builds the
+    # native command line, and a native stderr write aborts 2>&1 captures that
+    # run under $ErrorActionPreference = 'Stop' (NativeCommandError). Keep the
+    # stub command quote-free and on stdout so the simulated failure reliably
+    # reaches this launcher's exit-code handling.
+    $arguments = @('-c', 'echo CAS simulated Gate 0A harness failure; exit 3')
 } elseif ($RealHarnessFailureSimulation) {
     Write-Host 'Real-harness failure simulation: no device is touched. The launcher invokes the real' -ForegroundColor Yellow
     Write-Host 'scripts/measure-gate0a.sh report self-test; CI shadows python3 to force the failure.' -ForegroundColor Yellow
