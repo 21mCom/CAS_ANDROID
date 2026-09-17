@@ -137,8 +137,11 @@ jobs:
           force-avd-creation: false
           disable-animations: true
           emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # android-emulator-runner runs this with /usr/bin/sh, which is dash
+          # on Ubuntu — no pipefail support ("set: Illegal option -o
+          # pipefail"). The script has no pipelines, so `set -eu` suffices.
           script: |
-            set -euo pipefail
+            set -eu
             apk="apk/app-debug.apk"
             if [ ! -f "$apk" ]; then
               echo "::error::Downloaded APK missing at $apk"
