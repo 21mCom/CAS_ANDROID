@@ -21,3 +21,4 @@
 - [Protected broadcasts need adb root](protected-broadcasts-adb.md) — on API 35 the shell uid cannot send protected broadcasts OR start non-exported activities (root is exempt; adbd restart drops adb reverse); injected LOCKED_BOOT_COMPLETED post-unlock is NOT direct-boot coverage.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
 - [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; edits from a stale snapshot can revert another task that merged mid-task.
+- [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools, no emulator) fits the quota and builds the kit APK locally; Gradle must match gradle-version.txt.
