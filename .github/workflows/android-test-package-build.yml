@@ -94,7 +94,15 @@ jobs:
           # CI must satisfy the same declaration the Windows preflight enforces;
           # building with whatever the runner happens to ship would let CI stay
           # green on a toolchain the field kit would reject.
-          sdkmanager --sdk_root="$ANDROID_HOME" \
+          # The runner image ships cmdline-tools under ANDROID_HOME but no longer
+          # puts sdkmanager on PATH (run 35203546119 failed with exit 127), so
+          # resolve the binary explicitly with a PATH fallback.
+          sdkmanager_bin="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          if [ ! -x "$sdkmanager_bin" ]; then
+            echo "::error::sdkmanager not found on PATH or at \$ANDROID_HOME/cmdline-tools/latest/bin — runner image drifted."
+            exit 1
+          fi
+          "$sdkmanager_bin" --sdk_root="$ANDROID_HOME" \
             "platforms;android-$API_LEVEL" "build-tools;$BUILD_TOOLS_MIN" > /dev/null
           jar="$ANDROID_HOME/platforms/android-$API_LEVEL/android.jar"
           if [ ! -f "$jar" ]; then
