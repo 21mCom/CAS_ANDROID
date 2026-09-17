@@ -29,8 +29,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # No android-actions/setup-android step: ubuntu-latest ships the Android
+      # SDK preinstalled (ANDROID_HOME set, licenses accepted), and
+      # setup-android@v3 now fails on the runner because it installs the newest
+      # cmdline-tools (16.0) and runs `sdkmanager tools`, but the 'tools'
+      # package was removed from the SDK repository (exit 1 before the build).
 
       - name: Read pinned Gradle version
         id: gradle-version
@@ -99,8 +102,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # No android-actions/setup-android step: macos-latest ships the Android
+      # SDK preinstalled and android-emulator-runner manages the emulator SDK
+      # pieces itself. setup-android@v3 fails on current runners (removed
+      # 'tools' package in the SDK repository).
 
       - name: Download debug APK
         uses: actions/download-artifact@v4
