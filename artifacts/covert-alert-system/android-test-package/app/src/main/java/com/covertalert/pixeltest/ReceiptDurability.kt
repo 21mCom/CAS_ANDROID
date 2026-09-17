@@ -27,6 +27,13 @@ data class PendingBatch(
     val incidentId: String?,
     val remainingByRecipient: Map<String, Int>,
     val failures: Map<String, String>,
+    /**
+     * The console's delivery-cycle token picked up from device-pending with a
+     * re-queued item; null for locally triggered initial-cycle sends. Echoed
+     * in the receipt so the console can reject receipts of superseded batches
+     * instead of letting them mark a re-queued item SENT.
+     */
+    val cycleToken: String? = null,
 ) {
     /** Per-recipient outcome exactly as the console's device-receipt endpoint expects it. */
     fun results(): List<Triple<String, Boolean, String?>> =
@@ -64,10 +71,18 @@ data class PendingReceipt(
     val channel: String,
     val queuedAtMs: Long,
     val results: List<Triple<String, Boolean, String?>>,
+    /** The delivery-cycle token of the batch this receipt reports (see PendingBatch.cycleToken). */
+    val cycleToken: String? = null,
 ) {
-    /** POST body for the console's device-receipt endpoint. */
+    /**
+     * POST body for the console's device-receipt endpoint. The cycleToken
+     * (when the batch had one) lets the console tell the current delivery
+     * cycle's receipt apart from a stale one left over from before an
+     * operator re-queue — without comparing handset and console clocks.
+     */
     fun toPayload(): JSONObject = JSONObject()
         .put("channel", channel)
+        .apply { if (cycleToken != null) put("cycleToken", cycleToken) }
         .put("results", JSONArray().apply {
             results.forEach { (recipient, ok, error) ->
                 put(JSONObject().put("recipient", recipient).put("ok", ok).apply {
@@ -161,6 +176,7 @@ object ReceiptDurability {
             channel = channel,
             queuedAtMs = nowMs,
             results = batch.results(),
+            cycleToken = batch.cycleToken,
         )
         val batches = loadBatches(store) - batch.sendId
         val receipts = loadReceipts(store).filterNot { it.receiptId == receipt.receiptId } + receipt
@@ -233,6 +249,8 @@ object ReceiptDurability {
                 incidentId = entry.optString("incidentId").takeIf { it.isNotBlank() },
                 remainingByRecipient = remaining,
                 failures = failures,
+                // Absent in records persisted by older app versions.
+                cycleToken = entry.optString("cycleToken").takeIf { it.isNotBlank() },
             )
         }
         return batches
@@ -243,6 +261,7 @@ object ReceiptDurability {
         batches.forEach { (sendId, batch) ->
             json.put(sendId, JSONObject()
                 .put("incidentId", batch.incidentId ?: JSONObject.NULL)
+                .put("cycleToken", batch.cycleToken ?: JSONObject.NULL)
                 .put("remaining", JSONObject().apply {
                     batch.remainingByRecipient.forEach { (recipient, remaining) -> put(recipient, remaining) }
                 })
@@ -278,6 +297,8 @@ object ReceiptDurability {
                 channel = channel,
                 queuedAtMs = entry.optLong("queuedAtMs"),
                 results = results,
+                // Absent in receipts persisted by older app versions.
+                cycleToken = entry.optString("cycleToken").takeIf { it.isNotBlank() },
             )
         }
     }
@@ -290,6 +311,7 @@ object ReceiptDurability {
                 .put("incidentId", receipt.incidentId)
                 .put("channel", receipt.channel)
                 .put("queuedAtMs", receipt.queuedAtMs)
+                .put("cycleToken", receipt.cycleToken ?: JSONObject.NULL)
                 .put("results", JSONArray().apply {
                     receipt.results.forEach { (recipient, ok, error) ->
                         put(JSONObject().put("recipient", recipient).put("ok", ok).apply {

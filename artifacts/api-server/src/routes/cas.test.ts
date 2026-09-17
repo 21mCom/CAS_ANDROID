@@ -2263,10 +2263,12 @@ test("device-pending lists only handset-awaiting SMS items and refuses gateway m
 
     const response = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
     assert.equal(response.status, 200);
-    const body = (await response.json()) as { items: Array<{ id: string; incidentId: string }> };
+    const body = (await response.json()) as { items: Array<{ id: string; incidentId: string; cycleToken: string | null }> };
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].incidentId, id);
     assert.equal(body.items[0].id, `${id}-sms`);
+    // The initial cycle has no token; one appears only after a re-queue.
+    assert.equal(body.items[0].cycleToken, null);
 
     // A delivered item drops off the pickup list.
     const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
@@ -2443,16 +2445,20 @@ test("the device-direct recovery loop: failed receipt, re-queue, handset pickup,
     });
     assert.equal(requeue.status, 200);
     const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
-      items: Array<{ id: string }>;
+      items: Array<{ id: string; cycleToken: string | null }>;
     };
     assert.deepEqual(pending.items.map((item) => item.id), [`${id}-sms`]);
+    // The re-queue minted a fresh delivery-cycle token; the handset persists
+    // it with the replacement batch and echoes it in the receipt.
+    const cycleToken = pending.items[0].cycleToken;
+    assert.ok(cycleToken);
 
     // 3. The handset re-sends and reports success; the worker still never
     //    touches SMS items.
     const ok = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...deviceAuth },
-      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+      body: JSON.stringify({ cycleToken, results: [{ recipient: "+1555000111", ok: true }] }),
     });
     assert.equal(ok.status, 200);
     assert.deepEqual(await ok.json(), { id, state: "SENT" });
@@ -2475,6 +2481,118 @@ test("the device-direct recovery loop: failed receipt, re-queue, handset pickup,
     assert.ok(types.includes("DELIVERY_ABANDONED"));
     assert.ok(types.includes("DELIVERY_REQUEUED"));
     assert.ok(types.includes("DELIVERY_REPORTED"));
+  });
+});
+
+test("a stale receipt from before a re-queue cannot mark the re-queued item SENT", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const { id } = (await trigger.json()) as { id: string };
+    const postReceipt = (body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify(body),
+      });
+    const smsRow = async () =>
+      (await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`)))[0];
+    const pendingToken = async () => {
+      const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
+        items: Array<{ id: string; cycleToken: string | null }>;
+      };
+      return pending.items.find((item) => item.id === `${id}-sms`)?.cycleToken;
+    };
+
+    // 1. The handset's first batch fails on the radio; the console accepts
+    //    the failure receipt and dead-letters the item, but the 200 is lost
+    //    to a data outage, so the handset keeps its persisted receipt and
+    //    will retry it. The initial cycle has no token (a locally triggered
+    //    first send never sees the device-pending list), and legacy APK
+    //    receipts without one are still accepted here.
+    const failed = await postReceipt({
+      results: [{ recipient: "not-a-number", ok: false, error: "ILLEGAL_DESTINATION" }],
+    });
+    assert.equal(failed.status, 200);
+    assert.equal((await smsRow()).state, "DEAD_LETTER");
+    assert.equal((await smsRow()).deviceCycleToken, null);
+    assert.equal(await pendingToken(), undefined);
+
+    // 2. The operator fixes the responder list and re-queues: a fresh
+    //    delivery-cycle token is minted and handed to the handset via the
+    //    device-pending list.
+    const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST" });
+    assert.equal(requeue.status, 200);
+    assert.equal((await smsRow()).state, "QUEUED");
+    const firstToken = (await smsRow()).deviceCycleToken;
+    assert.ok(firstToken);
+    assert.equal(await pendingToken(), firstToken);
+
+    // 3a. The handset's retry of the pre-re-queue receipt (no token: its
+    //     batch was the token-less initial cycle) is stale: rejected
+    //     410 Gone — the permanent signal the handset drops instead of
+    //     retrying forever — and the item stays QUEUED for the replacement
+    //     send. No clock is compared anywhere, so handset/console clock skew
+    //     cannot weaken this; a batch started before the re-queue but
+    //     finalized after it carries the same old (absent) token and is
+    //     rejected just the same.
+    const staleInitial = await postReceipt({
+      results: [{ recipient: "+1555000111", ok: true }],
+    });
+    assert.equal(staleInitial.status, 410);
+    assert.equal((await smsRow()).state, "QUEUED");
+    assert.equal((await smsRow()).sentAt, null);
+
+    // 3b. Same for a receipt echoing an OLDER token: the replacement send
+    //     under the first re-queue's token dead-letters, the 200 is lost,
+    //     the operator re-queues again, and the retried old-token receipt
+    //     lands while the new replacement send is still pending.
+    const deadAgain = await postReceipt({
+      cycleToken: firstToken,
+      results: [{ recipient: "not-a-number", ok: false, error: "RADIO_OFF" }],
+    });
+    assert.equal(deadAgain.status, 200);
+    assert.equal((await smsRow()).state, "DEAD_LETTER");
+    const requeueAgain = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST" });
+    assert.equal(requeueAgain.status, 200);
+    const secondToken = (await smsRow()).deviceCycleToken;
+    assert.ok(secondToken && secondToken !== firstToken);
+    assert.equal(await pendingToken(), secondToken);
+
+    const staleOldToken = await postReceipt({
+      cycleToken: firstToken,
+      results: [{ recipient: "+1555000111", ok: true }],
+    });
+    assert.equal(staleOldToken.status, 410);
+    assert.equal((await smsRow()).state, "QUEUED");
+
+    // A token that was never minted for this item is rejected identically.
+    const bogus = await postReceipt({
+      cycleToken: "forged-token",
+      results: [{ recipient: "+1555000111", ok: true }],
+    });
+    assert.equal(bogus.status, 410);
+
+    // No stale receipt may have journaled a delivery or an abandonment.
+    const eventsSoFar = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    assert.equal(eventsSoFar.filter((event) => event.type === "DELIVERY_REPORTED").length, 0);
+    assert.equal(eventsSoFar.filter((event) => event.type === "DELIVERY_ABANDONED").length, 2);
+
+    // 4. The replacement send's receipt echoes the current token and is
+    //    accepted; its retry after the item turned SENT stays a safe
+    //    200 replay.
+    const fresh = await postReceipt({
+      cycleToken: secondToken,
+      results: [{ recipient: "+1555000111", ok: true }],
+    });
+    assert.equal(fresh.status, 200);
+    assert.deepEqual(await fresh.json(), { id, state: "SENT" });
+    assert.equal((await smsRow()).state, "SENT");
+    const replay = await postReceipt({
+      cycleToken: secondToken,
+      results: [{ recipient: "+1555000111", ok: true }],
+    });
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), { id, state: "SENT", replay: true });
   });
 });
 
@@ -2602,22 +2720,27 @@ test("whatsapp device channel: pending lists it, worker never claims it, receipt
       });
       assert.equal(requeue.status, 200);
       const pendingAgain = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
-        items: Array<{ id: string; transport: string }>;
+        items: Array<{ id: string; transport: string; cycleToken: string | null }>;
       };
-      assert.ok(pendingAgain.items.some((item) => item.id === `${id}-whatsapp` && item.transport === "WHATSAPP"));
+      const whatsappItem = pendingAgain.items.find((item) => item.id === `${id}-whatsapp`);
+      assert.equal(whatsappItem?.transport, "WHATSAPP");
+      // The re-queue minted a fresh delivery-cycle token; the handset echoes
+      // it in the replacement send's receipt.
+      const cycleToken = whatsappItem?.cycleToken;
+      assert.ok(cycleToken);
 
       // A successful receipt marks it SENT; a replay is a cheap no-op.
       const okReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...deviceAuth },
-        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000222", ok: true }] }),
+        body: JSON.stringify({ channel: "WHATSAPP", cycleToken, results: [{ recipient: "+1555000222", ok: true }] }),
       });
       assert.equal(okReceipt.status, 200);
       assert.deepEqual(await okReceipt.json(), { id, state: "SENT" });
       const replay = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...deviceAuth },
-        body: JSON.stringify({ channel: "WHATSAPP", results: [{ recipient: "+1555000222", ok: true }] }),
+        body: JSON.stringify({ channel: "WHATSAPP", cycleToken, results: [{ recipient: "+1555000222", ok: true }] }),
       });
       assert.equal(replay.status, 200);
       assert.deepEqual(await replay.json(), { id, state: "SENT", replay: true });

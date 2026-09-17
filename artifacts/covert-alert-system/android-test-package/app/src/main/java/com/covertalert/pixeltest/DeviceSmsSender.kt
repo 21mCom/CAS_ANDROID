@@ -33,6 +33,13 @@ import java.net.URL
  * receipts until the console accepts them (replays of an already-SENT item
  * are a cheap 200 no-op server-side), and the re-queue check never re-sends
  * an incident that still has an unfinished batch.
+ *
+ * A receipt can also outlive its batch: every operator re-queue mints a
+ * fresh delivery-cycle token on the console, handed to the handset via
+ * device-pending and echoed back in the receipt. A receipt echoing an
+ * older token (or none, from a pre-re-queue batch) is rejected with
+ * 410 Gone and the persisted copy is dropped instead of retried forever —
+ * the replacement send reports its own receipt under the new token.
  */
 object DeviceSmsSender {
     const val ACTION_SMS_SENT = "com.covertalert.pixeltest.action.SMS_SENT"
@@ -41,7 +48,7 @@ object DeviceSmsSender {
 
     private const val RESULT_WATCHDOG_MS = 45_000L
 
-    private class Batch(val sendId: String, val incidentId: String?) {
+    private class Batch(val sendId: String, val incidentId: String?, val cycleToken: String?) {
         /** Parts still awaiting a radio result, per recipient. */
         val remainingByRecipient = mutableMapOf<String, Int>()
         /** First failure per recipient; absence means delivered. */
@@ -59,11 +66,12 @@ object DeviceSmsSender {
             incidentId = incidentId,
             remainingByRecipient = remainingByRecipient.toMap(),
             failures = failures.toMap(),
+            cycleToken = cycleToken,
         )
 
         companion object {
             fun fromPending(pending: PendingBatch): Batch {
-                val batch = Batch(pending.sendId, pending.incidentId)
+                val batch = Batch(pending.sendId, pending.incidentId, pending.cycleToken)
                 batch.remainingByRecipient.putAll(pending.remainingByRecipient)
                 batch.failures.putAll(pending.failures)
                 batch.dispatchComplete = true
@@ -91,7 +99,7 @@ object DeviceSmsSender {
      * human-readable start outcome for the journal; per-recipient delivery
      * results land in SMS_PART_RESULT / SMS_SEND_OUTCOME events.
      */
-    fun sendAlert(context: Context, incidentId: String?, body: String): String {
+    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null): String {
         val responders = TestStore.smsResponders(context)
         if (responders.isEmpty()) return "no responder numbers configured"
         if (context.checkSelfPermission(android.Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
@@ -101,7 +109,10 @@ object DeviceSmsSender {
             ?: return "SmsManager unavailable"
         val appContext = context.applicationContext
         val store = TestStore.receiptStore(appContext)
-        val sendId = incidentId ?: "offline-${System.currentTimeMillis()}"
+        // Unique per send batch, not per incident (a UUID, so uniqueness does
+        // not depend on the handset clock): after an operator re-queue the
+        // replacement send gets a fresh id under the new cycle token.
+        val sendId = "${incidentId ?: "offline"}-${java.util.UUID.randomUUID()}"
 
         // Compute the FULL roster before persisting or sending anything: the
         // durable record must cover every responder, so a process death
@@ -110,7 +121,7 @@ object DeviceSmsSender {
         val roster = ReceiptDurability.planDispatch(responders) { recipient ->
             runCatching { sms.divideMessage(body) }.getOrNull()
         }
-        val batch = Batch(sendId, incidentId)
+        val batch = Batch(sendId, incidentId, cycleToken)
         batch.remainingByRecipient.putAll(roster.partsByRecipient.mapValues { it.value.size })
         roster.failures.keys.forEach { batch.remainingByRecipient[it] = 0 }
         batch.failures.putAll(roster.failures)
@@ -210,14 +221,17 @@ object DeviceSmsSender {
         val deferredIds = ReceiptDurability.deferRequeueIncidentIds(store, liveIncidentIds, "SMS")
         var pickedUp = 0
         var deferred = 0
-        for ((incidentId, transport) in items) {
-            if (transport != "SMS") continue
-            if (incidentId in deferredIds) {
+        for (item in items) {
+            if (item.transport != "SMS") continue
+            if (item.incidentId in deferredIds) {
                 deferred += 1
                 continue
             }
             pickedUp += 1
-            sendAlert(context, incidentId, alertBody(incidentId))
+            // The cycle token is persisted with the batch and echoed in the
+            // receipt, so the console can reject stale receipts of the
+            // superseded batch instead of letting them mark the item SENT.
+            sendAlert(context, item.incidentId, alertBody(item.incidentId), item.cycleToken)
         }
         TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf(
             "outcome" to "OK",
@@ -229,13 +243,21 @@ object DeviceSmsSender {
             if (deferred > 0) "; deferred $deferred still owed a receipt by this handset" else ""
     }
 
+    /** One item from the console's device-pending list. */
+    data class PendingItem(
+        val incidentId: String,
+        val transport: String,
+        /** Current delivery-cycle token; null while the item is in its initial cycle or on older consoles. */
+        val cycleToken: String?,
+    )
+
     /**
-     * Fetches the handset's pending device-delivered items as
-     * (incidentId, transport) pairs from the console's device-pending list.
-     * Returns null on any failure after journaling the reason. Items without
-     * a transport field (older consoles) are treated as SMS.
+     * Fetches the handset's pending device-delivered items from the console's
+     * device-pending list. Returns null on any failure after journaling the
+     * reason. Items without a transport field (older consoles) are treated as
+     * SMS.
      */
-    fun fetchPendingItems(context: Context): List<Pair<String, String>>? {
+    fun fetchPendingItems(context: Context): List<PendingItem>? {
         val baseUrl = TestStore.alertServerUrl(context)
         if (baseUrl.isBlank()) {
             TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf("outcome" to "SKIPPED", "reason" to "no alert server URL configured"))
@@ -271,12 +293,16 @@ object DeviceSmsSender {
             TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf("outcome" to "FAILED", "reason" to "response had no items array"))
             return null
         }
-        val pending = mutableListOf<Pair<String, String>>()
+        val pending = mutableListOf<PendingItem>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
             val incidentId = item.optString("incidentId")
             if (incidentId.isBlank()) continue
-            pending.add(incidentId to item.optString("transport", "SMS"))
+            pending.add(PendingItem(
+                incidentId = incidentId,
+                transport = item.optString("transport", "SMS"),
+                cycleToken = item.optString("cycleToken").takeIf { it.isNotBlank() },
+            ))
         }
         return pending
     }
@@ -392,13 +418,15 @@ object DeviceSmsSender {
         channel: String,
         results: List<Triple<String, Boolean, String?>>,
         sendId: String? = null,
+        cycleToken: String? = null,
     ) {
         val receipt = PendingReceipt(
-            receiptId = sendId ?: "$channel-$incidentId-${System.currentTimeMillis()}",
+            receiptId = sendId ?: "$channel-$incidentId-${java.util.UUID.randomUUID()}",
             incidentId = incidentId,
             channel = channel,
             queuedAtMs = System.currentTimeMillis(),
             results = results,
+            cycleToken = cycleToken,
         )
         val store = TestStore.receiptStore(context.applicationContext)
         if (!ReceiptDurability.enqueueReceipt(store, receipt)) {
@@ -474,10 +502,13 @@ object DeviceSmsSender {
     }
 
     /**
-     * Posts one persisted receipt; removes it from the pending store only
-     * when the console accepts it (any 2xx — a receipt replayed against an
-     * already-SENT item is a 200 no-op server-side). Returns whether the
-     * receipt was accepted.
+     * Posts one persisted receipt; removes it from the pending store when
+     * the console accepts it (any 2xx — a receipt replayed against an
+     * already-SENT or already-acted-on item is a 200 no-op server-side) or
+     * permanently rejects it (410 Gone: the batch predates the latest
+     * re-queue, so retrying can never succeed and must stop). Every other
+     * failure keeps the receipt queued for the next retry. Returns whether
+     * the receipt was accepted.
      */
     private fun postReceipt(context: Context, receipt: PendingReceipt): Boolean {
         val channel = receipt.channel
@@ -504,7 +535,7 @@ object DeviceSmsSender {
             return false
         }
         val trimmed = baseUrl.trim().trimEnd('/')
-        val accepted = runCatching {
+        val responseCode = runCatching {
             val connection = (URL("$trimmed/api/cas/incidents/${receipt.incidentId}/device-receipt").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10_000
@@ -515,16 +546,30 @@ object DeviceSmsSender {
             }
             try {
                 connection.outputStream.use { it.write(receipt.toPayload().toString().toByteArray(Charsets.UTF_8)) }
-                connection.responseCode in 200..299
+                connection.responseCode
             } finally {
                 connection.disconnect()
             }
-        }.getOrElse { false }
-        TestStore.record(context, "${channel}_RECEIPT_OUTCOME", mapOf(
-            "incidentId" to receipt.incidentId,
-            "outcome" to if (accepted) "REPORTED" else "FAILED; receipt kept for retry",
-        ))
-        if (accepted) {
+        }.getOrElse { -1 }
+        // 410 Gone is a permanent rejection: the console re-queued the item
+        // since this receipt's batch started, so the receipt echoes a
+        // superseded cycle token and will never be accepted. Drop it instead
+        // of retrying forever — the replacement send posts its own receipt.
+        // Every other non-2xx (outage, 401, transient 409) stays retryable.
+        val stale = responseCode == 410
+        val accepted = responseCode in 200..299
+        TestStore.record(context, "${channel}_RECEIPT_OUTCOME", buildMap {
+            put("incidentId", receipt.incidentId)
+            put("outcome", when {
+                accepted -> "REPORTED"
+                stale -> "DROPPED_STALE"
+                else -> "FAILED; receipt kept for retry"
+            })
+            if (stale) {
+                put("reason", "console rejected the receipt as stale (410): its batch belongs to a superseded delivery cycle; the replacement send reports its own receipt")
+            }
+        })
+        if (accepted || stale) {
             ReceiptDurability.ackReceipt(TestStore.receiptStore(context.applicationContext), receipt.receiptId)
         }
         return accepted

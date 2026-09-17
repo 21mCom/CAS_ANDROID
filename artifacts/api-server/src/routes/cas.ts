@@ -262,6 +262,7 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
         transport: casOutbox.transport,
         priority: casOutbox.priority,
         createdAt: casOutbox.createdAt,
+        deviceCycleToken: casOutbox.deviceCycleToken,
       })
       .from(casOutbox)
       .where(
@@ -280,6 +281,10 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
         transport: item.transport,
         priority: item.priority,
         createdAt: item.createdAt.toISOString(),
+        // The current delivery-cycle token; the handset must persist it with
+        // the batch and echo it in the receipt. Null while the item is in
+        // its initial cycle (never re-queued).
+        cycleToken: item.deviceCycleToken,
       })),
     });
   } catch (error) { return next(error); }
@@ -287,6 +292,12 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
 
 const deviceReceiptSchema = z.object({
   channel: z.enum(["SMS", "WHATSAPP"]).default("SMS"),
+  // The current delivery-cycle token, which the handset picked up from the
+  // device-pending list with the re-queued item and echoes back here.
+  // Absent from initial-cycle sends (the handset triggers those locally,
+  // possibly offline, and never sees the list) and from the first
+  // device-direct APKs.
+  cycleToken: z.string().trim().min(1).max(120).optional(),
   results: z
     .array(
       z.object({
@@ -311,6 +322,27 @@ const deviceReceiptSchema = z.object({
  * Replay-safe: a duplicate receipt for an already-SENT item returns 200
  * without re-journaling, because the handset may retry its report after a
  * data outage.
+ *
+ * Stale-receipt guard: the handset persists receipts and retries them, so a
+ * receipt can outlive the batch it belongs to — e.g. the console accepted a
+ * failure receipt and dead-lettered the item, but the 200 was lost in a data
+ * outage, the operator re-queued, and the handset's retry lands while the
+ * replacement send is still pending. Correlation is by delivery-cycle token,
+ * never by comparing handset and console wall clocks (they are not
+ * guaranteed to agree): every re-queue mints a fresh token on the outbox
+ * item, the device-pending list hands it to the handset, and the handset
+ * persists it with the batch and echoes it in the receipt.
+ *   - Item in its initial cycle (token null, never re-queued): any receipt
+ *     is accepted — only one batch lineage can exist, and a locally
+ *     triggered first send never learned a token.
+ *   - Item re-queued at least once (token set): the receipt must echo the
+ *     current token. A receipt with an older token — or none, from a
+ *     first-generation APK or a pre-re-queue batch — belongs to a
+ *     superseded send and is rejected 410 Gone, a permanent rejection the
+ *     handset drops instead of retrying forever (409 stays reserved for
+ *     transient conflicts the handset should retry). It can never
+ *     transition the re-queued item, no matter when its batch was
+ *     finalized.
  */
 async function handleDeviceReceipt(
   req: Request<{ id: string }>,
@@ -354,16 +386,30 @@ async function handleDeviceReceipt(
       // concurrent receipt (or a re-queue landing mid-report) cannot
       // double-transition it.
       const rows = await tx.execute(sql`
-        SELECT ${casOutbox.id} AS id, ${casOutbox.state} AS state
+        SELECT ${casOutbox.id} AS id, ${casOutbox.state} AS state,
+          ${casOutbox.deviceCycleToken} AS device_cycle_token
         FROM cas_outbox
         WHERE ${casOutbox.incidentId} = ${incidentId} AND ${casOutbox.transport} = ${channel}
         FOR UPDATE
       `);
-      const item = rows.rows[0] as { id?: string; state?: string } | undefined;
+      const item = rows.rows[0] as
+        | { id?: string; state?: string; device_cycle_token?: string | null }
+        | undefined;
       if (!item?.id || !item.state) return "missing" as const;
       if (item.state === "SENT") return "already-sent" as const;
       if (item.state !== "QUEUED" && item.state !== "FAILED") {
         return "conflict" as const;
+      }
+
+      // Cycle-token check: once the item has been re-queued, only a receipt
+      // echoing the current cycle's token can transition it. A receipt with
+      // an older token — or none, from a pre-re-queue batch or a
+      // first-generation APK — reports a superseded send: rejected
+      // permanently (410) so the handset drops it instead of retrying it on
+      // every resume and it can never mark the re-queued item SENT before
+      // the replacement send has even gone out.
+      if (item.device_cycle_token != null && body.data.cycleToken !== item.device_cycle_token) {
+        return "stale" as const;
       }
 
       if (failed.length === 0) {
@@ -387,7 +433,12 @@ async function handleDeviceReceipt(
 
       await tx
         .update(casOutbox)
-        .set({ state: "DEAD_LETTER", claimedBy: null, claimedAt: null, lastError: `device-reported failure: ${failureSummary}` })
+        .set({
+          state: "DEAD_LETTER",
+          claimedBy: null,
+          claimedAt: null,
+          lastError: `device-reported failure: ${failureSummary}`,
+        })
         .where(eq(casOutbox.id, item.id));
       await tx.insert(casIncidentEvents).values({
         id: `${item.id}-device-failed-${now.getTime()}`,
@@ -408,6 +459,14 @@ async function handleDeviceReceipt(
     }
     if (result === "already-sent") {
       return res.json({ id: incidentId, state: "SENT", replay: true });
+    }
+    if (result === "stale") {
+      // 410 (not 409) is the handset's signal to drop the persisted receipt:
+      // this batch was superseded by an operator re-queue and the console
+      // will never accept its receipt, however often it is retried.
+      return res.status(410).json({
+        error: `This receipt's batch predates the latest re-queue of the ${channel} item; the console will never accept it. The handset must drop it and report the replacement send instead.`,
+      });
     }
     if (result === "conflict") {
       return res.status(409).json({ error: `${channel} outbox item is being delivered or was abandoned; re-queue it before the handset retries` });
@@ -616,6 +675,13 @@ router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
         claimedBy: null,
         claimedAt: null,
         nextAttemptAt: now,
+        // Starts a new delivery cycle for device channels: the receipt
+        // endpoint only accepts receipts echoing this token afterwards, so a
+        // stale retried receipt from the superseded batch (rejected 410, and
+        // dropped by the handset) can never mark the re-queued item SENT
+        // before the replacement send goes out. Server-generated, not a
+        // timestamp: handset and console clocks are not guaranteed to agree.
+        deviceCycleToken: randomUUID(),
       }).where(eq(casOutbox.id, id));
       await tx.insert(casIncidentEvents).values({
         id: `${id}-requeued-${now.getTime()}`,

@@ -70,6 +70,34 @@ fun main() {
         val payload = receipt.toPayload()
         check("payload channel", payload.getString("channel") == "SMS")
         check("payload results", payload.getJSONArray("results").length() == 2)
+        // Initial-cycle receipts carry no cycle token; the field must be
+        // absent from the payload (not null) so the console's optional-field
+        // schema sees it as unset.
+        check("initial-cycle payload omits cycleToken", !payload.has("cycleToken"))
+    }
+
+    // 2b. Delivery-cycle token: a re-queued batch's token round-trips through
+    //     persistence into the receipt and its payload — it is what lets the
+    //     console reject stale receipts of a superseded batch without
+    //     comparing handset and console clocks. Records persisted by older
+    //     app versions (no cycleToken field) decode with a null token.
+    run {
+        val store = FakeStore()
+        val batch = sampleBatch().copy(cycleToken = "cycle-1")
+        check("token batch persists", ReceiptDurability.persistBatch(store, batch))
+        check("batch token round-trips", ReceiptDurability.loadBatches(store)["inc-1"]?.cycleToken == "cycle-1")
+        val receipt = ReceiptDurability.finalizeBatch(store, batch, "SMS", 1726000000005)
+        check("receipt inherits batch token", receipt?.cycleToken == "cycle-1")
+        check("receipt token survives reload", ReceiptDurability.loadReceipts(store).single().cycleToken == "cycle-1")
+        check("payload echoes cycleToken", receipt?.toPayload()?.getString("cycleToken") == "cycle-1")
+
+        val legacy = FakeStore()
+        legacy.data[ReceiptDurability.BATCHES_KEY] =
+            """{"inc-old":{"incidentId":"inc-old","remaining":{},"failures":{}}}"""
+        legacy.data[ReceiptDurability.RECEIPTS_KEY] =
+            """[{"receiptId":"r-old","incidentId":"inc-old","channel":"SMS","queuedAtMs":1,"results":[]}]"""
+        check("legacy batch decodes with null token", ReceiptDurability.loadBatches(legacy)["inc-old"]?.cycleToken == null)
+        check("legacy receipt decodes with null token", ReceiptDurability.loadReceipts(legacy).single().cycleToken == null)
     }
 
     // 3. Happy path: finalize hands batch off to a receipt in one write, and

@@ -27,11 +27,11 @@ object WhatsAppAlerter {
      * reports the handoff outcome to the console's device-receipt endpoint.
      * Returns a human-readable start outcome for the journal.
      */
-    fun sendAlert(context: Context, incidentId: String?, body: String): String {
+    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null): String {
         val responders = TestStore.smsResponders(context)
         if (responders.isEmpty()) return "no responder numbers configured"
         if (!isInstalled(context)) {
-            reportOutcome(context, incidentId, responders.map { Triple(it, false, "WHATSAPP_NOT_INSTALLED") })
+            reportOutcome(context, incidentId, responders.map { Triple(it, false, "WHATSAPP_NOT_INSTALLED") }, cycleToken)
             return "WhatsApp not installed on this handset"
         }
         val results: List<Triple<String, Boolean, String?>> = responders.map { recipient ->
@@ -53,7 +53,7 @@ object WhatsAppAlerter {
                 }
             }
         }
-        reportOutcome(context, incidentId, results)
+        reportOutcome(context, incidentId, results, cycleToken)
         val handed = results.count { it.second }
         return "handed to WhatsApp for $handed of ${responders.size} responder(s); tap send in each chat"
     }
@@ -66,15 +66,17 @@ object WhatsAppAlerter {
     fun sendRequeued(context: Context): String {
         val items = DeviceSmsSender.fetchPendingItems(context)
             ?: return "device-pending check failed (see REQUEUE_CHECK_OUTCOME)"
-        val whatsappItems = items.filter { it.second == "WHATSAPP" }
-        for ((incidentId) in whatsappItems) {
-            sendAlert(context, incidentId, DeviceSmsSender.alertBody(incidentId))
+        val whatsappItems = items.filter { it.transport == "WHATSAPP" }
+        for (item in whatsappItems) {
+            // Echo the delivery-cycle token so the console can reject a stale
+            // receipt of a superseded batch instead of marking the item SENT.
+            sendAlert(context, item.incidentId, DeviceSmsSender.alertBody(item.incidentId), item.cycleToken)
         }
         TestStore.record(context, "WHATSAPP_REQUEUE_OUTCOME", mapOf("pickedUp" to whatsappItems.size))
         return "picked up ${whatsappItems.size} re-queued WhatsApp deliver${if (whatsappItems.size == 1) "y" else "ies"}"
     }
 
-    private fun reportOutcome(context: Context, incidentId: String?, results: List<Triple<String, Boolean, String?>>) {
+    private fun reportOutcome(context: Context, incidentId: String?, results: List<Triple<String, Boolean, String?>>, cycleToken: String? = null) {
         TestStore.record(context, "WHATSAPP_SEND_OUTCOME", mapOf(
             "incidentId" to (incidentId ?: JSONObject.NULL),
             "responders" to results.size,
@@ -85,7 +87,7 @@ object WhatsAppAlerter {
         // No incident (console unreachable at trigger time) means there is no
         // outbox item to report against; the WhatsApp handoff still happened.
         if (incidentId == null) return
-        DeviceSmsSender.reportChannelOutcome(context, incidentId, "WHATSAPP", results)
+        DeviceSmsSender.reportChannelOutcome(context, incidentId, "WHATSAPP", results, cycleToken = cycleToken)
     }
 
     private fun mask(recipient: String): String {
