@@ -136,6 +136,12 @@ jobs:
     needs: package-kit
 
     steps:
+      # The Gate 0A harness runs from the packaged kit, but the app's import
+      # validator lives in the repository workspace; without this checkout pnpm
+      # finds no projects and both validation steps below become silent no-ops.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download the packaged Windows test kit
         uses: actions/download-artifact@v4
         with:
