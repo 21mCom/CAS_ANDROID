@@ -20,10 +20,18 @@ function Invoke-StartupCheck {
     )
 
     Push-Location $WorkingDirectory
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -StartupSmokeCheck 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         Pop-Location
     }
     $text = ($output | Out-String).Trim()
@@ -39,8 +47,19 @@ function Invoke-StartupCheck {
 function Invoke-ParserRegressionCheck {
     param([Parameter(Mandatory = $true)][string]$ScriptPath)
 
-    $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -ParserRegressionCheck 2>&1)
-    $exitCode = $LASTEXITCODE
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -ParserRegressionCheck 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     $text = ($output | Out-String).Trim()
     if ($exitCode -ne 0 -or $text -notmatch 'CAS_PARSER_REGRESSION_OK windows-preflight') {
         throw ('PowerShell parser regression check failed for {0} (exit {1}): {2}' -f $ScriptPath, $exitCode, $text)
@@ -104,8 +123,15 @@ function Invoke-RealHarnessFailurePropagationCheck {
     Set-Content -Path (Join-Path $shimDirectory 'python3') -Value "#!/usr/bin/env bash`nexit 1`n" -NoNewline -Encoding Ascii
     $outParent = Join-Path $WorkingDirectory 'real-harness-negative'
 
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; a launcher reporting a failure over stderr is exactly
+    # the case this check must diagnose cleanly.
     $savedPath = $env:PATH
     $savedOutDir = $env:CAS_GATE0A_SELF_TEST_OUT_DIR
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     $env:PATH = "$shimDirectory;$env:PATH"
     $env:CAS_GATE0A_SELF_TEST_OUT_DIR = $outParent
     $env:CAS_NO_PAUSE = '1'
@@ -113,6 +139,7 @@ function Invoke-RealHarnessFailurePropagationCheck {
         $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -RealHarnessFailureSimulation 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         $env:PATH = $savedPath
         if ($null -ne $savedOutDir) {
             $env:CAS_GATE0A_SELF_TEST_OUT_DIR = $savedOutDir
@@ -222,11 +249,20 @@ function Invoke-MvpInstallBlockedExitCheck {
         if ($scenario.WriteInvalid) {
             Set-Content -Path (Join-Path $packageCopy 'tool-requirements.json') -Value '{ this is not valid json' -Encoding Ascii
         }
+        # Capture with $ErrorActionPreference = 'Continue': under Windows
+        # PowerShell 5.1 a native stderr write inside a 2>&1 capture running
+        # under 'Stop' throws NativeCommandError and aborts the capture,
+        # hiding the descriptive assertion below; a launcher reporting a
+        # blocked install over stderr is exactly the case this check must
+        # diagnose cleanly.
+        $savedErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         $env:CAS_NO_PAUSE = '1'
         try {
             $output = @(& $powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $scriptsCopy 'mvp-install.ps1') 2>&1)
             $exitCode = $LASTEXITCODE
         } finally {
+            $ErrorActionPreference = $savedErrorActionPreference
             Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
         }
         $text = ($output | Out-String).Trim()
@@ -284,10 +320,18 @@ try {
     $wrapper = Join-Path $entrypointDirectory 'run-windows-preflight.cmd'
     $env:CAS_NO_PAUSE = '1'
     Push-Location $temporaryWorkingDirectory
+    # Capture with $ErrorActionPreference = 'Continue': under Windows PowerShell
+    # 5.1 a native stderr write inside a 2>&1 capture running under 'Stop'
+    # throws NativeCommandError and aborts the capture, hiding the descriptive
+    # assertion below; an innocuous launcher warning on stderr is exactly the
+    # case this check must diagnose cleanly.
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $wrapperOutput = @(& $env:ComSpec /d /c "`"$wrapper`" -StartupSmokeCheck" 2>&1)
         $wrapperExitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
         Pop-Location
         Remove-Item Env:\CAS_NO_PAUSE -ErrorAction SilentlyContinue
     }
