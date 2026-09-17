@@ -9,8 +9,18 @@ name: Push-token expiry watchdog
 # credential helper mints an invalid token; the Replit GitHub connector's app
 # is not installed on this repo, so API writes get 403).
 #
-# This job turns red 14 days before the recorded expiry so rotation happens
-# with lead time instead of being discovered as a surprise 401.
+# Trigger design:
+# - push: every push runs this check. Push-triggered workflows cannot be
+#   auto-disabled, so this is the primary warning path.
+# - schedule: a daily cron catches the "no pushes happening" case. GitHub
+#   disables scheduled workflows after 60 days of repository inactivity, so
+#   WARN_DAYS is 60: the red window opens 60 days before expiry, at least as
+#   early as any inactivity-disable could silence the cron (provided the repo
+#   had activity within 60 days before the red window opens). When rotating
+#   the token, keep WARN_DAYS >= 60 and update PAT_EXPIRES_AT.
+#
+# Testing: dispatch manually with the simulate_expires_at input set to a
+# near-future or past ISO date to prove the warning/failure path.
 #
 # How to rotate when this goes red:
 #   1. In GitHub, create a fresh fine-grained PAT scoped to ONLY this repo
@@ -21,16 +31,24 @@ name: Push-token expiry watchdog
 #   3. Verify with a test push or a workflow_dispatch using the new token.
 #   4. Read the new expiry from the github-authentication-token-expiration
 #      response header on any authenticated api.github.com call, then update
-#      PAT_EXPIRES_AT below and commit.
+#      PAT_EXPIRES_AT below and commit (this file exists in both the GitHub
+#      repo and the workspace — update both).
 
 on:
+  push:
   schedule:
     - cron: "17 7 * * *" # daily
   workflow_dispatch:
+    inputs:
+      simulate_expires_at:
+        description: "ISO date to test the warning/failure path (e.g. 2026-09-22T00:00:00Z). Empty = use the real PAT_EXPIRES_AT."
+        required: false
+        default: ""
 
 env:
   PAT_EXPIRES_AT: "2026-12-16T07:18:47Z" # recorded expiry of the workspace GITHUB_PAT secret
-  WARN_DAYS: "14"
+  WARN_DAYS: "60"
+  SIM_EXPIRES_AT: ${{ github.event.inputs.simulate_expires_at }}
 
 jobs:
   check-expiry:
@@ -38,10 +56,11 @@ jobs:
     steps:
       - name: Fail when the workspace push token is near expiry
         run: |
-          expiry=$(date -u -d "$PAT_EXPIRES_AT" +%s)
+          effective="${SIM_EXPIRES_AT:-$PAT_EXPIRES_AT}"
+          expiry=$(date -u -d "$effective" +%s) || { echo "::error::Unparseable expiry date: $effective"; exit 1; }
           now=$(date -u +%s)
           days_left=$(( (expiry - now) / 86400 ))
-          echo "Workspace GITHUB_PAT expires at ${PAT_EXPIRES_AT} (${days_left} days left)"
+          echo "Workspace GITHUB_PAT expires at ${effective} (${days_left} days left)${SIM_EXPIRES_AT:+ [SIMULATED]}"
           if [ "$days_left" -lt 0 ]; then
             echo "::error::The Replit workspace GITHUB_PAT has EXPIRED — CI pushes will fail with 401. Rotate it now: fresh fine-grained PAT (this repo only; Contents/Actions/Workflows read+write), replace the GITHUB_PAT workspace secret, prove a push, then update PAT_EXPIRES_AT in this file."
             exit 1
