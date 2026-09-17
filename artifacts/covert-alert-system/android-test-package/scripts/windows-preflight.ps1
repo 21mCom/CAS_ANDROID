@@ -44,6 +44,18 @@ if ($StartupSmokeCheck) {
     Write-Output ('CAS_STARTUP_OK windows-preflight OutputDirectory={0}' -f [System.IO.Path]::GetFullPath($OutputDirectory))
     exit 0
 }
+
+# The validated tool-requirements.json parse is shared with the other kit
+# entry points (pixel-emulator.ps1, pixel11-gate0a.ps1, mvp-install.ps1) via
+# this dot-sourced library, so the declaration's shape and consistency rule
+# live in exactly one place. A kit missing the library is incomplete and is
+# handled as a BLOCKED tools.requirements outcome in the main flow below.
+$script:SharedToolRequirementsParser = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+$script:SharedToolRequirementsParserAvailable = Test-Path $script:SharedToolRequirementsParser -PathType Leaf
+if ($script:SharedToolRequirementsParserAvailable) {
+    . $script:SharedToolRequirementsParser
+}
+
 $script:Checks = @()
 $script:Actions = @()
 
@@ -176,6 +188,17 @@ function Get-JavaVersionInfo {
     }
 }
 
+function Test-JdkMeetsRequirement {
+    # The Java decision consumes the declared minimum so a drift test with
+    # altered requirement values exercises the same path the real check uses.
+    param(
+        [Parameter(Mandatory = $true)]$JavaVersion,
+        [Parameter(Mandatory = $true)]$Requirements
+    )
+
+    return $JavaVersion.major -ge $Requirements.jdkMinimumMajor
+}
+
 function Get-Version {
     param([string]$Text)
 
@@ -206,6 +229,9 @@ function Get-ExpectedGradleVersion {
     return Get-Version ((Get-Content -Path $Path -Raw).Trim())
 }
 
+# Get-ToolRequirements is provided by the dot-sourced cas-tool-requirements.ps1
+# library (loaded near the top of this script); do not re-add a local copy.
+
 function Test-GradleVersionAlignment {
     param(
         [Parameter(Mandatory = $true)][version]$Actual,
@@ -233,29 +259,151 @@ if ($ParserRegressionCheck) {
         throw ('SDK root regression: expected {0}, received {1}' -f $driveSdkRoot, ($resolvedSdkRoots -join ', '))
     }
 
+    $regressionRequirements = Get-ToolRequirements (Join-Path $scriptDirectory '..\tool-requirements.json')
+    if ($null -eq $regressionRequirements) {
+        throw 'Tool requirements regression: tool-requirements.json next to the package root was not parsed.'
+    }
+    if ($null -ne (Get-ToolRequirements (Join-Path $scriptDirectory '..\does-not-exist.json'))) {
+        throw 'Tool requirements regression: a missing requirements file must not produce requirements.'
+    }
+    # apifloor-gate: allow-begin -- deliberate invalid-declaration fixture: it must hardcode concrete values to prove an unparsable declaration is rejected, not derived.
+    $invalidRequirementsFile = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-invalid-' + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        '{"jdk":{"minimumMajor":"seventeen"},"androidSdk":{"apiLevel":35,"platform":"android-35","buildToolsMinimum":"35.0.0"}}' |
+            Set-Content -Path $invalidRequirementsFile -Encoding Ascii
+        if ($null -ne (Get-ToolRequirements $invalidRequirementsFile)) {
+            throw 'Tool requirements regression: an invalid requirements file must not produce requirements.'
+        }
+    } finally {
+        Remove-Item -Force $invalidRequirementsFile -ErrorAction SilentlyContinue
+    }
+    # apifloor-gate: allow-end
+
+    # Missing-declaration regression: the preflight must refuse to guess tool
+    # requirements. Run a copy of this script with no tool-requirements.json
+    # beside it and require a BLOCKED tools.requirements outcome with exit
+    # code 2 — there is no built-in fallback block anymore, so a broken kit
+    # can no longer be downgraded to a WARN with substituted minimums.
+    $brokenKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-missing-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $brokenKitDirectory 'scripts') | Out-Null
+    try {
+        $brokenPreflight = Join-Path $brokenKitDirectory 'scripts\windows-preflight.ps1'
+        Copy-Item -Path $PSCommandPath -Destination $brokenPreflight
+        # The preflight dot-sources the shared tool-requirements parser; copy it
+        # so the only broken piece in this fixture is the missing declaration.
+        Copy-Item -Path $script:SharedToolRequirementsParser -Destination (Join-Path $brokenKitDirectory 'scripts')
+        $currentPowerShell = (Get-Process -Id $PID).Path
+        $brokenOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $brokenPreflight -OutputDirectory (Join-Path $brokenKitDirectory 'results') 2>&1)
+        $brokenExitCode = $LASTEXITCODE
+        $brokenText = ($brokenOutput | Out-String)
+        if ($brokenExitCode -ne 2) {
+            throw ('Missing-declaration regression: the preflight exited {0} without tool-requirements.json; a broken kit must abort with exit 2. Output: {1}' -f $brokenExitCode, $brokenText)
+        }
+        if ($brokenText -notmatch '\[BLOCKED\] Tool requirements declaration') {
+            throw ('Missing-declaration regression: the preflight did not fail the tools.requirements check. Output: {0}' -f $brokenText)
+        }
+        if ($brokenText -notmatch 'Restore the complete, unmodified test kit') {
+            throw ('Missing-declaration regression: the preflight did not tell the operator to restore the kit. Output: {0}' -f $brokenText)
+        }
+        if ($brokenText -match 'Java command') {
+            throw ('Missing-declaration regression: the preflight continued past the missing declaration and guessed tool requirements. Output: {0}' -f $brokenText)
+        }
+        if (Get-ChildItem -Path $brokenKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+            throw 'Missing-declaration regression: the preflight wrote a result file for a broken kit.'
+        }
+    } finally {
+        Remove-Item -Recurse -Force $brokenKitDirectory -ErrorAction SilentlyContinue
+    }
+
+    # Missing-parser regression: a kit whose shared parser file was dropped is
+    # just as broken as one missing the declaration. The preflight must fail
+    # closed with the same BLOCKED tools.requirements outcome and exit 2
+    # instead of crashing on the absent dot-source or guessing requirements.
+    $parserlessKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-parserless-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $parserlessKitDirectory 'scripts') | Out-Null
+    try {
+        Copy-Item -Path $PSCommandPath -Destination (Join-Path $parserlessKitDirectory 'scripts\windows-preflight.ps1')
+        Copy-Item -Path (Join-Path $scriptDirectory '..\tool-requirements.json') -Destination $parserlessKitDirectory
+        $currentPowerShell = (Get-Process -Id $PID).Path
+        $parserlessOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $parserlessKitDirectory 'scripts\windows-preflight.ps1') -OutputDirectory (Join-Path $parserlessKitDirectory 'results') 2>&1)
+        $parserlessExitCode = $LASTEXITCODE
+        $parserlessText = ($parserlessOutput | Out-String)
+        if ($parserlessExitCode -ne 2) {
+            throw ('Missing-parser regression: the preflight exited {0} without cas-tool-requirements.ps1; a broken kit must abort with exit 2. Output: {1}' -f $parserlessExitCode, $parserlessText)
+        }
+        if ($parserlessText -notmatch '\[BLOCKED\] Tool requirements declaration') {
+            throw ('Missing-parser regression: the preflight did not fail the tools.requirements check. Output: {0}' -f $parserlessText)
+        }
+        if ($parserlessText -notmatch 'cas-tool-requirements\.ps1') {
+            throw ('Missing-parser regression: the preflight did not name the missing shared parser. Output: {0}' -f $parserlessText)
+        }
+        if (Get-ChildItem -Path $parserlessKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+            throw 'Missing-parser regression: the preflight wrote a result file for a broken kit.'
+        }
+    } finally {
+        Remove-Item -Recurse -Force $parserlessKitDirectory -ErrorAction SilentlyContinue
+    }
+
     $javaCases = @(
-        @{ Version = '17.0.2'; ExpectedMajor = 17; ExpectedPass = $true },
-        @{ Version = '21.0.4'; ExpectedMajor = 21; ExpectedPass = $true },
-        @{ Version = '25.0.4.1'; ExpectedMajor = 25; ExpectedPass = $true },
-        @{ Version = '26'; ExpectedMajor = 26; ExpectedPass = $true },
-        @{ Version = '11.0.20'; ExpectedMajor = 11; ExpectedPass = $false },
-        @{ Version = '1.8.0_392'; ExpectedMajor = 8; ExpectedPass = $false }
+        @{ Version = '17.0.2'; ExpectedMajor = 17 },
+        @{ Version = '21.0.4'; ExpectedMajor = 21 },
+        @{ Version = '25.0.4.1'; ExpectedMajor = 25 },
+        @{ Version = '26'; ExpectedMajor = 26 },
+        @{ Version = '11.0.20'; ExpectedMajor = 11 },
+        @{ Version = '1.8.0_392'; ExpectedMajor = 8 }
     )
     foreach ($case in $javaCases) {
         $actual = Get-JavaVersionInfo ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
         if ($null -eq $actual -or $actual.version -ne $case.Version -or $actual.major -ne $case.ExpectedMajor) {
             throw ('Java version regression: {0} was not parsed as major {1}' -f $case.Version, $case.ExpectedMajor)
         }
-        if (($actual.major -ge 17) -ne $case.ExpectedPass) {
-            throw ('Java minimum-version regression: {0} produced the wrong JDK 17 decision.' -f $case.Version)
-        }
     }
+
+    # Drift test: an altered requirements file (different from the declared
+    # values) must change the JDK pass/fail decisions. This catches a hardcoded
+    # threshold in Test-JdkMeetsRequirement that a same-value comparison cannot.
+    # toolreq-gate: allow-begin -- deliberate drift fixture: the altered values must differ from tool-requirements.json to prove the thresholds are not hardcoded.
+    # apifloor-gate: allow-begin -- deliberate drift fixture: the altered values must hardcode non-declared numbers to prove the thresholds are derived, not fixed.
+    # jdkfloor-gate: allow-begin -- deliberate drift fixture: the altered-minimum assertion compares against a non-declared JDK major to prove the threshold is derived, not fixed.
+    $driftDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-req-drift-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $driftDirectory | Out-Null
+    try {
+        $driftFile = Join-Path $driftDirectory 'tool-requirements.json'
+        '{"jdk":{"minimumMajor":21},"androidSdk":{"apiLevel":36,"platform":"android-36","buildToolsMinimum":"36.0.0"}}' |
+            Set-Content -Path $driftFile -Encoding Ascii
+        $driftedRequirements = Get-ToolRequirements $driftFile
+        if ($null -eq $driftedRequirements -or $driftedRequirements.jdkMinimumMajor -ne 21 -or
+            $driftedRequirements.apiLevel -ne 36 -or $driftedRequirements.sdkPlatform -ne 'android-36' -or
+            $driftedRequirements.buildToolsMinimum -ne [version]'36.0.0') {
+            throw 'Tool requirements drift regression: the altered requirements file was not parsed into the altered values.'
+        }
+        $driftCases = @(
+            @{ Version = '17.0.2'; ExpectedPass = $false },
+            @{ Version = '20.0.2'; ExpectedPass = $false },
+            @{ Version = '21.0.4'; ExpectedPass = $true },
+            @{ Version = '25.0.4.1'; ExpectedPass = $true }
+        )
+        foreach ($case in $driftCases) {
+            $actual = Get-JavaVersionInfo ('openjdk version "{0}" 2026-08-18 LTS' -f $case.Version)
+            if ((Test-JdkMeetsRequirement -JavaVersion $actual -Requirements $driftedRequirements) -ne $case.ExpectedPass) {
+                throw ('Java minimum drift regression: {0} produced the wrong decision against an altered minimum of 21.' -f $case.Version)
+            }
+        }
+    } finally {
+        Remove-Item -Recurse -Force $driftDirectory -ErrorAction SilentlyContinue
+    }
+    # jdkfloor-gate: allow-end
+    # apifloor-gate: allow-end
+    # toolreq-gate: allow-end
     foreach ($invalidOutput in @('', 'garbage')) {
         if ($null -ne (Get-JavaVersionInfo $invalidOutput)) {
             throw ('Java invalid-output regression: expected no version for "{0}".' -f $invalidOutput)
         }
     }
 
+    # Deliberate self-test fixtures: these concrete versions exercise the
+    # alignment rules; they are not a fallback release. The preflight itself
+    # fails closed when gradle-version.txt is missing (proven below).
     $gradleAlignmentCases = @(
         @{ Actual = '8.9.0'; Expected = '8.9'; Alignment = 'aligned' },
         @{ Actual = '8.9.1'; Expected = '8.9'; Alignment = 'aligned' },
@@ -276,6 +424,52 @@ if ($ParserRegressionCheck) {
     }
     if ($null -ne (Get-ExpectedGradleVersion (Join-Path $scriptDirectory '..\does-not-exist.txt'))) {
         throw 'Gradle version-file regression: a missing version file must not produce a version.'
+    }
+
+    # Missing/invalid Gradle-declaration regression: the preflight must refuse
+    # to guess the Gradle release. Run a copy of this script with a valid
+    # tool-requirements.json but no (or an invalid) gradle-version.txt and
+    # require a BLOCKED gradle.expected-version outcome with exit code 2 —
+    # there is no built-in fallback release anymore, so a broken kit can no
+    # longer be downgraded to a WARN with a substituted Gradle version.
+    foreach ($gradleFixture in @('missing', 'invalid')) {
+        $gradleBrokenKitDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-gradle-{0}-{1}' -f $gradleFixture, [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $gradleBrokenKitDirectory 'scripts') | Out-Null
+        try {
+            $gradleBrokenPreflight = Join-Path $gradleBrokenKitDirectory 'scripts\windows-preflight.ps1'
+            Copy-Item -Path $PSCommandPath -Destination $gradleBrokenPreflight
+            # The preflight dot-sources the shared tool-requirements parser and
+            # reads the tool declaration; copy both so the only broken piece in
+            # this fixture is the Gradle declaration.
+            Copy-Item -Path $script:SharedToolRequirementsParser -Destination (Join-Path $gradleBrokenKitDirectory 'scripts')
+            Copy-Item -Path (Join-Path $scriptDirectory '..\tool-requirements.json') -Destination $gradleBrokenKitDirectory
+            if ($gradleFixture -eq 'invalid') {
+                # apifloor-gate: allow-begin -- deliberate invalid-declaration fixture: the unparsable content must be concrete to prove the declaration is rejected, not derived.
+                'not-a-gradle-release' | Set-Content -Path (Join-Path $gradleBrokenKitDirectory 'gradle-version.txt') -Encoding Ascii
+                # apifloor-gate: allow-end
+            }
+            $currentPowerShell = (Get-Process -Id $PID).Path
+            $gradleBrokenOutput = @(& $currentPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gradleBrokenPreflight -OutputDirectory (Join-Path $gradleBrokenKitDirectory 'results') 2>&1)
+            $gradleBrokenExitCode = $LASTEXITCODE
+            $gradleBrokenText = ($gradleBrokenOutput | Out-String)
+            if ($gradleBrokenExitCode -ne 2) {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight exited {1}; a broken kit must abort with exit 2. Output: {2}' -f $gradleFixture, $gradleBrokenExitCode, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -notmatch '\[BLOCKED\] Gradle version declaration') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight did not fail the gradle.expected-version check. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -notmatch 'Restore the complete, unmodified test kit') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight did not tell the operator to restore the kit. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if ($gradleBrokenText -match 'Gradle command') {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight continued past the missing declaration and guessed the Gradle release. Output: {1}' -f $gradleFixture, $gradleBrokenText)
+            }
+            if (Get-ChildItem -Path $gradleBrokenKitDirectory -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) {
+                throw ('Missing-Gradle-declaration regression ({0}): the preflight wrote a result file for a broken kit.' -f $gradleFixture)
+            }
+        } finally {
+            Remove-Item -Recurse -Force $gradleBrokenKitDirectory -ErrorAction SilentlyContinue
+        }
     }
 
     $javaShimDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-java-regression-' + [guid]::NewGuid().ToString('N'))
@@ -361,6 +555,74 @@ Write-Host ('Target mode: {0}' -f $Target)
 Write-Host 'Default behavior is read-only. No APK, device policy, reboot, message, or evidence action is performed.'
 Write-Host ''
 
+if (-not $script:SharedToolRequirementsParserAvailable) {
+    # A kit missing the shared parser was tampered with or incompletely
+    # copied. Fail closed with the same BLOCKED outcome as a missing
+    # declaration instead of crashing on the absent dot-source.
+    Add-Check `
+        -Id 'tools.requirements' `
+        -Name 'Tool requirements declaration' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed ('The shared parser scripts\cas-tool-requirements.ps1 is missing from the kit at {0}.' -f $script:SharedToolRequirementsParser) `
+        -Expected 'cas-tool-requirements.ps1 ships with the kit and parses tool-requirements.json for every kit script.' `
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess tool requirements when its parser is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue because scripts\cas-tool-requirements.ps1 is missing. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
+}
+
+$toolRequirementsFile = Join-Path $scriptDirectory '..\tool-requirements.json'
+$toolRequirements = Get-ToolRequirements $toolRequirementsFile
+if ($null -eq $toolRequirements) {
+    # A missing or invalid declaration means the kit was tampered with or
+    # incompletely copied. There is no built-in fallback: guessing minimums
+    # would downgrade a broken kit to a WARN and let a field run start from
+    # unverifiable prerequisites, so the preflight stops here.
+    Add-Check `
+        -Id 'tools.requirements' `
+        -Name 'Tool requirements declaration' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed ('{0} is missing or does not contain valid requirements.' -f $toolRequirementsFile) `
+        -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.' `
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess tool requirements when this file is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue without a valid tool-requirements.json. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
+}
+Add-Check `
+    -Id 'tools.requirements' `
+    -Name 'Tool requirements declaration' `
+    -Status 'PASS' `
+    -Required $false `
+    -Observed ('JDK {0}+, {1}, build-tools {2}+' -f $toolRequirements.jdkMinimumMajor, $toolRequirements.sdkPlatform, $toolRequirements.buildToolsMinimum) `
+    -Expected 'tool-requirements.json declares the JDK and Android SDK prerequisites the preflight enforces.'
+$jdkRequirementText = 'JDK {0} or newer' -f $toolRequirements.jdkMinimumMajor
+$buildToolsRequirementText = 'Build-tools {0} or newer' -f $toolRequirements.buildToolsMinimum
+
+$gradleVersionFile = Join-Path $scriptDirectory '..\gradle-version.txt'
+$expectedGradle = Get-ExpectedGradleVersion $gradleVersionFile
+if ($null -eq $expectedGradle) {
+    # A missing or invalid gradle-version.txt means the kit was tampered with
+    # or incompletely copied. There is no built-in fallback: substituting a
+    # guessed Gradle release would downgrade a broken kit to a WARN and let a
+    # field run build with a release CI never exercised, so the preflight
+    # stops here, the same way it does for a missing tool-requirements.json.
+    Add-Check `
+        -Id 'gradle.expected-version' `
+        -Name 'Gradle version declaration' `
+        -Status 'BLOCKED' `
+        -Required $true `
+        -Observed ('{0} is missing or does not contain a version.' -f $gradleVersionFile) `
+        -Expected 'gradle-version.txt declares the Gradle release CI builds with.' `
+        -NextSteps @('Restore the complete, unmodified test kit, then rerun the preflight; the preflight does not guess the Gradle release when this file is missing.')
+    Write-Host ''
+    Write-Host 'The preflight cannot continue without a valid gradle-version.txt. Restore the complete, unmodified test kit and rerun.' -ForegroundColor Red
+    exit 2
+}
+$expectedGradleText = ('Gradle {0} (the release CI builds with)' -f $expectedGradle)
+
 $sdkRoot = $null
 $sdkRootCandidates = @(
     @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME) |
@@ -417,9 +679,9 @@ if (-not $javaHomePath) {
         -Status 'BLOCKED' `
         -Required $true `
         -Observed 'JAVA_HOME is not set.' `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.' `
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText) `
         -NextSteps @(
-            'Install a JDK 17 or newer with user consent.',
+            ('Install a {0} with user consent.' -f $jdkRequirementText),
             'Set JAVA_HOME to the JDK folder, not its bin folder.',
             'Close and reopen this window, then rerun the preflight.'
         )
@@ -430,7 +692,7 @@ if (-not $javaHomePath) {
         -Status 'BLOCKED' `
         -Required $true `
         -Observed ('JAVA_HOME does not exist: {0}' -f $javaHomePath) `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.' `
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText) `
         -NextSteps @('Correct JAVA_HOME to the installed JDK folder, then reopen this window.')
 } else {
     Add-Check `
@@ -439,7 +701,7 @@ if (-not $javaHomePath) {
         -Status 'PASS' `
         -Required $true `
         -Observed $javaHomePath `
-        -Expected 'JAVA_HOME points to a JDK 17 or newer installation.'
+        -Expected ('JAVA_HOME points to a {0} installation.' -f $jdkRequirementText)
 }
 
 if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
@@ -461,8 +723,8 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe could not start. {0}' -f $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
     } elseif ($javaResult.exitCode -ne 0) {
         Add-Check `
             -Id 'java.command' `
@@ -470,8 +732,8 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe failed with exit code {0}. {1}' -f $javaResult.exitCode, $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
     } elseif ($null -eq $javaVersion) {
         Add-Check `
             -Id 'java.command' `
@@ -479,17 +741,17 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('java.exe did not report a version. {0}' -f $javaResult.output) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install or select a working JDK 17 or newer, then rerun the preflight.')
-    } elseif ($javaVersion.major -lt 17) {
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install or select a working {0}, then rerun the preflight.' -f $jdkRequirementText))
+    } elseif (-not (Test-JdkMeetsRequirement -JavaVersion $javaVersion -Requirements $toolRequirements)) {
         Add-Check `
             -Id 'java.command' `
             -Name 'Java command' `
             -Status 'BLOCKED' `
             -Required $true `
             -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
-            -Expected 'JDK 17 or newer.' `
-            -NextSteps @('Install JDK 17 or newer and point JAVA_HOME and PATH to it.')
+            -Expected ('{0}.' -f $jdkRequirementText) `
+            -NextSteps @(('Install {0} and point JAVA_HOME and PATH to it.' -f $jdkRequirementText))
     } else {
         Add-Check `
             -Id 'java.command' `
@@ -497,7 +759,7 @@ if (-not $javaPath -or -not (Test-Path $javaPath -PathType Leaf)) {
             -Status 'PASS' `
             -Required $true `
             -Observed ('Java {0} (major {1}) at {2}' -f $javaVersion.version, $javaVersion.major, $javaPath) `
-            -Expected 'JDK 17 or newer.'
+            -Expected ('{0}.' -f $jdkRequirementText)
     }
 }
 
@@ -636,7 +898,7 @@ if ($buildToolsPath -and (Test-Path $buildToolsPath -PathType Container)) {
         $null -ne (Get-Version $_.Name)
     } | Sort-Object { Get-Version $_.Name } -Descending)
 }
-$minimumBuildTools = [version]'35.0.0'
+$minimumBuildTools = $toolRequirements.buildToolsMinimum
 $selectedBuildTools = $buildTools | Where-Object { (Get-Version $_.Name) -ge $minimumBuildTools } | Select-Object -First 1
 if ($selectedBuildTools) {
     Add-Check `
@@ -645,36 +907,36 @@ if ($selectedBuildTools) {
         -Status 'PASS' `
         -Required $true `
         -Observed $selectedBuildTools.Name `
-        -Expected 'Build-tools 35.0.0 or newer.'
+        -Expected ('{0}.' -f $buildToolsRequirementText)
 } else {
     Add-Check `
         -Id 'android.build-tools' `
         -Name 'Android build-tools' `
         -Status 'BLOCKED' `
         -Required $true `
-        -Observed 'No build-tools 35.0.0 or newer was found.' `
-        -Expected 'Build-tools 35.0.0 or newer.' `
-        -NextSteps @('Install Android SDK Build-Tools 35.0.0 or newer, then rerun the preflight.')
+        -Observed ('No build-tools {0} or newer was found.' -f $toolRequirements.buildToolsMinimum) `
+        -Expected ('{0}.' -f $buildToolsRequirementText) `
+        -NextSteps @(('Install Android SDK {0}, then rerun the preflight.' -f $buildToolsRequirementText))
 }
 
-$platform35Path = if ($sdkRoot) { Join-Path $sdkRoot 'platforms\android-35\android.jar' } else { $null }
-if ($platform35Path -and (Test-Path $platform35Path -PathType Leaf)) {
+$requiredPlatformJar = if ($sdkRoot) { Join-Path $sdkRoot ('platforms\{0}\android.jar' -f $toolRequirements.sdkPlatform) } else { $null }
+if ($requiredPlatformJar -and (Test-Path $requiredPlatformJar -PathType Leaf)) {
     Add-Check `
-        -Id 'android.api-35' `
-        -Name 'Android API 35 platform' `
+        -Id 'android.api-platform' `
+        -Name ('Android API {0} platform' -f $toolRequirements.apiLevel) `
         -Status 'PASS' `
         -Required $true `
-        -Observed $platform35Path `
-        -Expected 'platforms\android-35\android.jar exists.'
+        -Observed $requiredPlatformJar `
+        -Expected ('platforms\{0}\android.jar exists.' -f $toolRequirements.sdkPlatform)
 } else {
     Add-Check `
-        -Id 'android.api-35' `
-        -Name 'Android API 35 platform' `
+        -Id 'android.api-platform' `
+        -Name ('Android API {0} platform' -f $toolRequirements.apiLevel) `
         -Status 'BLOCKED' `
         -Required $true `
-        -Observed 'Android API 35 was not found in the selected SDK.' `
-        -Expected 'platforms\android-35\android.jar exists.' `
-        -NextSteps @('Install Android SDK Platform 35, then rerun the preflight.')
+        -Observed ('Android API {0} was not found in the selected SDK.' -f $toolRequirements.apiLevel) `
+        -Expected ('platforms\{0}\android.jar exists.' -f $toolRequirements.sdkPlatform) `
+        -NextSteps @(('Install Android SDK Platform {0}, then rerun the preflight.' -f $toolRequirements.apiLevel))
 }
 
 $bashCandidates = @(
@@ -709,23 +971,9 @@ if ($bashPath) {
         -NextSteps @('Install approved Git for Windows, close and reopen this window, then rerun the preflight.')
 }
 
-$gradleVersionFile = Join-Path $scriptDirectory '..\gradle-version.txt'
-$expectedGradle = Get-ExpectedGradleVersion $gradleVersionFile
-if ($null -eq $expectedGradle) {
-    Add-Check `
-        -Id 'gradle.expected-version' `
-        -Name 'Gradle version declaration' `
-        -Status 'WARN' `
-        -Required $false `
-        -Observed ('{0} is missing or does not contain a version.' -f $gradleVersionFile) `
-        -Expected 'gradle-version.txt declares the Gradle release CI builds with.' `
-        -NextSteps @('Restore the complete, unmodified test kit; the Gradle version cannot be compared against CI without this file.')
-    $expectedGradleText = 'Gradle 8.9 or newer'
-    $expectedGradle = [version]'8.9.0'
-} else {
-    $expectedGradleText = ('Gradle {0} (the release CI builds with)' -f $expectedGradle)
-}
-
+# The Gradle declaration was validated fail-closed next to the tool
+# requirements above: a kit that reached this line carries a parsed
+# gradle-version.txt in $expectedGradle / $expectedGradleText.
 $gradlePath = Find-CommandPath 'gradle.exe'
 if (-not $gradlePath) {
     $gradlePath = Find-CommandPath 'gradle'
@@ -964,11 +1212,18 @@ if ($PrepareSdk) {
             -Expected 'Official Android SDK Command-line Tools are installed.' `
             -NextSteps @('Install the official command-line tools, then rerun with -PrepareSdk.')
     } else {
-        $packages = @('platform-tools', 'platforms;android-35', 'build-tools;35.0.0')
+        $packages = @(
+            'platform-tools',
+            ('platforms;{0}' -f $toolRequirements.sdkPlatform),
+            ('build-tools;{0}' -f $toolRequirements.buildToolsMinimum)
+        )
         if ($Target -eq 'emulator' -or $Target -eq 'both') {
             $packages += @(
                 'emulator',
-                'system-images;android-35;google_apis;x86_64'
+                # The system image follows the pinned emulator contract owned by
+                # pixel-emulator.ps1, which tracks the SDK platform declared in
+                # tool-requirements.json.
+                ('system-images;{0};google_apis;x86_64' -f $toolRequirements.sdkPlatform)
             )
         }
 
@@ -1051,11 +1306,11 @@ $result = [ordered]@{
         powershellEdition = $PSVersionTable.PSEdition
     }
     contract = [ordered]@{
-        java = 'JDK 17 or newer'
-        androidSdk = 'Android SDK with API 35'
+        java = $jdkRequirementText
+        androidSdk = ('Android SDK with API {0}' -f $toolRequirements.apiLevel)
         platformTools = 'Android platform-tools with adb'
-        buildTools = 'Android build-tools 35.0.0 or newer'
-        gradle = 'Gradle 8.9 or newer'
+        buildTools = ('Android {0}' -f $buildToolsRequirementText.ToLowerInvariant())
+        gradle = $expectedGradleText
         environment = 'JAVA_HOME plus ANDROID_SDK_ROOT or ANDROID_HOME; Java and platform-tools on PATH'
     }
     checks = @($script:Checks)

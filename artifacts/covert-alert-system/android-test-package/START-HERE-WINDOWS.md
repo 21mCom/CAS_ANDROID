@@ -11,8 +11,11 @@ behavior.
    from inside the ZIP.
 2. Double-click `scripts\run-windows-preflight.cmd`.
 3. Resolve every `BLOCKED` result. The normal physical-device preparation path
-   needs JDK 17+, Gradle 8.9+, Android SDK Platform 35, Build Tools 35.0.0+, ADB,
-   and Git Bash.
+   needs the JDK, Android SDK platform, and build-tools levels declared in
+   `tool-requirements.json` at the package root (that file is the source of
+   truth the preflight enforces and CI builds with), the Gradle release pinned
+   in `gradle-version.txt` (also a source of truth matching CI), ADB, and Git
+   Bash.
 4. If the Android SDK command-line tools are already installed, the explicitly
    approved SDK preparation command is:
 

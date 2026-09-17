@@ -1,4 +1,8 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
+- [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep registry and worker instrumentation in lockstep.
+- [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
+- [CAS alert API credential gate](cas-auth.md) — trigger/ack/resolve/re-queue need Bearer CAS_ALERT_TOKEN, fail closed when unset; console keeps it in sessionStorage.
+- [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.
@@ -8,4 +12,19 @@
 - [Gate 0A print guide](gate0a-print-guide.md) — verify rendered PDF pagination, selectable commands, and served-file integrity after guide changes.
 - [Windows PowerShell script paths](windows-powershell-script-paths.md) — resolve script-relative defaults after parameter binding, not inside the param block.
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
+- [Windows PowerShell 5.1 native traps](windows-powershell-51-native-traps.md) — 5.1 mangles quoted native args; native stderr aborts 2>&1 captures under EAP=Stop; pwsh 7 reproduces neither.
+- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — the OAuth connector token is scope-less; pushes/Actions use the GITHUB_PAT secret and the public repo can be polled unauthenticated.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
+- [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
+- [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor/jdkfloor gates catch matching comparisons; fixtures may need all three marker prefixes.
+- [CAS tool-requirements validator parity](cas-toolreq-validator-parity.md) — the ps1 parser and the Bash harness's sed parse must accept/reject identically; the parity harness proves it.
+- [Gate 0A harness python3 shim coupling](gate0a-harness-python3-shim.md) — CI shadows python3 with a broken shim, so harness code before write_report must not call python3.
+- [Launch smoke detection lessons](launch-smoke-detection-selftest.md) — am start -W exits 0 on onCreate crashes; tail -200 alone can miss the fatal block — grep it explicitly.
+- [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG, but the emulated cellular modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
+- [Protected broadcasts need adb root](protected-broadcasts-adb.md) — the shell uid can't send protected broadcasts on API 35; injected LOCKED_BOOT_COMPLETED post-unlock is NOT direct-boot coverage.
+- [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
+- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; a stale snapshot can revert a task that merged mid-task.
+- [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK locally; Gradle must match gradle-version.txt.
+- [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
+- [GitHub CI push/auth path](github-ci-push-auth.md) — git askpass times out and OAuth connection is read-only; push with the GITHUB_PAT secret via x-access-token URL.
+- [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.

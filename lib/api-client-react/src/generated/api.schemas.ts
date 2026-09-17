@@ -30,6 +30,23 @@ export interface CasState {
   gates: CasStateGatesItem[];
 }
 
+/**
+ * Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+ */
+export type CasOutboxStatusCounts = {[key: string]: number};
+
+export type CasOutboxStatusLastDeliveryError = { [key: string]: unknown } | null;
+
+export type CasOutboxStatusWorker = { [key: string]: unknown } | null;
+
+export interface CasOutboxStatus {
+  /** Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER). */
+  counts: CasOutboxStatusCounts;
+  oldestPendingAt: string | null;
+  lastDeliveryError: CasOutboxStatusLastDeliveryError;
+  worker: CasOutboxStatusWorker;
+}
+
 export type Gate0aReportTarget = {
   /** Pixel 11 for physical evidence; Pixel 8a for the pinned API 35 emulator baseline. */
   model: string;
@@ -184,6 +201,14 @@ export type ProcessCasOutboxBody = {
 
 export type ProcessCasOutbox200 = { [key: string]: unknown };
 
+export type RequeueCasOutboxItemBody = {
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  reason?: string;
+};
+
 export type UpdateCasSetupBody = {
   complete: boolean;
 };
@@ -191,3 +216,4 @@ export type UpdateCasSetupBody = {
 export type UpdateCasGateBody = {
   status: string;
 };
+

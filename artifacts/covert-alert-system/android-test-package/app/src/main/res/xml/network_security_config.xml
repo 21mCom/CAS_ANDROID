@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is denied everywhere (platform default for targetSdk 35) except
+  loopback endpoints that cannot leave the local machine:
+  - 127.0.0.1 / localhost reach a dev API forwarded over USB or the emulator
+    console via `adb reverse` (the emulator CI job drives the SMS flow against
+    a dev API on the runner this way);
+  - 10.0.2.2 is the Android emulator's alias for the host machine's loopback
+    and never routes on physical hardware.
+  Field devices keep the HTTPS-only behavior AlertSender enforces for any
+  real network destination.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

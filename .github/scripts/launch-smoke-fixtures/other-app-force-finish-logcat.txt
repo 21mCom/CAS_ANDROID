@@ -1,0 +1,6 @@
+--------- beginning of main
+09-15 10:00:00.100  1560  1580 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.covertalert.pixeltest/.MainActivity} from uid 2000
+09-15 10:00:00.240  2100  2100 I pixeltest: Late-enabling -Xcheck:jni
+09-15 10:00:00.700  1560  1580 W ActivityTaskManager:   Force finishing activity com.example.otherapp/.MainActivity
+09-15 10:00:00.980  2100  2112 I AdrenoGLES-0: QUALCOMM build                   : 1234567, I0123456789
+09-15 10:00:01.300  1560  1580 I ActivityTaskManager: Displayed com.covertalert.pixeltest/.MainActivity: +1s120ms

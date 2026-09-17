@@ -9,6 +9,10 @@
 export * from './bootstrapCasReadinessBody';
 export * from './bootstrapCasReadinessBodyGatesItem';
 export * from './bootstrapCasReadinessBodySetupItem';
+export * from './casOutboxStatus';
+export * from './casOutboxStatusCounts';
+export * from './casOutboxStatusLastDeliveryError';
+export * from './casOutboxStatusWorker';
 export * from './casState';
 export * from './casStateActiveIncident';
 export * from './casStateGatesItem';
@@ -33,5 +37,6 @@ export * from './healthStatus';
 export * from './mutationResult';
 export * from './processCasOutbox200';
 export * from './processCasOutboxBody';
+export * from './requeueCasOutboxItemBody';
 export * from './updateCasGateBody';
 export * from './updateCasSetupBody';

@@ -2,6 +2,7 @@ import { ArrowRight, Check, CircleAlert, MapPin, Smartphone, TimerReset, Triangl
 import { Link } from 'wouter';
 import { useFieldTest } from '@/hooks/use-field-test';
 import { EvidenceLabel, Meter, MetricTile, SectionKicker, StatusPill } from '@/components/field-ui';
+import { OutboxStatusBanner } from '@/components/outbox-status';
 
 export default function Overview() {
   const { gates, setup, incidents, runTestIncident, fieldRun } = useFieldTest();
@@ -24,6 +25,8 @@ export default function Overview() {
            <div><p className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#a06712]">Readiness call</p><p className={`mt-0.5 font-display text-lg font-extrabold tracking-[-0.03em] ${fieldRun.decision === 'go' ? 'text-[#236047]' : 'text-[#914136]'}`}>{fieldRun.decision === 'go' ? 'GO' : 'NO-GO'}</p><p className="text-[10px] text-[#687271]">{measured} / {gates.length} physical gates recorded</p></div>
         </div>
       </section>
+
+      <OutboxStatusBanner />
 
       <section className="fade-up fade-up-1 grid gap-3 py-6 sm:grid-cols-3">
         <MetricTile label="Verified gates" value={`${verified} / ${gates.length}`} detail="Measured enough to repeat" />

@@ -50,3 +50,13 @@ Thumbs.db
 
 # CAS field-run attachments are generated on the Windows workstation.
 /artifacts/covert-alert-system/android-test-package/preflight-results/
+
+# receipt-durability harness toolchain cache
+scripts/.cache/
+
+# Local SMS-flow verification scratch (emulator/gradle/postgres state)
+.cas-flow/
+
+# Android test-package build outputs
+/artifacts/covert-alert-system/android-test-package/.gradle/
+/artifacts/covert-alert-system/android-test-package/app/build/
