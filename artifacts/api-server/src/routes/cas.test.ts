@@ -42,6 +42,16 @@ import {
   resetCasOutboxWorkerHeartbeat,
 } from "../lib/cas-outbox-status";
 import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
+import {
+  setCasAuthRejectionRecorder,
+  type CasAuthRejection,
+} from "../lib/cas-auth";
+
+// Alert trigger and incident/outbox mutations are credential-gated. The suite
+// presents this token on every guarded call; spawned API processes inherit it
+// through the spawned environment. Set before any request is made.
+process.env.CAS_ALERT_TOKEN ??= "cas-test-alert-token";
+const AUTH_HEADERS = { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` };
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -497,8 +507,8 @@ after(async () => {
 
 test("concurrent triggers reuse one incident and preserve both observations", async () => {
   const [first, second] = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS }),
+    fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS }),
   ]);
 
   assert.ok([201, 200].includes(first.status));
@@ -538,6 +548,7 @@ test("concurrent triggers reuse one incident and preserve both observations", as
 
   const ack = await fetch(`${baseUrl}/cas/incidents/${firstBody.id}/ack`, {
     method: "POST",
+    headers: AUTH_HEADERS,
   });
   assert.equal(ack.status, 200);
   assert.deepEqual(await ack.json(), {
@@ -547,7 +558,7 @@ test("concurrent triggers reuse one incident and preserve both observations", as
 
   const resolve = await fetch(
     `${baseUrl}/cas/incidents/${firstBody.id}/resolve`,
-    { method: "POST" },
+    { method: "POST", headers: AUTH_HEADERS },
   );
   assert.equal(resolve.status, 200);
   assert.deepEqual(await resolve.json(), {
@@ -576,8 +587,8 @@ test("separate API processes converge concurrent triggers on one incident", asyn
   const second = await startApiProcess();
   try {
     const responses = await Promise.all([
-      fetch(`${first.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
-      fetch(`${second.baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+      fetch(`${first.baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS }),
+      fetch(`${second.baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS }),
     ]);
 
     assert.ok(responses.every((response) => [200, 201].includes(response.status)));
@@ -623,7 +634,7 @@ test("separate API processes converge concurrent triggers on one incident", asyn
 });
 
 test("outbox delivery claims are exclusive and use stable idempotency keys", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const deliveries: Array<{ id: string; key: string }> = [];
@@ -651,7 +662,7 @@ test("outbox delivery claims are exclusive and use stable idempotency keys", asy
 });
 
 test("failed delivery records the error for retry", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const failed = await processCasOutbox({
@@ -675,7 +686,7 @@ test("failed delivery records the error for retry", async () => {
 });
 
 test("a delivery under the attempt cap is retried after a failure", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -723,7 +734,7 @@ test("a delivery under the attempt cap is retried after a failure", async () => 
 });
 
 test("a delivery reaching the attempt cap is dead-lettered and never claimed again", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -796,7 +807,7 @@ test("a delivery reaching the attempt cap is dead-lettered and never claimed aga
 });
 
 test("the state view surfaces dead-lettered deliveries distinctly", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -855,7 +866,7 @@ test("the state view surfaces dead-lettered deliveries distinctly", async () => 
 });
 
 test("a re-queued dead-letter delivery becomes claimable and deliverable again", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -889,7 +900,7 @@ test("a re-queued dead-letter delivery becomes claimable and deliverable again",
   assert.equal(deadRow.state, "DEAD_LETTER");
 
   // The responder fixes the provider problem and re-queues the delivery.
-  const requeue = await fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, { method: "POST" });
+  const requeue = await fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(requeue.status, 200);
   const requeued = (await requeue.json()) as { id: string; state: string };
   assert.equal(requeued.id, target.id);
@@ -934,7 +945,7 @@ test("a re-queued dead-letter delivery becomes claimable and deliverable again",
 });
 
 test("re-queue journals the responder note when one is provided", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -964,7 +975,7 @@ test("re-queue journals the responder note when one is provided", async () => {
   const postRequeue = (body: unknown) =>
     fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   const deadLetterAgain = () =>
@@ -1023,7 +1034,7 @@ test("re-queue journals the responder note when one is provided", async () => {
 });
 
 test("re-queue rejects notes that contain credentials and journals nothing", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1053,7 +1064,7 @@ test("re-queue rejects notes that contain credentials and journals nothing", asy
   const postRequeue = (body: unknown) =>
     fetch(`${baseUrl}/cas/outbox/${target.id}/requeue`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
 
@@ -1114,7 +1125,7 @@ test("re-queue rejects notes that contain credentials and journals nothing", asy
 });
 
 test("journal audit flags pre-guard DELIVERY_REQUEUED entries that pasted a credential", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1150,7 +1161,7 @@ test("journal audit flags pre-guard DELIVERY_REQUEUED entries that pasted a cred
 });
 
 test("re-queue refuses deliveries that are not dead-lettered", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
   const items = await db
@@ -1161,7 +1172,7 @@ test("re-queue refuses deliveries that are not dead-lettered", async () => {
   assert.equal(items.length, 2);
 
   // A QUEUED item still has the regular retry path; re-queue is a conflict.
-  const queuedRequeue = await fetch(`${baseUrl}/cas/outbox/${items[0].id}/requeue`, { method: "POST" });
+  const queuedRequeue = await fetch(`${baseUrl}/cas/outbox/${items[0].id}/requeue`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(queuedRequeue.status, 409);
 
   // A SENT item is already delivered; re-queue is a conflict.
@@ -1176,11 +1187,11 @@ test("re-queue refuses deliveries that are not dead-lettered", async () => {
   });
   assert.equal(sent.sent, 1);
   assert.equal(sent.deliveries[0].id, items[1].id);
-  const sentRequeue = await fetch(`${baseUrl}/cas/outbox/${items[1].id}/requeue`, { method: "POST" });
+  const sentRequeue = await fetch(`${baseUrl}/cas/outbox/${items[1].id}/requeue`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(sentRequeue.status, 409);
 
   // An unknown item is a 404, and none of the refusals touch the journal.
-  const missing = await fetch(`${baseUrl}/cas/outbox/no-such-item/requeue`, { method: "POST" });
+  const missing = await fetch(`${baseUrl}/cas/outbox/no-such-item/requeue`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(missing.status, 404);
   const events = await db
     .select()
@@ -1190,7 +1201,7 @@ test("re-queue refuses deliveries that are not dead-lettered", async () => {
 });
 
 test("delivery stays duplicate-free after a worker crash", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   // Fake provider whose accepted idempotency keys are durable: they live
@@ -1269,13 +1280,13 @@ test("delivery stays duplicate-free after a worker crash", async () => {
 });
 
 test("concurrent ACK requests accept one transition and conflict the other", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
   const responses = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
+    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS }),
+    fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS }),
   ]);
 
   assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
@@ -1291,15 +1302,15 @@ test("concurrent ACK requests accept one transition and conflict the other", asy
 });
 
 test("concurrent RESOLVE requests accept one transition and conflict the other", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
-  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(ack.status, 200);
 
   const responses = await Promise.all([
-    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
-    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS }),
+    fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS }),
   ]);
 
   assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
@@ -1316,7 +1327,7 @@ test("concurrent RESOLVE requests accept one transition and conflict the other",
 });
 
 test("separate API processes accept one concurrent ACK and journal one event", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1324,8 +1335,8 @@ test("separate API processes accept one concurrent ACK and journal one event", a
   const second = await startApiProcess();
   try {
     const responses = await Promise.all([
-      fetch(`${first.baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
-      fetch(`${second.baseUrl}/cas/incidents/${id}/ack`, { method: "POST" }),
+      fetch(`${first.baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS }),
     ]);
 
     assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
@@ -1390,7 +1401,7 @@ async function startStubProvider(handler: (request: StubProviderRequest) => Stub
 }
 
 test("SMS and XMPP adapters send through their providers with outbox-ID idempotency keys", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id: incidentId } = (await trigger.json()) as { id: string };
 
@@ -1452,7 +1463,7 @@ test("SMS and XMPP adapters send through their providers with outbox-ID idempote
 });
 
 test("a provider outage fails the delivery as retryable and keeps the outbox record", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const provider = await startStubProvider(() => 503);
@@ -1481,7 +1492,7 @@ test("a provider outage fails the delivery as retryable and keeps the outbox rec
 });
 
 test("a 429 with a Retry-After hint schedules the next attempt no earlier than the hint", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const provider = await startStubProvider(() => ({
@@ -1516,7 +1527,7 @@ test("a 429 with a Retry-After hint schedules the next attempt no earlier than t
 });
 
 test("a 429 without a Retry-After hint falls back to exponential backoff", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const provider = await startStubProvider(() => 429);
@@ -1545,7 +1556,7 @@ test("a 429 without a Retry-After hint falls back to exponential backoff", async
 });
 
 test("a 429 with a malformed Retry-After hint falls back to exponential backoff", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const provider = await startStubProvider(() => ({
@@ -1616,7 +1627,7 @@ test("retryDelayMs jitter never undercuts a provider's Retry-After hint", () => 
 });
 
 test("a rate-limited transport is cooled down for the rest of the run so it cannot starve the other transport", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1656,7 +1667,7 @@ test("a rate-limited transport is cooled down for the rest of the run so it cann
 });
 
 test("an oversized Retry-After hint is clamped to the cooldown cap instead of being ignored", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   // One hour is beyond the sane-hint cap (10 minutes). Dropping the hint
@@ -1688,7 +1699,7 @@ test("an oversized Retry-After hint is clamped to the cooldown cap instead of be
 });
 
 test("a rate-limited transport stays cooled down across worker ticks while the other transport drains", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1743,7 +1754,7 @@ test("a rate-limited transport stays cooled down across worker ticks while the o
 });
 
 test("a 503 with a Retry-After hint cools the transport down across worker ticks, not just the failed item", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -1790,7 +1801,7 @@ test("a 503 with a Retry-After hint cools the transport down across worker ticks
 });
 
 test("a provider authentication failure is classified as permanent", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const provider = await startStubProvider(() => 403);
@@ -1813,7 +1824,7 @@ test("a provider authentication failure is classified as permanent", async () =>
 });
 
 test("a provider idempotency conflict on replay counts as delivered, not a duplicate", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   // The provider remembers keys it already accepted and answers replays with
@@ -1855,7 +1866,7 @@ test("a provider idempotency conflict on replay counts as delivered, not a dupli
 });
 
 test("a bare 409 on first submission fails as rejected, never as sent", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   // A 409 without the documented X-Idempotency-Replayed header is an ordinary
@@ -1883,7 +1894,7 @@ test("a bare 409 on first submission fails as rejected, never as sent", async ()
 });
 
 test("a non-HTTPS provider endpoint is refused before any alert content is sent", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const send = createCasDeliverySender({
@@ -1904,7 +1915,7 @@ test("a non-HTTPS provider endpoint is refused before any alert content is sent"
 });
 
 test("provider redirects are never followed and never mark an alert sent", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   // A redirect target that would happily return 200 if fetch followed the
@@ -1950,7 +1961,7 @@ test("provider redirects are never followed and never mark an alert sent", async
 });
 
 test("an unreachable provider is classified as a retryable network failure", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const portServer = createServer();
@@ -1975,7 +1986,7 @@ test("an unreachable provider is classified as a retryable network failure", asy
 });
 
 test("a transport without a configured provider fails explicitly and keeps the record", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
 
   const send = createCasDeliverySender({});
@@ -1994,18 +2005,18 @@ test("a transport without a configured provider fails explicitly and keeps the r
 });
 
 test("separate API processes accept one concurrent RESOLVE and journal one event", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
-  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST" });
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(ack.status, 200);
 
   const first = await startApiProcess();
   const second = await startApiProcess();
   try {
     const responses = await Promise.all([
-      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
-      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST" }),
+      fetch(`${first.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS }),
+      fetch(`${second.baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS }),
     ]);
 
     assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
@@ -2073,7 +2084,7 @@ test("outbox status reports counts by state and the oldest pending item", async 
 });
 
 test("a dead-lettered delivery is reported by the status endpoint end-to-end", async () => {
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);
   const { id } = (await trigger.json()) as { id: string };
 
@@ -2219,7 +2230,7 @@ async function withSmsDeliveryMode<T>(mode: "device" | "gateway", fn: () => Prom
 
 test("device mode keeps the worker from claiming SMS items while XMPP still drains", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     assert.equal(trigger.status, 201);
     const { id } = (await trigger.json()) as { id: string };
 
@@ -2258,7 +2269,7 @@ test("device-pending lists only handset-awaiting SMS items and refuses gateway m
   assert.equal(gatewayResponse.status, 409);
 
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
 
     const response = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
@@ -2284,7 +2295,7 @@ test("device-pending lists only handset-awaiting SMS items and refuses gateway m
 
 test("an all-ok device receipt marks the SMS item SENT, journals it, and replays safely", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
 
     const post = () =>
@@ -2325,7 +2336,7 @@ test("an all-ok device receipt marks the SMS item SENT, journals it, and replays
 
 test("a failed device receipt dead-letters immediately and masks responder numbers", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
 
     const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
@@ -2370,7 +2381,7 @@ test("device receipts reject unknown incidents, dead-lettered items, bad bodies,
     });
     assert.equal(unknown.status, 404);
 
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
 
     const empty = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
@@ -2409,7 +2420,7 @@ test("device receipts reject unknown incidents, dead-lettered items, bad bodies,
   });
 
   // In gateway mode a device receipt must never mark an alert sent.
-  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   const { id } = (await trigger.json()) as { id: string };
   const gatewayReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
     method: "POST",
@@ -2421,7 +2432,7 @@ test("device receipts reject unknown incidents, dead-lettered items, bad bodies,
 
 test("the device-direct recovery loop: failed receipt, re-queue, handset pickup, delivered", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
 
     // 1. Misconfigured responder: the handset reports a permanent failure and
@@ -2440,7 +2451,7 @@ test("the device-direct recovery loop: failed receipt, re-queue, handset pickup,
     //    console; the item becomes visible to the handset again.
     const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ reason: "Corrected the responder number on the handset." }),
     });
     assert.equal(requeue.status, 200);
@@ -2628,7 +2639,7 @@ test("trigger queues only channels that can deliver: no doomed rows for unconfig
       CAS_XMPP_RECIPIENTS: undefined,
     },
     async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
       assert.equal(trigger.status, 201);
       const { id } = (await trigger.json()) as { id: string };
 
@@ -2650,7 +2661,7 @@ test("trigger queues XMPP and EMAIL items when their providers are configured", 
       CAS_EMAIL_RECIPIENTS: "lead@example.org",
     },
     async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
       assert.equal(trigger.status, 201);
       const { id } = (await trigger.json()) as { id: string };
 
@@ -2664,7 +2675,7 @@ test("whatsapp device channel: pending lists it, worker never claims it, receipt
   await withEnv(
     { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS,WHATSAPP" , CAS_DEVICE_TOKEN: DEVICE_TOKEN },
     async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
       assert.equal(trigger.status, 201);
       const { id } = (await trigger.json()) as { id: string };
 
@@ -2715,7 +2726,7 @@ test("whatsapp device channel: pending lists it, worker never claims it, receipt
       // Re-queue puts it back on the handset's pickup list.
       const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-whatsapp/requeue`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
       assert.equal(requeue.status, 200);
@@ -2760,7 +2771,7 @@ test("device receipt for a channel the console did not queue is refused", async 
   await withEnv(
     { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS" , CAS_DEVICE_TOKEN: DEVICE_TOKEN },
     async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
       assert.equal(trigger.status, 201);
       const { id } = (await trigger.json()) as { id: string };
 
@@ -2818,7 +2829,7 @@ test("EMAIL adapter submits subject and body through its provider with outbox-ID
 
 test("handset endpoints require the device token and stay closed when none is configured", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     assert.equal(trigger.status, 201);
     const { id } = (await trigger.json()) as { id: string };
 
@@ -2834,7 +2845,7 @@ test("handset endpoints require the device token and stay closed when none is co
     // mark an unsent alert SENT.
     const forged = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
     });
     assert.equal(forged.status, 401);
@@ -2868,7 +2879,7 @@ test("trigger queues only the handset's requested device channels plus configure
       // console must not queue a WHATSAPP row nobody will report against.
       const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ deviceChannels: ["SMS"] }),
       });
       assert.equal(trigger.status, 201);
@@ -2879,7 +2890,7 @@ test("trigger queues only the handset's requested device channels plus configure
       // Requesting enabled channels again folds into the active incident.
       const folded = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ deviceChannels: ["SMS", "WHATSAPP"] }),
       });
       assert.equal(folded.status, 200);
@@ -2897,7 +2908,7 @@ test("trigger queues only the handset's requested device channels plus configure
       // A valid channel the console has not enabled is a loud 409.
       const conflict = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ deviceChannels: ["WHATSAPP"] }),
       });
       assert.equal(conflict.status, 409);
@@ -2905,7 +2916,7 @@ test("trigger queues only the handset's requested device channels plus configure
       // Unknown channel names are rejected outright.
       const bad = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ deviceChannels: ["PIGEON"] }),
       });
       assert.equal(bad.status, 400);
@@ -2921,11 +2932,80 @@ test("gateway mode without an SMS provider queues no undeliverable SMS row", asy
       CAS_SMS_RECIPIENTS: undefined,
     },
     async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
       assert.equal(trigger.status, 201);
       const { id } = (await trigger.json()) as { id: string };
       const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
       assert.deepEqual(rows.map((row) => row.transport), ["XMPP"]);
     },
   );
+});
+
+test("unauthenticated trigger and mutation requests are rejected with 401 and recorded", async () => {
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    const attempts = [
+      () => fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" }),
+      () => fetch(`${baseUrl}/cas/incidents/some-incident/ack`, { method: "POST" }),
+      () => fetch(`${baseUrl}/cas/incidents/some-incident/resolve`, { method: "POST" }),
+      () => fetch(`${baseUrl}/cas/outbox/some-item/requeue`, { method: "POST" }),
+    ];
+    for (const attempt of attempts) {
+      const response = await attempt();
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="cas"');
+      const body = (await response.json()) as { error?: string };
+      assert.ok(body.error);
+    }
+
+    // A wrong credential is rejected exactly like a missing one.
+    const wrongToken = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { authorization: "Bearer not-the-alert-token" },
+    });
+    assert.equal(wrongToken.status, 401);
+
+    // Nothing reached the durable journal.
+    assert.equal((await db.select({ id: casIncidents.id }).from(casIncidents)).length, 0);
+    assert.equal((await db.select({ id: casOutbox.id }).from(casOutbox)).length, 0);
+
+    // Every rejection was recorded with its route and reason — and without
+    // the presented credential.
+    assert.equal(rejections.length, 5);
+    assert.deepEqual(
+      rejections.map(({ method, path, reason }) => ({ method, path, reason })),
+      [
+        { method: "POST", path: "/api/cas/incidents/trigger", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/incidents/some-incident/ack", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/incidents/some-incident/resolve", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/outbox/some-item/requeue", reason: "missing-token" },
+        { method: "POST", path: "/api/cas/incidents/trigger", reason: "invalid-token" },
+      ],
+    );
+    assert.ok(!JSON.stringify(rejections).includes("not-the-alert-token"));
+  } finally {
+    setCasAuthRejectionRecorder();
+  }
+});
+
+test("the enrolled-device credential authorizes trigger, ack, and resolve", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+  });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+  });
+  assert.equal(ack.status, 200);
+
+  const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+  });
+  assert.equal(resolve.status, 200);
 });

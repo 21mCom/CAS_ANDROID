@@ -78,7 +78,9 @@ paths:
     post:
       operationId: triggerCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201":
           description: Incident created
           content:
@@ -108,6 +110,27 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /cas/outbox/{id}/requeue:
+    post:
+      operationId: requeueCasOutboxItem
+      tags: [cas]
+      summary: Re-queue an abandoned (DEAD_LETTER) delivery
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
+        "200": { description: Delivery re-queued }
+        "400": { description: Invalid or unsafe re-queue note }
+        "404": { description: Outbox item not found }
+        "409": { description: Only a DEAD_LETTER delivery can be re-queued }
   /cas/outbox/status:
     get:
       operationId: getCasOutboxStatus
@@ -125,15 +148,19 @@ paths:
     post:
       operationId: acknowledgeCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Acknowledged }
   /cas/incidents/{id}/resolve:
     post:
       operationId: resolveCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Resolved }
   /cas/setup/{id}:
     patch:
@@ -160,6 +187,11 @@ paths:
       responses:
         "200": { description: Updated }
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Enrolled-device alert credential (server secret CAS_ALERT_TOKEN). Required on alert trigger and incident/outbox mutations; rejections return 401.
   schemas:
     HealthStatus:
       type: object

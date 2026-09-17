@@ -61,6 +61,15 @@ the MVP alert controls added).
    same value as the server's `CAS_DEVICE_TOKEN` secret — and tap **Save
    device token**. Without it the console refuses the phone's pickup and
    receipt calls (401), so delivery states would never update.
+5. In the **Alert credential** field, paste the alert token exactly as provided
+   in the accompanying message (it is the same value as the server's
+   `CAS_ALERT_TOKEN` secret), then tap **Save alert credential**.
+
+The trigger endpoint rejects any request without the alert credential
+(HTTP 401), so the incident will not be recorded until it is saved — without
+it the phone can still text responders directly, but no incident appears in
+the console. Treat both tokens like passwords: do not paste them into the
+on-screen report, chat, or email.
 
 Note: the development URL works while the CAS workspace is running. If the team
 publishes the app, use the published URL instead — it is stable and stays up.
@@ -92,7 +101,10 @@ publishes the app, use the published URL instead — it is stable and stays up.
 4. On any browser, open the CAS console at the server address, then open the
    incidents/overview view: a P1 incident in `ACTIVE_UNACKED` state appears
    and its SMS outbox item shows `SENT` once the handset's receipt arrives.
-5. In the console, acknowledge and resolve the incident.
+5. In the console, acknowledge and resolve the incident. The first mutation in
+   a browser session asks for the same alert credential the phone uses
+   (`CAS_ALERT_TOKEN`); it is remembered until the tab closes. A 401 clears it
+   and the next action asks again.
 
 **Dead-letter drill (optional but recommended once):** save an intentionally
 wrong responder number (e.g. `1`), send an alert, and watch the console mark
@@ -127,6 +139,7 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
 | `MVP_ALERT_OUTCOME` = FAILED, "must start with https://" | Fix the server URL and save again |
 | FAILED with a timeout or "Request failed" | Check phone internet; confirm the CAS workspace/app is running; confirm the URL |
 | HTTP 404/502 from server | The URL must be the app root, not a sub-path; the app appends `/api/cas/incidents/trigger` itself |
+| HTTP 401 from server | The alert credential on the phone does not match the server's `CAS_ALERT_TOKEN` secret; re-enter it and save again |
 | No incident appears in the console | Confirm the console is the same server URL the phone used; check the server is running |
 | `MVP_ALERT_OUTCOME` = NOT_SENT, "SEND_SMS permission not granted" | Grant the permission (Grant SMS permission button), then send again |
 | SMS outbox item shows `DEAD_LETTER` with "device-reported failure" | Fix the responder number on the phone, re-queue from the console, then tap **Check re-queued deliveries** on the phone |
@@ -147,3 +160,12 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
   are unchanged and remain available; the physical 200-repeat evidence from
   2026-09-14 stays valid.
 - Uninstall any time with `adb uninstall com.covertalert.pixeltest`.
+
+## Step 8 — Record Gate 0A sign-off (console, any browser)
+
+The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
+(`cas-gate0a-report-v2`, ~250 KB) was delivered separately:
+
+1. Open the console **Gates** page.
+2. Import `report.json` as a file (do not paste it as text).
+3. Review the imported evidence and record the Gate 0A observation.

@@ -34,7 +34,7 @@ else changes.
 2. In PowerShell:
 
    ```powershell
-   . .\scripts\cas-api-drills.ps1 -BaseUrl https://<server-host> -DeviceToken <shared-token>
+   . .\scripts\cas-api-drills.ps1 -BaseUrl https://<server-host> -DeviceToken <shared-token> -AlertToken <alert-credential>
    Get-CasOutboxStatus
    ```
 
@@ -122,6 +122,10 @@ Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
    `-DeviceToken` (reload the script without it) must fail with 401; a wrong
    token must also fail with 401; a forged all-success receipt must leave
    the item `QUEUED`.
+5. Alert credential: `Invoke-CasTrigger`, `Resolve-CasIncident`, and
+   `Invoke-CasRequeue` without `-AlertToken` (reload the script without it)
+   must fail with 401 — those endpoints only accept the server's
+   `CAS_ALERT_TOKEN` secret as a Bearer credential.
 
 ## T9 — No-data fallback (phone required, optional but valuable)
 

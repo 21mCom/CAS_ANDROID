@@ -10,7 +10,7 @@
   file, then call the functions. See HANDOFF-TEST-KIT.md for the full matrix.
 
 .EXAMPLE
-  . .\scripts\cas-api-drills.ps1 -BaseUrl https://your-host.replit.dev
+  . .\scripts\cas-api-drills.ps1 -BaseUrl https://your-host.replit.dev -DeviceToken <handset-token> -AlertToken <alert-credential>
   Invoke-CasTrigger
   Get-CasOutboxStatus
 #>
@@ -19,13 +19,18 @@ param(
   [string]$BaseUrl,
   # Shared handset credential (the server's CAS_DEVICE_TOKEN secret). The
   # device pickup/receipt endpoints refuse calls without it (401).
-  [string]$DeviceToken
+  [string]$DeviceToken,
+  # Alert credential (the server's CAS_ALERT_TOKEN secret), sent as
+  # Authorization: Bearer. The trigger, ack/resolve, and re-queue endpoints
+  # refuse calls without it (401).
+  [string]$AlertToken
 )
 
 # Script-relative/pipeline state is resolved after parameter binding, never
 # inside the param block (Windows PowerShell evaluates defaults too early).
 $script:CasBase = $BaseUrl.TrimEnd('/') + '/api'
 $script:DeviceToken = $DeviceToken
+$script:AlertToken = $AlertToken
 
 function Invoke-CasApi {
   param(
@@ -38,7 +43,10 @@ function Invoke-CasApi {
     Uri         = $script:CasBase + $Path
     ContentType = 'application/json'
   }
-  if ($script:DeviceToken) { $args.Headers = @{ 'X-CAS-Device-Token' = $script:DeviceToken } }
+  $headers = @{}
+  if ($script:DeviceToken) { $headers['X-CAS-Device-Token'] = $script:DeviceToken }
+  if ($script:AlertToken) { $headers['Authorization'] = "Bearer $script:AlertToken" }
+  if ($headers.Count -gt 0) { $args.Headers = $headers }
   if ($null -ne $Body) { $args.Body = ($Body | ConvertTo-Json -Depth 8) }
   try {
     return Invoke-RestMethod @args

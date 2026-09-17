@@ -14,6 +14,7 @@ object TestStore {
     private const val SMS_RESPONDERS = "sms_responders"
     private const val WHATSAPP_ENABLED = "whatsapp_enabled"
     private const val DEVICE_TOKEN = "device_access_token"
+    private const val ALERT_TOKEN = "alert_token"
 
     /** Whether alerts also hand off to WhatsApp (tap-to-send) after the SMS. */
     fun setWhatsAppEnabled(context: Context, enabled: Boolean) =
@@ -46,6 +47,15 @@ object TestStore {
     fun smsResponders(context: Context): List<String> =
         storage(context).getString(SMS_RESPONDERS, "").orEmpty()
             .split(",").map { it.trim() }.filter { it.isNotBlank() }
+
+    // The alert credential (Authorization: Bearer against the server's
+    // CAS_ALERT_TOKEN) authorizing trigger calls. It is kept in
+    // device-protected storage and is never written to the journal or report.
+    fun setAlertToken(context: Context, value: String) =
+        storage(context).edit().putString(ALERT_TOKEN, value.trim()).apply()
+
+    fun alertToken(context: Context): String =
+        storage(context).getString(ALERT_TOKEN, "").orEmpty()
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

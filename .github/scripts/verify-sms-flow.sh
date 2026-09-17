@@ -19,6 +19,8 @@
 #   CAS_FLOW_APK           path to the built app-debug.apk
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
+#   CAS_FLOW_ALERT_TOKEN   alert credential (matches CAS_ALERT_TOKEN); the
+#                          trigger and console re-queue endpoints 401 without it
 # Optional env:
 #   CAS_FLOW_API_DEVICE    API base URL as the device sees it. Default: the
 #                          harness runs `adb reverse tcp:<port> tcp:<port>` and
@@ -40,7 +42,7 @@ BAD_NUMBER="${CAS_FLOW_BAD_NUMBER:-not-a-real-number}"
 GOOD_NUMBER="${CAS_FLOW_GOOD_NUMBER:-+15550100}"
 TIMEOUT_S="${CAS_FLOW_TIMEOUT_S:-180}"
 
-for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN; do
+for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_TOKEN; do
   if [ -z "${!var:-}" ]; then
     echo "::error::Required environment variable $var is not set."
     exit 1
@@ -85,14 +87,17 @@ fail() {
   exit 1
 }
 
-http_status() { # method url [data] [token]
-  local method="$1" url="$2" data="${3:-}" token="${4:-}"
+http_status() { # method url [data] [device-token] [alert-token]
+  local method="$1" url="$2" data="${3:-}" token="${4:-}" alert_token="${5:-}"
   local args=(-s -o /tmp/sms-flow-response.json -w '%{http_code}' -X "$method")
   if [ -n "$data" ]; then
     args+=(-H 'Content-Type: application/json' --data "$data")
   fi
   if [ -n "$token" ]; then
     args+=(-H "X-CAS-Device-Token: $token")
+  fi
+  if [ -n "$alert_token" ]; then
+    args+=(-H "Authorization: Bearer $alert_token")
   fi
   curl "${args[@]}" "$url"
 }
@@ -131,6 +136,15 @@ expect_status "sms-receipt refuses a missing device token" 401 "$status"
 
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
 expect_status "sms-receipt rejects a malformed body" 400 "$status"
+
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger")"
+expect_status "trigger refuses a missing alert credential" 401 "$status"
+
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger" '{}' '' 'not-the-alert-token')"
+expect_status "trigger refuses a wrong alert credential" 401 "$status"
+
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/flow-contract-probe-sms/requeue" "$probe")"
+expect_status "re-queue refuses a missing alert credential" 401 "$status"
 
 # --- Step 1: install with the SMS permission granted -------------------------
 
@@ -223,6 +237,7 @@ start_flow_activity \
   --es mode alert \
   --es serverUrl "$CAS_FLOW_API_DEVICE" \
   --es deviceToken "$CAS_FLOW_DEVICE_TOKEN" \
+  --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
   --es responders "$BAD_NUMBER" || fail "am start of SmsFlowActivity (alert) failed"
 
 deadline=$((SECONDS + TIMEOUT_S))
@@ -254,7 +269,7 @@ echo "Alert phase passed: incident $incident_id, outbox item $outbox_id -> DEAD_
 # --- Step 3: console re-queue, then handset pickup with a fixed number -------
 
 echo "== Re-queue phase: console re-queue, handset pickup with fixed number '$GOOD_NUMBER' =="
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}')"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ALERT_TOKEN")"
 expect_status "console re-queue of the dead-lettered item" 200 "$status"
 jq -e --arg id "$outbox_id" '.id == $id and .state == "QUEUED"' /tmp/sms-flow-response.json > /dev/null \
   || fail "re-queue response drifted (expected {id, state: \"QUEUED\"}): $(cat /tmp/sms-flow-response.json | head -c 300)"
@@ -264,6 +279,7 @@ start_flow_activity \
   --es mode requeue \
   --es serverUrl "$CAS_FLOW_API_DEVICE" \
   --es deviceToken "$CAS_FLOW_DEVICE_TOKEN" \
+  --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
   --es responders "$GOOD_NUMBER" || fail "am start of SmsFlowActivity (requeue) failed"
 
 deadline=$((SECONDS + TIMEOUT_S))

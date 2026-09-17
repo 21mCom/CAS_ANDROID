@@ -26,6 +26,7 @@ class MainActivity : Activity() {
     private lateinit var serverInput: EditText
     private lateinit var tokenInput: EditText
     private lateinit var respondersInput: EditText
+    private lateinit var alertTokenInput: EditText
     private lateinit var reportView: TextView
     @Volatile private var alertInFlight = false
 
@@ -96,6 +97,22 @@ class MainActivity : Activity() {
             val value = tokenInput.text.toString()
             TestStore.setDeviceToken(this, value)
             TestStore.record(this, "DEVICE_TOKEN_CONFIGURED", mapOf("configured" to TestStore.deviceToken(this).isNotBlank()))
+            refreshReport()
+        })
+        // Separate from the device token above: this credential authorizes the
+        // alert trigger itself (Authorization: Bearer against CAS_ALERT_TOKEN).
+        alertTokenInput = EditText(this).apply {
+            hint = "Alert credential (same value as the server's CAS_ALERT_TOKEN secret)"
+            setText(TestStore.alertToken(this@MainActivity))
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        root.addView(alertTokenInput, LinearLayout.LayoutParams(-1, -2))
+        root.addView(button("Save alert credential") {
+            val value = alertTokenInput.text.toString().trim()
+            TestStore.setAlertToken(this, value)
+            // Record only whether a credential exists, never the credential.
+            TestStore.record(this, "ALERT_CREDENTIAL_CONFIGURED", mapOf("configured" to value.isNotBlank()))
             refreshReport()
         })
         respondersInput = EditText(this).apply {
@@ -201,7 +218,9 @@ class MainActivity : Activity() {
     private fun sendMvpAlert() {
         if (alertInFlight) return
         val baseUrl = serverInput.text.toString().trim()
+        val token = alertTokenInput.text.toString().trim()
         TestStore.setAlertServerUrl(this, baseUrl)
+        TestStore.setAlertToken(this, token)
         TestStore.setSmsResponders(this, respondersInput.text.toString())
         if (TestStore.smsResponders(this).isEmpty()) {
             TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no responder numbers configured"))
@@ -221,11 +240,19 @@ class MainActivity : Activity() {
         ))
         reportView.text = "Sending MVP alert..."
         Thread {
-            if (baseUrl.isBlank()) {
-                TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no server URL configured; texting responders directly without an incident"))
+            if (baseUrl.isBlank() || token.isBlank()) {
+                // Without a server URL — or without the alert credential the
+                // trigger endpoint requires (401 otherwise) — no incident can
+                // be committed; the alert still leaves this handset directly.
+                val reason = if (baseUrl.isBlank()) {
+                    "no server URL configured; texting responders directly without an incident"
+                } else {
+                    "no alert credential configured; the server would reject the trigger with 401, texting responders directly without an incident"
+                }
+                TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to reason))
                 sendSmsFromHandset(null)
             } else {
-                val result = AlertSender.trigger(this@MainActivity, baseUrl)
+                val result = AlertSender.trigger(this@MainActivity, baseUrl, token)
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
                 if (result.ok && result.reused) {
                     // The repeat tap folded into the still-active incident and

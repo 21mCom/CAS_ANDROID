@@ -17,14 +17,21 @@ import java.net.URL
  * carry out. `reused` in the response means the trigger folded into an
  * already-active incident and the console queued nothing new — the handset
  * must not re-send physical messages either.
+ *
+ * The trigger endpoint is credential-gated: without the enrolled-device token
+ * the server rejects the request with 401 and no incident is created.
  */
 object AlertSender {
     data class Result(val ok: Boolean, val detail: String, val incidentId: String? = null, val reused: Boolean = false)
 
-    fun trigger(context: Context, baseUrl: String): Result {
+    fun trigger(context: Context, baseUrl: String, token: String): Result {
         val trimmed = baseUrl.trim().trimEnd('/')
         if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {
             return Result(false, "Server URL must start with https:// (plain HTTP is only accepted for loopback dev endpoints that cannot leave the machine: 127.0.0.1 via adb reverse, or the emulator's 10.0.2.2 host alias)")
+        }
+        val credential = token.trim()
+        if (credential.isEmpty()) {
+            return Result(false, "Alert credential required - save the token before sending")
         }
         val channels = buildList {
             add("SMS")
@@ -38,6 +45,7 @@ object AlertSender {
                 readTimeout = 10_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $credential")
             }
             try {
                 connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }

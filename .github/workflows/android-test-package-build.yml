@@ -404,6 +404,9 @@ jobs:
       # endpoints fail closed without one, so the job sets a literal value on
       # both sides. Not a real secret — the database dies with the runner.
       CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+      # Synthetic credential for the trigger/re-queue gate (CAS_ALERT_TOKEN);
+      # matches what verify-sms-flow.sh presents as its Bearer token.
+      CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
       CAS_FLOW_API_PORT: "5055"
 
     steps:
@@ -474,6 +477,7 @@ jobs:
           pnpm --filter @workspace/api-server run build
           PORT=${{ env.CAS_FLOW_API_PORT }} NODE_ENV=development \
             CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \
+            CAS_ALERT_TOKEN="$CAS_FLOW_ALERT_TOKEN" \
             DATABASE_URL="$DATABASE_URL" \
             nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-flow-api.log 2>&1 &
           up=""

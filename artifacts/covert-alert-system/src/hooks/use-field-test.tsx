@@ -206,6 +206,7 @@ const initialState: FieldTestState = {
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 
+const ALERT_TOKEN_KEY = 'cas-alert-token';
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
 
@@ -303,11 +304,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     })),
     toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void fetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload); },
     runTestIncident: () => { void fetch('/api/cas/incidents/test', { method: 'POST' }).then(reload); },
-    triggerKernel: () => { void fetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload); },
-    acknowledgeKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload); },
-    resolveKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload); },
+    triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(reportAuthError); },
+    acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(reportAuthError); },
+    resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(reportAuthError); },
     requeueOutboxItem: async (id, reason) => {
-      const response = await fetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
+      const response = await casAuthedFetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
       if (!response.ok) {
         // Surface the server's rejection (e.g. a note that looks like a
         // credential) so the responder can rephrase instead of retrying blind.
@@ -339,3 +340,32 @@ export type FieldRun = {
 };
 
 export type ReadinessDecision = 'pending' | 'go' | 'no-go';
+
+async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = ensureAlertToken();
+  if (!token) throw new Error('The alert credential is required for this action.');
+  const response = await fetch(input, {
+    ...init,
+    headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+  });
+  if (response.status === 401) {
+    sessionStorage.removeItem(ALERT_TOKEN_KEY);
+    throw new Error('The alert credential was rejected by the server. The next action will ask for it again.');
+  }
+  return response;
+}
+
+function ensureAlertToken(): string {
+  let token = sessionStorage.getItem(ALERT_TOKEN_KEY) ?? '';
+  if (!token) {
+    token = window.prompt(
+      'Enter the CAS alert credential (the same token configured on the enrolled phone) to authorize this action.',
+    )?.trim() ?? '';
+    if (token) sessionStorage.setItem(ALERT_TOKEN_KEY, token);
+  }
+  return token;
+}
+
+function reportAuthError(error: unknown) {
+  if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
+}

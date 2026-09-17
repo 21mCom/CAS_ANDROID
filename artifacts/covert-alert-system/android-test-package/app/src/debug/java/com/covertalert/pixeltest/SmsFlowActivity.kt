@@ -16,6 +16,7 @@ import android.os.Bundle
  *     --es mode alert|requeue \
  *     --es serverUrl http://127.0.0.1:<port> \
  *     --es deviceToken <shared CAS_DEVICE_TOKEN> \
+ *     --es alertToken <shared CAS_ALERT_TOKEN> \
  *     --es responders "+15551234567"
  *
  * (the harness tunnels the runner's dev API into the device with
@@ -43,6 +44,7 @@ class SmsFlowActivity : Activity() {
         val extras = intent.extras
         extras?.getString("serverUrl")?.let { TestStore.setAlertServerUrl(this, it) }
         extras?.getString("deviceToken")?.let { TestStore.setDeviceToken(this, it) }
+        extras?.getString("alertToken")?.let { TestStore.setAlertToken(this, it) }
         extras?.getString("responders")?.let { TestStore.setSmsResponders(this, it) }
         val mode = extras?.getString("mode").orEmpty()
         TestStore.record(this, "SMS_FLOW_INVOKED", mapOf(
@@ -52,6 +54,7 @@ class SmsFlowActivity : Activity() {
                 it.startsWith("http://127.0.0.1") || it.startsWith("http://10.0.2.2")
             },
             "tokenConfigured" to TestStore.deviceToken(this).isNotBlank(),
+            "alertTokenConfigured" to TestStore.alertToken(this).isNotBlank(),
             "responders" to TestStore.smsResponders(this).size,
         ))
         when (mode) {
@@ -85,6 +88,7 @@ class SmsFlowActivity : Activity() {
         }
         Thread {
             val baseUrl = TestStore.alertServerUrl(this)
+            val alertToken = TestStore.alertToken(this)
             if (baseUrl.isBlank()) {
                 // Same no-data fallback as the MVP button: the SMS still leaves.
                 TestStore.record(this, "SMS_FLOW_TRIGGER_OUTCOME", mapOf(
@@ -92,8 +96,17 @@ class SmsFlowActivity : Activity() {
                     "reason" to "no server URL configured",
                 ))
                 sendSms(null)
+            } else if (alertToken.isBlank()) {
+                // The trigger endpoint rejects unauthenticated calls (401);
+                // without the credential no incident can be committed, but
+                // the alert still leaves this handset directly.
+                TestStore.record(this, "SMS_FLOW_TRIGGER_OUTCOME", mapOf(
+                    "outcome" to "NOT_SENT",
+                    "reason" to "no alert credential configured; the server would reject the trigger with 401",
+                ))
+                sendSms(null)
             } else {
-                val result = AlertSender.trigger(this, baseUrl)
+                val result = AlertSender.trigger(this, baseUrl, alertToken)
                 TestStore.record(this, "SMS_FLOW_TRIGGER_OUTCOME", mapOf(
                     "outcome" to if (result.ok) "SENT" else "FAILED",
                     "detail" to result.detail,
