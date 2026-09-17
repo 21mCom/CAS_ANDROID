@@ -7,15 +7,22 @@ evidence. It tests only the proxy-to-cover-app transition.
 
 ## Safety boundary
 
-This package has no SMS, network, location, camera, microphone, evidence
-capture, incident service, recipient, or production covert behavior. The
-`DeviceAdminReceiver` declares no policies; its only purpose is to report
+Gate 0A harness runs have no SMS, network, location, camera, microphone,
+evidence capture, incident service, recipient, or production covert behavior.
+The `DeviceAdminReceiver` declares no policies; its only purpose is to report
 whether the package was provisioned as device owner during the experiment.
 All timestamps and outcomes remain in device-local `SharedPreferences`.
 
+Separately from the harness, the MVP alert mode (see MVP-HANDOFF-WINDOWS.md)
+makes one HTTPS POST to the configured CAS server and texts the configured
+responder numbers directly from the handset's SIM (device-direct SMS), then
+reports the outcome back to the server. That path never runs during Gate 0A
+harness runs, and the harness report filter excludes its journal events.
+
 ## Build and install
 
-From this directory, with Android SDK API 35 and a JDK 17 installation:
+From this directory, with the Android SDK platform and JDK declared in
+`tool-requirements.json`:
 
 ```sh
 gradle :app:assembleDebug
@@ -28,6 +35,26 @@ declared once in `gradle-version.txt` in this directory: the GitHub Actions
 build reads it to install Gradle, and the Windows preflight reads it to warn
 when the workstation Gradle major.minor differs from the release CI builds
 with. Update that one file to move both sides to a new Gradle release.
+
+The other workstation prerequisites are declared the same way in
+`tool-requirements.json` in this directory: the minimum JDK major version, the
+Android SDK platform (`android-<apiLevel>`), and the minimum build-tools
+release. The GitHub Actions build reads it to select the JDK, install and
+verify the SDK platform/build-tools, and pick the emulator API level; the
+Gradle build reads it for `compileSdk`; and the Windows preflight reads it for
+every Java/SDK/build-tools check and for the `-PrepareSdk` package list.
+Update that one file to move these consumers to new prerequisite levels; do
+not edit the docs or scripts to match.
+
+The pinned-device checks follow the same declaration: the pinned Pixel 8a
+emulator contract (owned by `scripts/pixel-emulator.ps1`, including the
+`system-images;android-<apiLevel>` package the preflight installs in emulator
+mode) and the Pixel 11 minimum-API gate in `scripts/pixel11-gate0a.ps1` both
+derive their API level from `tool-requirements.json`, so a platform bump moves
+them with it. One baseline is deliberately fixed and does not follow this
+declaration: the app's `minSdk`/`targetSdk`, which pin the approved Pixel 11
+device contract in `app/build.gradle.kts`. Change that only through its
+owning file and docs.
 
 Two build gates protect this package after the 2026-09-14 field run shipped
 Kotlin that had never compiled:
@@ -131,7 +158,12 @@ physical Pixel evidence and cannot establish Gate 0A readiness.
 
 ### CAS handoff
 
-After a completed run, use the files in the printed run directory:
+After a completed run, use the files in the printed run directory.
+
+Alert-channel work (MVP alert loop, device-direct SMS/WhatsApp, XMPP/email
+provider drills) lives in `MVP-HANDOFF-WINDOWS.md`; the full verification
+matrix for the Windows operator is `HANDOFF-TEST-KIT.md` with
+`scripts\cas-api-drills.ps1`.
 
 ```text
 gate0a-results/<UTC timestamp>-<process id>/report.json
@@ -166,13 +198,19 @@ physical run:
 
 | Setting | Pinned value |
 | --- | --- |
-| AVD name | `CAS_Pixel_8a_API_35` |
+| AVD name | `CAS_Pixel_8a_API_35` (the numeric suffix tracks the API level) |
 | Device profile | `pixel_8a` |
-| Android image | `system-images;android-35;google_apis;x86_64` |
-| API level | 35 |
+| Android image | `system-images;android-35;google_apis;x86_64` (tracks `tool-requirements.json`) |
+| API level | 35 (tracks `androidSdk.apiLevel` in `tool-requirements.json`) |
 | Architecture | x86_64 |
 | Repeatability settings | animation scales `0`; `stay_on_while_plugged_in=3` |
 | Evidence label | `simulated-emulator` |
+
+The API 35 pin is not a hardcoded copy: `scripts/pixel-emulator.ps1` derives
+the API level, the AVD-name suffix, and the system image from
+`tool-requirements.json`, so the pinned contract moves when the declared SDK
+platform moves (and a stale AVD from an earlier platform fails validation
+until `-Action create` rebuilds it).
 
 From the copied Windows test kit, the single lifecycle entry point is:
 
@@ -212,6 +250,54 @@ the field Pixel, or production readiness. Keep the emulator JSON/Markdown
 record with the host timing log and mark the run as simulated when importing
 or reviewing it.
 
+## CI: SMS send/receipt flow on the emulator
+
+The `sms-receipt-flow-test` job in
+`.github/workflows/android-test-package-build.yml` proves the device-direct
+delivery path end-to-end before each release: it starts a throwaway dev API
+(PostgreSQL + `CAS_SMS_DELIVERY_MODE=device`) on the runner, boots the
+emulator, and runs `.github/scripts/verify-sms-flow.sh`, which:
+
+1. Preflights the handset-facing contracts over plain HTTP: `device-pending`
+   and both receipt endpoints must refuse a missing device token (401) and a
+   malformed body (400), and `device-pending` must return an `items` array.
+2. Drives the app headlessly through `SmsFlowActivity` — a debug-source-set
+   activity with `android:exported="false"`, so other apps (and on API 35,
+   the plain adb shell user) cannot start it; the harness elevates with
+   `adb root` first, which needs a rootable image like the CI emulator. It
+   accepts caller-controlled responder numbers and can reuse the stored
+   device credential, so it must never be exported or shipped in a release
+   build. The handset's radio failure receipt must move the console's outbox
+   item QUEUED → DEAD_LETTER.
+3. Re-queues the item through the console endpoint, then drives the
+   `requeue` mode with a fixed number; the handset picks it up from
+   `device-pending`, re-sends, and the receipt must move the item → SENT.
+4. Asserts the on-device journal shows the receipts were actually POSTed
+   (`SMS_RECEIPT_OUTCOME … REPORTED`) and that nothing crashed.
+
+`SmsFlowActivity` accepts `mode` (`alert`/`requeue`), `serverUrl`,
+`deviceToken`, and `responders` extras and persists them to `TestStore` before
+running, so the harness can swap the responder list between phases without UI
+taps. The harness tunnels the runner's dev API into the device with
+`adb reverse tcp:<port> tcp:<port>`, so the app talks to
+`http://127.0.0.1:<port>` — the same mechanism works on an emulator and on a
+USB-attached field device, and unlike the qemu `10.0.2.2` host alias it does
+not depend on the host's network namespace. Plain HTTP is allowed only for
+these loopback endpoints (`network_security_config.xml`, and `AlertSender`
+accepts exactly those hosts); every real destination stays HTTPS-only.
+
+Any drift in the `sms-receipt`/`device-receipt` or `device-pending` contracts
+fails the job loudly: the preflight rejects the drifted response, or the
+outbox state never reaches the expected state within the polling budget.
+
+A note on running the harness outside CI: it only needs an ADB-attached device
+whose radio can actually send SMS. Sandboxed/containerized hosts whose
+emulated cellular modem never registers (no SIM, `isms`/`phone` services
+absent, `SmsManager` throwing `UnsupportedOperationException: Sms is not
+supported` for every send) cannot complete the SENT leg — the harness fails
+there loudly, as designed. Use CI or a workstation whose emulator has a
+working fake modem for the full pass.
+
 ## Windows workstation preflight
 
 Use the Windows entry point before building or running the disposable package.
@@ -246,9 +332,11 @@ scripts\run-windows-preflight.cmd -Target physical -PrepareSdk
 
 The script prints the package list and waits for the operator to type
 `INSTALL`. Nothing is installed if that confirmation is not provided. The
-optional preparation only covers `platform-tools`, `platforms;android-35`, and
-`build-tools;35.0.0`; emulator mode also includes the official `emulator`
-package and the pinned `system-images;android-35;google_apis;x86_64` package.
+optional preparation only covers `platform-tools` plus the SDK platform and
+build-tools packages declared in `tool-requirements.json`; emulator mode also
+includes the official `emulator` package and the pinned
+`system-images;android-<apiLevel>;google_apis;x86_64` package matching the SDK
+platform declared in `tool-requirements.json`.
 It never installs an APK or changes the device.
 
 ### Local preflight contract
@@ -258,12 +346,12 @@ built or measured:
 
 | Area | Required result |
 | --- | --- |
-| Java | JDK 17 or newer; `JAVA_HOME` points to the JDK root and `JAVA_HOME\bin` is on `PATH` |
+| Java | A JDK at or above the minimum major version declared in `tool-requirements.json`; `JAVA_HOME` points to the JDK root and `JAVA_HOME\bin` is on `PATH` |
 | Android SDK | `ANDROID_SDK_ROOT` or `ANDROID_HOME` points to an existing SDK; if both are set, they point to the same folder |
 | Platform tools | `platform-tools\adb.exe` exists and `platform-tools` is on `PATH`; `adb version` succeeds |
-| Android platform | `platforms\android-35\android.jar` exists |
-| Build tools | Android Build-Tools 35.0.0 or newer exists |
-| Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release |
+| Android platform | The `platforms\android-<apiLevel>\android.jar` declared in `tool-requirements.json` exists |
+| Build tools | An Android Build-Tools release at or above the minimum declared in `tool-requirements.json` exists |
+| Gradle | The Gradle release declared in `gradle-version.txt` is available on `PATH` (this matches the Android Gradle Plugin 8.7.3 used by the package); a different major.minor warns because CI only exercises the declared release. A missing or invalid `gradle-version.txt` blocks the preflight outright — the kit carries no fallback release, so restore the complete, unmodified test kit |
 | Physical target | An approved physical device appears as `device` in `adb devices -l`; `unauthorized` and `offline` are blocking states |
 | Emulator target | `emulator\emulator.exe` exists; use the pinned lifecycle command to create/start and validate the emulator |
 
@@ -274,11 +362,12 @@ commands can include the JSON alongside the in-app report and host timing log.
 
 ### Recovery paths
 
-- **Missing SDK or API 35:** In Android Studio, open **Tools > SDK Manager**,
-  select Android SDK Platform 35, Android SDK Build-Tools 35.0.0 or newer, and
-  Android SDK Platform-Tools, then apply the change with the operator's
-  approval. Alternatively, use the script's `-PrepareSdk` path after installing
-  the official command-line tools.
+- **Missing SDK platform or build tools:** In Android Studio, open
+  **Tools > SDK Manager**, select the Android SDK Platform and Build-Tools
+  releases declared in `tool-requirements.json`, plus Android SDK
+  Platform-Tools, then apply the change with the operator's approval.
+  Alternatively, use the script's `-PrepareSdk` path after installing the
+  official command-line tools.
 - **`JAVA_HOME` or `ANDROID_SDK_ROOT` is missing:** Set the variable to the
   installation folder, not its `bin` or `platform-tools` child folder. If both
   `ANDROID_SDK_ROOT` and `ANDROID_HOME` are present, make them identical or
@@ -304,7 +393,8 @@ commands can include the JSON alongside the in-app report and host timing log.
   Windows security by downloading replacement binaries or disabling protection.
 - **Gradle cannot run or warns about a version mismatch:** Confirm the `gradle`
   executable on PATH matches the release declared in `gradle-version.txt` and
-  that Java points to the same JDK 17+ installation. The package has no
+  that Java points to the same JDK installation that satisfies
+  `tool-requirements.json`. The package has no
   checked-in Gradle wrapper, so the workstation's approved Gradle installation
   is intentional; `gradle-version.txt` keeps it aligned with the release CI
   builds with.

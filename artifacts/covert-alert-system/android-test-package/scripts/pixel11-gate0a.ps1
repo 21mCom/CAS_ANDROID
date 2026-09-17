@@ -7,7 +7,14 @@ param(
     # CI-only: replaces the device gates and the real harness with a stub harness
     # invocation that exits non-zero, proving the launcher surfaces a failed run
     # as a non-zero exit instead of reporting success.
-    [switch]$HarnessFailureSimulation
+    [switch]$HarnessFailureSimulation,
+    # CI-only: skips the device gates but keeps the real scripts/measure-gate0a.sh
+    # invocation in --report-self-test mode. CI shadows python3 with a broken shim
+    # so the real harness fails its report write, proving the launcher surfaces an
+    # actual harness failure (not just the stub) as a non-zero exit without the
+    # success message. CAS_GATE0A_SELF_TEST_OUT_DIR overrides the self-test output
+    # parent directory so the check can inspect what the harness wrote.
+    [switch]$RealHarnessFailureSimulation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,6 +83,18 @@ if ($HarnessFailureSimulation) {
     # stub command quote-free and on stdout so the simulated failure reliably
     # reaches this launcher's exit-code handling.
     $arguments = @('-c', 'echo CAS simulated Gate 0A harness failure; exit 3')
+} elseif ($RealHarnessFailureSimulation) {
+    Write-Host 'Real-harness failure simulation: no device is touched. The launcher invokes the real' -ForegroundColor Yellow
+    Write-Host 'scripts/measure-gate0a.sh report self-test; CI shadows python3 to force the failure.' -ForegroundColor Yellow
+    $selfTestOutDir = $env:CAS_GATE0A_SELF_TEST_OUT_DIR
+    if ([string]::IsNullOrWhiteSpace($selfTestOutDir)) {
+        $selfTestOutDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cas-gate0a-real-harness-' + [guid]::NewGuid().ToString('N'))
+    }
+    $arguments = @(
+        'scripts/measure-gate0a.sh',
+        '--report-self-test',
+        '--out-dir', ($selfTestOutDir -replace '\\', '/')
+    )
 } else {
     $adb = Get-Command adb.exe -ErrorAction SilentlyContinue
     if (-not $adb) {
@@ -96,13 +115,30 @@ if ($HarnessFailureSimulation) {
         $Serial = $authorized[0]
     }
 
+    # The minimum API level derives from the Android SDK platform declared in
+    # tool-requirements.json at the package root (the same declaration the
+    # preflight, the Gradle build, and GitHub Actions read), parsed by the
+    # shared kit parser so this device gate moves with the declared platform
+    # instead of drifting from it.
+    $sharedParserPath = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+    if (-not (Test-Path $sharedParserPath -PathType Leaf)) {
+        Stop-Run "The shared tool-requirements parser is missing at $sharedParserPath. Restore the complete, unmodified test kit."
+    }
+    . $sharedParserPath
+    $toolRequirementsPath = Join-Path $packageRoot 'tool-requirements.json'
+    $toolRequirements = Get-ToolRequirements $toolRequirementsPath
+    if ($null -eq $toolRequirements) {
+        Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath. Restore the complete, unmodified test kit."
+    }
+    $minimumApiLevel = $toolRequirements.apiLevel
+
     $model = (& $adb.Source -s $Serial shell getprop ro.product.model 2>&1 | Out-String).Trim()
     $api = (& $adb.Source -s $Serial shell getprop ro.build.version.sdk 2>&1 | Out-String).Trim()
     if ($model -ne 'Pixel 11') {
         Stop-Run "Expected the approved Pixel 11, but ADB reported '$model'."
     }
-    if ($api -notmatch '^\d+$' -or [int]$api -lt 35) {
-        Stop-Run "Expected Android API 35 or newer, but ADB reported '$api'."
+    if ($api -notmatch '^\d+$' -or [int]$api -lt $minimumApiLevel) {
+        Stop-Run "Expected Android API $minimumApiLevel or newer (declared in tool-requirements.json), but ADB reported '$api'."
     }
 
     Write-Host "Authorized target: $model / serial $Serial / API $api" -ForegroundColor Green

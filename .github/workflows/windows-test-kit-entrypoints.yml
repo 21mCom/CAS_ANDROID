@@ -4,25 +4,47 @@ on:
   pull_request:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
+      - ".github/scripts/check-tool-requirements-drift.py"
+      - ".github/scripts/check-hardcoded-api-floor.py"
+      - ".github/scripts/check-hardcoded-jdk-minimum.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
-      - "artifacts/covert-alert-system/android-test-package/scripts/**"
+      - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+      - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
+      - "artifacts/covert-alert-system/android-test-package/**"
+      - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
+      - "scripts/generate-gate0a-hardware-report-fixture.sh"
+      - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/check-gate0a-guide-freshness.sh"
+      - "scripts/fixtures/tool-requirements-parity/**"
   push:
     paths:
       - ".github/workflows/windows-test-kit-entrypoints.yml"
+      - ".github/scripts/check-tool-requirements-drift.py"
+      - ".github/scripts/check-hardcoded-api-floor.py"
+      - ".github/scripts/check-hardcoded-jdk-minimum.py"
       - "artifacts/covert-alert-system/package.json"
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
-      - "artifacts/covert-alert-system/android-test-package/scripts/**"
+      - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+      - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
+      - "artifacts/covert-alert-system/android-test-package/**"
+      - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
+      - "scripts/generate-gate0a-hardware-report-fixture.sh"
+      - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/check-gate0a-guide-freshness.sh"
+      - "scripts/fixtures/tool-requirements-parity/**"
   workflow_dispatch:
 
 # Field operators run the ZIP produced by package-windows-test-kit.ps1, not the
@@ -31,6 +53,11 @@ on:
 # check jobs extract it and test only what the ZIP contains. A packaging
 # regression that drops, renames, or stale-copies a script fails the build
 # instead of shipping a broken kit.
+#
+# The MVP handoff ZIP in deliverables/ (CAS-Pixel11-MVP layout, produced by
+# package-mvp-handoff.ps1) is covered the same way: the mvp-handoff-freshness
+# job rebuilds it from the current tree and fails if the committed ZIP's
+# contents differ, so a hand-assembled or stale handoff cannot ship again.
 
 jobs:
   package-kit:
@@ -58,6 +85,230 @@ jobs:
           name: windows-test-kit
           path: ${{ runner.temp }}/CAS-Pixel11-Windows-Test-Kit-v6.zip
           retention-days: 7
+
+  mvp-handoff-freshness:
+    name: Committed MVP handoff ZIP matches the current kit tree
+    # ubuntu-latest: the comparison must be byte-exact across platforms, and a
+    # Windows checkout could normalize line endings differently than the Linux
+    # workspace the deliverable is committed from. pwsh, python3, and bash are
+    # preinstalled; only the Windows entry-point gate is deferred to the
+    # windows-entrypoints job (it needs powershell.exe and CMD).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Locate exactly one committed handoff ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $committed = @(Get-ChildItem -LiteralPath deliverables -Filter 'CAS-Pixel11-MVP-Handoff-v*-mvp.zip' -File)
+          if ($committed.Count -ne 1) {
+              throw ("Expected exactly one committed MVP handoff ZIP in deliverables/, found {0}. Rebuild the deliverable with artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1." -f $committed.Count)
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "COMMITTED_HANDOFF_ZIP=$($committed[0].FullName)"
+
+      - name: Rebuild the MVP handoff package from the current tree
+        shell: pwsh
+        run: |
+          # The packager runs the drift, hardcode-floor, and validator-parity
+          # gates against the staged package before writing the ZIP, so a
+          # drifted tree fails here even before the content comparison.
+          $freshZip = Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-fresh.zip'
+          pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $freshZip
+          if ($LASTEXITCODE -ne 0) { throw "package-mvp-handoff.ps1 exited $LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $freshZip -PathType Leaf)) { throw "Packaging reported success but $freshZip is missing." }
+
+      - name: Committed handoff ZIP must match the fresh scripted rebuild
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The 2026-09-16 handoff ZIP went stale within hours of a merge
+          # because nothing compared it to the kit tree. Any content
+          # difference here means deliverables/ holds a stale package: rebuild
+          # it with package-mvp-handoff.ps1 and commit the result.
+          function Expand-Handoff([string]$Zip, [string]$Destination) {
+              Expand-Archive -LiteralPath $Zip -DestinationPath $Destination -Force
+              $root = Join-Path $Destination 'CAS-Pixel11-MVP'
+              if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "ZIP $Zip does not contain the CAS-Pixel11-MVP handoff root." }
+              return $root
+          }
+          function Get-RelativeFilePaths([string]$Root) {
+              @(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
+                  $_.FullName.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+              })
+          }
+
+          $committedRoot = Expand-Handoff $env:COMMITTED_HANDOFF_ZIP (Join-Path $env:RUNNER_TEMP 'handoff-committed')
+          $freshRoot = Expand-Handoff (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-fresh.zip') (Join-Path $env:RUNNER_TEMP 'handoff-fresh')
+          Add-Content -Path $env:GITHUB_ENV -Value "COMMITTED_HANDOFF_ROOT=$committedRoot"
+
+          $committedFiles = @(Get-RelativeFilePaths $committedRoot)
+          $freshFiles = @(Get-RelativeFilePaths $freshRoot)
+          $missing = @($freshFiles | Where-Object { $committedFiles -notcontains $_ })
+          $unexpected = @($committedFiles | Where-Object { $freshFiles -notcontains $_ })
+          if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+              $missing | ForEach-Object { Write-Host "MISSING from committed ZIP: $_" }
+              $unexpected | ForEach-Object { Write-Host "STALE in committed ZIP: $_" }
+              throw ("The committed handoff ZIP file set differs from a fresh rebuild ({0} missing, {1} stale). Rebuild with package-mvp-handoff.ps1." -f $missing.Count, $unexpected.Count)
+          }
+
+          $drifted = @()
+          foreach ($relative in $freshFiles) {
+              $freshHash = (Get-FileHash -LiteralPath (Join-Path $freshRoot $relative) -Algorithm SHA256).Hash
+              $committedHash = (Get-FileHash -LiteralPath (Join-Path $committedRoot $relative) -Algorithm SHA256).Hash
+              if ($freshHash -ne $committedHash) { $drifted += $relative }
+          }
+          if ($drifted.Count -gt 0) {
+              $drifted | ForEach-Object { Write-Host "STALE content in committed ZIP: $_" }
+              throw ("The committed handoff ZIP is stale: {0} file(s) differ from the current tree. Rebuild with package-mvp-handoff.ps1." -f $drifted.Count)
+          }
+          Write-Host ("Committed MVP handoff ZIP matches the current kit tree ({0} files verified)." -f $freshFiles.Count)
+
+      - name: The committed handoff manifest must verify clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Independent verification of what the operator receives: the shipped
+          # SHA256SUMS.txt must verify against the shipped files.
+          cd "$COMMITTED_HANDOFF_ROOT"
+          sha256sum -c SHA256SUMS.txt
+
+  gate0a-guide-freshness:
+    name: Committed Gate 0A run-guide PDF matches its generator
+    # ubuntu-latest: the mvp-handoff-freshness job proves the ZIP matches the
+    # committed PDF, but nothing proves the committed PDF still matches
+    # generate-gate0a-guide-readable.mjs. Editing the generator without
+    # regenerating would ship a stale guide in every future handoff while the
+    # freshness job stays green. PDF bytes are not deterministic across
+    # Chromium runs, so the check compares rendered content (page count plus
+    # per-page extracted text), never bytes. node, google-chrome, and bash are
+    # preinstalled; pdftotext comes from poppler-utils.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PDF text-extraction tools and a stable font set
+        run: |
+          set -euo pipefail
+          # pdftotext/pdfinfo come from poppler-utils. fonts-liberation is
+          # metric-compatible with the guide's Arial/Helvetica stack, so the
+          # regenerated PDF paginates identically instead of reflowing a
+          # checklist block onto an extra page because a fallback font's
+          # metrics differ from the workspace the PDF was committed from.
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils fonts-liberation
+
+      - name: Committed run-guide PDF must match a fresh regeneration
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          bash scripts/check-gate0a-guide-freshness.sh
+
+      - name: An unregenerated source edit must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: edit the generator's guide content WITHOUT
+          # regenerating the committed PDF, then require the check to fail and
+          # to name the drifted page. Only the checkout is modified; the
+          # workflow restores the generator afterwards so no later step sees
+          # the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q 'Measure the handoff\.' "$generator"
+          sed -i 's/Measure the handoff\./Measure the stale handoff./' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF that no longer matches its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'page(s): 1' <<<"$output" || {
+            echo "The freshness check failed without naming the drifted page." >&2
+            exit 1
+          }
+          echo "An unregenerated source edit turned the freshness check red, as required."
+
+      - name: An unregenerated CSS-only change must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: change a safety-significant color in the generator
+          # WITHOUT regenerating the committed PDF. The text layer and page
+          # count stay identical, so only the rendered-pixel comparison can
+          # catch this drift class; require the check to fail and name the
+          # drifted page. Only the checkout is modified; the workflow restores
+          # the generator afterwards so no later step sees the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q -- '--red:#8f2e25' "$generator"
+          sed -i 's/--red:#8f2e25/--red:#1a6e2e/' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF whose safety colors no longer match its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'rendered pixels differ on page(s): 1' <<<"$output" || {
+            echo "The freshness check failed without naming the visually drifted page." >&2
+            exit 1
+          }
+          echo "An unregenerated CSS-only change turned the freshness check red, as required."
+
+      - name: An unregenerated localized border-color change must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: recolor ONLY the footer's 1px rule, leaving every
+          # word, the page count, and every broad color block untouched. This
+          # is the smallest realistic visual drift (~700 rendered pixels per
+          # page); a percentage-of-page tolerance would wave it through, so
+          # the check's absolute noise budget is what must catch it. Require
+          # the check to fail and name every footer-bearing page. Only the
+          # checkout is modified; the workflow restores the generator
+          # afterwards so no later step sees the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q 'border-top:1px solid var(--line)' "$generator"
+          sed -i 's/border-top:1px solid var(--line)/border-top:1px solid #000000/' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF whose footer rule color no longer matches its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'rendered pixels differ on page(s): 1 2 3 4 5 6' <<<"$output" || {
+            echo "The freshness check failed without naming every footer-bearing page." >&2
+            exit 1
+          }
+          echo "An unregenerated localized border-color change turned the freshness check red, as required."
 
   windows-entrypoints:
     name: Windows PowerShell launcher smoke checks
@@ -123,11 +374,285 @@ jobs:
           }
           Write-Host ("Packaged kit matches the repository checkout ({0} files verified)." -f $repoFiles.Count)
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Packaged docs and scripts must agree with tool-requirements.json
+        shell: pwsh
+        run: |
+          # tool-requirements.json declares the JDK minimum, SDK platform, and
+          # build-tools minimum once; the docs reference it. This gate greps the
+          # packaged kit for reintroduced literals that disagree with the
+          # declaration, so a future edit cannot silently fork the guidance again.
+          python .github/scripts/check-tool-requirements-drift.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-tool-requirements-drift.py exited $LASTEXITCODE" }
+
+      - name: Packaged scripts must not hardcode the Android API floor
+        shell: pwsh
+        run: |
+          # The drift gate above only catches literals that DISAGREE with
+          # tool-requirements.json. A script that hardcodes the currently
+          # declared floor (-lt 35, "API 35 or newer") passes that gate while
+          # silently forking the floor at the next declaration bump; this
+          # drift class has already occurred twice (measure-gate0a.sh and
+          # mvp-install.ps1). This gate rejects API-level literals and
+          # comparisons in scripts outright, so scripts must derive the floor
+          # from the declaration.
+          python .github/scripts/check-hardcoded-api-floor.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-hardcoded-api-floor.py exited $LASTEXITCODE" }
+
+      - name: A hardcoded API floor matching the declaration must fail the hardcode gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: inject literals EQUAL to the currently declared
+          # floor, so the drift gate stays green and only the hardcode gate
+          # can turn red. Only the copy is modified; the packaged kit stays
+          # clean for the entry-point checks below.
+          $hardcodeCopy = Join-Path $env:RUNNER_TEMP 'apifloor-hardcode-negative'
+          if (Test-Path -LiteralPath $hardcodeCopy) { Remove-Item -Recurse -Force $hardcodeCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $hardcodeCopy
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value 'if ([int]$api -lt 35) { Stop-Run "This build requires API 35 or newer." }'
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value '[[ "$DEVICE_API" -lt 35 ]] && die "device too old"'
+          # The injected literals agree with tool-requirements.json, so the
+          # drift gate must still accept the copy. The native commands below
+          # are expected to exit non-zero; do not let pwsh 7.4+ turn the exit
+          # code into a terminating error before the assertions run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $driftOutput = & python .github/scripts/check-tool-requirements-drift.py $hardcodeCopy 2>&1 | Out-String
+          $driftCode = $LASTEXITCODE
+          Write-Host $driftOutput
+          if ($driftCode -ne 0) { throw 'Test setup broken: literals matching the declaration must pass the drift gate; only the hardcode gate may turn red.' }
+          $output = & python .github/scripts/check-hardcoded-api-floor.py $hardcodeCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The hardcode gate accepted scripts that re-hardcode the Android API floor.' }
+          if ($output -notmatch 'mvp-install\.ps1') { throw 'The gate failed without naming the drifted installer script.' }
+          if ($output -notmatch 'measure-gate0a\.sh') { throw 'The gate failed without naming the drifted harness script.' }
+          if ($output -notmatch 'API-level comparison' -or $output -notmatch 'API keyword literal') {
+              throw 'The gate failed without identifying the hardcoded comparison and API keyword literal.'
+          }
+          Write-Host 'Hardcoded API-floor literals turned the gate red while the drift gate stayed green, as required.'
+
+      - name: Packaged scripts must not hardcode the JDK minimum
+        shell: pwsh
+        run: |
+          # The same bypass the API-floor gate closes exists on the JDK axis:
+          # a bare comparison like `-lt 17` carries no JDK keyword (so the
+          # drift gate never matches it) and sits below the API-floor gate's
+          # comparison band. This sibling gate rejects comparisons against
+          # plausible JDK majors in scripts outright, so scripts must derive
+          # the minimum from tool-requirements.json.
+          python .github/scripts/check-hardcoded-jdk-minimum.py $env:PACKAGED_KIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "check-hardcoded-jdk-minimum.py exited $LASTEXITCODE" }
+
+      - name: A hardcoded JDK minimum matching the declaration must fail the JDK hardcode gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: inject bare comparisons EQUAL to the currently
+          # declared JDK minimum, so the drift gate (no keyword literal) and
+          # the API-floor gate (value below its comparison band) stay green
+          # and only the JDK hardcode gate can turn red. Only the copy is
+          # modified; the packaged kit stays clean for the entry-point checks
+          # below.
+          $hardcodeCopy = Join-Path $env:RUNNER_TEMP 'jdkfloor-hardcode-negative'
+          if (Test-Path -LiteralPath $hardcodeCopy) { Remove-Item -Recurse -Force $hardcodeCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $hardcodeCopy
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\mvp-install.ps1') -Value 'if ([int]$javaMajor -lt 17) { Stop-Run "This build requires a newer Java runtime." }'
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value ''
+          Add-Content -LiteralPath (Join-Path $hardcodeCopy 'scripts\measure-gate0a.sh') -Value '[[ "$JAVA_MAJOR" -lt 17 ]] && die "java runtime too old"'
+          # The injected comparisons carry no keyword literal and sit below
+          # the API-floor band, so the drift gate and the API-floor gate must
+          # both still accept the copy. The native commands below are expected
+          # to exit non-zero; do not let pwsh 7.4+ turn the exit code into a
+          # terminating error before the assertions run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $driftOutput = & python .github/scripts/check-tool-requirements-drift.py $hardcodeCopy 2>&1 | Out-String
+          $driftCode = $LASTEXITCODE
+          Write-Host $driftOutput
+          if ($driftCode -ne 0) { throw 'Test setup broken: keyword-free comparisons must pass the drift gate; only the JDK hardcode gate may turn red.' }
+          $apiOutput = & python .github/scripts/check-hardcoded-api-floor.py $hardcodeCopy 2>&1 | Out-String
+          $apiCode = $LASTEXITCODE
+          Write-Host $apiOutput
+          if ($apiCode -ne 0) { throw 'Test setup broken: comparisons below the API band must pass the API-floor gate; only the JDK hardcode gate may turn red.' }
+          $output = & python .github/scripts/check-hardcoded-jdk-minimum.py $hardcodeCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The JDK hardcode gate accepted scripts that re-hardcode the declared JDK minimum.' }
+          if ($output -notmatch 'mvp-install\.ps1') { throw 'The gate failed without naming the drifted installer script.' }
+          if ($output -notmatch 'measure-gate0a\.sh') { throw 'The gate failed without naming the drifted harness script.' }
+          if ($output -notmatch 'JDK-major comparison') { throw 'The gate failed without identifying the hardcoded JDK-major comparisons.' }
+          Write-Host 'Hardcoded JDK-minimum comparisons turned the gate red while the drift and API-floor gates stayed green, as required.'
+
+      - name: A reintroduced stale literal must fail the drift gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: copy the packaged kit, inject literals that disagree
+          # with tool-requirements.json, and require the gate to turn red on the
+          # exact file/line. Only the copy is modified; the packaged kit stays
+          # clean for the entry-point checks below.
+          $driftCopy = Join-Path $env:RUNNER_TEMP 'toolreq-drift-negative'
+          if (Test-Path -LiteralPath $driftCopy) { Remove-Item -Recurse -Force $driftCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $driftCopy
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value ''
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value 'Requires JDK 21 or newer and platforms;android-34 with build-tools;34.0.0.'
+          # A declared-value occurrence first on the line must not hide a stale
+          # literal of the same kind later on the same line.
+          Add-Content -LiteralPath (Join-Path $driftCopy 'START-HERE-WINDOWS.md') -Value 'The kit declares JDK 17; do not confuse it with legacy JDK 21 setups.'
+          # The gate is expected to exit non-zero here; do not let pwsh 7.4+ turn
+          # the native command's exit code into a terminating error before the
+          # assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & python .github/scripts/check-tool-requirements-drift.py $driftCopy 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The drift gate accepted reintroduced literals that disagree with tool-requirements.json.' }
+          if ($output -notmatch 'START-HERE-WINDOWS\.md') { throw 'The gate failed without naming the drifted file.' }
+          if ($output -notmatch 'JDK major literal' -or $output -notmatch 'SDK platform literal' -or $output -notmatch 'build-tools literal') {
+              throw 'The gate failed without identifying the drifted JDK, SDK platform, and build-tools literals.'
+          }
+          Write-Host 'Reintroduced stale literals turned the drift gate red, as required.'
+
+      - name: A missing tool-requirements.json must block the packaged preflight
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: the preflight carries no built-in fallback minimums.
+          # A packaged kit whose declaration file is missing was tampered with
+          # or incompletely copied, so the preflight must stop with a BLOCKED
+          # tools.requirements outcome instead of guessing. Only the copy is
+          # modified; the packaged kit stays clean for the checks below.
+          $brokenCopy = Join-Path $env:RUNNER_TEMP 'toolreq-missing-negative'
+          if (Test-Path -LiteralPath $brokenCopy) { Remove-Item -Recurse -Force $brokenCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $brokenCopy
+          Remove-Item -LiteralPath (Join-Path $brokenCopy 'tool-requirements.json')
+          $preflight = Join-Path $brokenCopy 'scripts\windows-preflight.ps1'
+          # The preflight is expected to exit non-zero here; do not let
+          # pwsh 7.4+ turn the native command's exit code into a terminating
+          # error before the assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $preflight -OutputDirectory (Join-Path $brokenCopy 'results') 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -ne 2) { throw "The preflight exited $code although tool-requirements.json is missing; a broken kit must abort with exit 2." }
+          if ($output -notmatch '\[BLOCKED\] Tool requirements declaration') { throw 'The preflight did not fail the tools.requirements check.' }
+          if ($output -notmatch 'Restore the complete, unmodified test kit') { throw 'The preflight did not tell the operator to restore the kit.' }
+          if ($output -match 'Java command') { throw 'The preflight continued past the missing declaration and guessed tool requirements.' }
+          if (Get-ChildItem -LiteralPath $brokenCopy -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) { throw 'The preflight wrote a result file for a broken kit.' }
+          Write-Host 'A missing tool-requirements.json blocked the preflight, as required.'
+
+      - name: A missing gradle-version.txt must block the packaged preflight
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test: the preflight carries no built-in Gradle fallback.
+          # A packaged kit whose Gradle declaration file is missing was
+          # tampered with or incompletely copied, so the preflight must stop
+          # with a BLOCKED gradle.expected-version outcome instead of
+          # substituting a guessed release. Only the copy is modified; the
+          # packaged kit stays clean for the checks below.
+          $brokenCopy = Join-Path $env:RUNNER_TEMP 'gradle-decl-missing-negative'
+          if (Test-Path -LiteralPath $brokenCopy) { Remove-Item -Recurse -Force $brokenCopy }
+          Copy-Item -Recurse -LiteralPath $env:PACKAGED_KIT_ROOT -Destination $brokenCopy
+          Remove-Item -LiteralPath (Join-Path $brokenCopy 'gradle-version.txt')
+          $preflight = Join-Path $brokenCopy 'scripts\windows-preflight.ps1'
+          # The preflight is expected to exit non-zero here; do not let
+          # pwsh 7.4+ turn the native command's exit code into a terminating
+          # error before the assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $preflight -OutputDirectory (Join-Path $brokenCopy 'results') 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -ne 2) { throw "The preflight exited $code although gradle-version.txt is missing; a broken kit must abort with exit 2." }
+          if ($output -notmatch '\[BLOCKED\] Gradle version declaration') { throw 'The preflight did not fail the gradle.expected-version check.' }
+          if ($output -notmatch 'Restore the complete, unmodified test kit') { throw 'The preflight did not tell the operator to restore the kit.' }
+          if ($output -match 'Gradle command') { throw 'The preflight continued past the missing declaration and guessed the Gradle release.' }
+          if (Get-ChildItem -LiteralPath $brokenCopy -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) { throw 'The preflight wrote a result file for a broken kit.' }
+          Write-Host 'A missing gradle-version.txt blocked the preflight, as required.'
+
       - name: Run entry-point checks against the packaged kit
         shell: pwsh
         run: |
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1 -PackageRoot $env:PACKAGED_KIT_ROOT
           if ($LASTEXITCODE -ne 0) { throw "test-windows-entrypoints.ps1 exited $LASTEXITCODE" }
+
+  validator-parity:
+    name: PowerShell and Bash tool-requirements validators agree
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: package-kit
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download the packaged Windows test kit
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-test-kit
+          path: ${{ runner.temp }}
+
+      - name: Extract the packaged Windows test kit
+        shell: pwsh
+        run: |
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'packaged-windows-test-kit'
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-Windows-Test-Kit-v6.zip') -DestinationPath $extractRoot -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "PACKAGED_KIT_ROOT=$(Join-Path $extractRoot 'CAS-Pixel11-Windows-Test-Kit-v6')"
+
+      - name: Both validators must accept and reject the same declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The Windows entry points validate tool-requirements.json through the
+          # shared PowerShell parser; the Gate 0A Bash harness carries its own
+          # sed-based validation. Run the shared fixture set through BOTH sides
+          # of the packaged kit and require identical accept/reject verdicts, so
+          # a kit cannot pass on the workstation and fail in the field (or the
+          # reverse) when the two validators drift.
+          bash scripts/check-tool-requirements-parity.sh --kit-root "$(cygpath "$PACKAGED_KIT_ROOT")"
+
+      - name: A one-sided validator change must turn the parity check red
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Negative test: weaken ONLY the PowerShell parser copy so it accepts a
+          # declaration with no jdk section, then require the parity check to
+          # turn red on that fixture. Only the copy is modified; the packaged
+          # kit stays clean.
+          weakened="$RUNNER_TEMP/toolreq-parity-negative"
+          rm -rf "$weakened"
+          cp -r "$(cygpath "$PACKAGED_KIT_ROOT")" "$weakened"
+          parser="$weakened/scripts/cas-tool-requirements.ps1"
+          grep -q 'if (\$jdkMinimumMajor -lt 1 -or \$apiLevel -lt 1) {' "$parser" || {
+            echo "Test setup broken: the parser no longer contains the expected jdk plausibility check to weaken." >&2
+            exit 1
+          }
+          sed -i 's/if (\$jdkMinimumMajor -lt 1 -or \$apiLevel -lt 1) {/if ($apiLevel -lt 1) {/' "$parser"
+          set +e
+          output="$(bash scripts/check-tool-requirements-parity.sh --kit-root "$weakened" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The parity check accepted a kit whose PowerShell parser and Bash harness disagree." >&2
+            exit 1
+          fi
+          grep -q 'MISMATCH.*missing-jdk\.json' <<<"$output" || {
+            echo "The parity check failed without naming the fixture the two validators disagree on." >&2
+            exit 1
+          }
+          grep -q 'TOOLREQ_PARITY_FAILED' <<<"$output" || {
+            echo "The parity check failed without reporting the validator disagreement." >&2
+            exit 1
+          }
+          echo "A one-sided validator change turned the parity check red, as required."
 
   git-bash-report:
     name: Gate 0A report generation under Git Bash
@@ -136,9 +661,6 @@ jobs:
     needs: package-kit
 
     steps:
-      # The Gate 0A harness runs from the packaged kit, but the app's import
-      # validator lives in the repository workspace; without this checkout pnpm
-      # finds no projects and both validation steps below become silent no-ops.
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -204,6 +726,156 @@ jobs:
           print("report.json parsed; status:", report["status"])
           PYEOF
 
+      - name: Pinned device constants track the declared SDK platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Step-local PATH changes do not persist between steps: establish the
+          # python3 shim again (setup-python exposes python on Windows).
+          if ! command -v python3 >/dev/null 2>&1; then
+            shim_dir="$RUNNER_TEMP/python3-shim"
+            mkdir -p "$shim_dir"
+            printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$shim_dir/python3"
+            chmod +x "$shim_dir/python3"
+            export PATH="$shim_dir:$PATH"
+          fi
+          # Drift the packaged kit's declared platform and prove the bash
+          # harness's pinned-device contract (AVD name, emulator API, minimum
+          # physical API, and report expectations) moves with it instead of
+          # staying pinned to a hardcoded level. The kit copy is disposable;
+          # restore it anyway so later steps see the unmodified kit.
+          kit_root="$(cygpath "$PACKAGED_KIT_ROOT")"
+          harness="$kit_root/scripts/measure-gate0a.sh"
+          requirements="$kit_root/tool-requirements.json"
+          cp "$requirements" "$RUNNER_TEMP/tool-requirements.json.bak"
+          trap 'cp "$RUNNER_TEMP/tool-requirements.json.bak" "$requirements"' EXIT
+          python - "$(cygpath -w "$requirements")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          data["androidSdk"]["apiLevel"] = 36
+          data["androidSdk"]["platform"] = "android-36"
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PYEOF
+          out_parent="$RUNNER_TEMP/gate0a-drifted-declaration"
+          rm -rf "$out_parent"
+          output="$("$harness" --report-self-test --out-dir "$out_parent" 2>&1)"
+          printf '%s\n' "$output"
+          drifted_run_dir="$(printf '%s\n' "$output" | sed -n 's/.*CAS_GATE0A_REPORT_SELF_TEST_OK runDir=//p' | tail -n 1 | tr -d '\r')"
+          if [[ -z "$drifted_run_dir" ]]; then
+            echo "The harness did not complete the report self-test with a declared API 36 platform." >&2
+            exit 1
+          fi
+          grep -q 'CAS_Pixel_8a_API_36' "$drifted_run_dir/report.json" || {
+            echo "Report expectations do not reflect the declared API 36 pinned AVD." >&2
+            exit 1
+          }
+          grep -q 'Pinned emulator API 36, or approved physical Pixel 11 on API 36 or newer' "$drifted_run_dir/report.json" || {
+            echo "Report expectations do not reflect the declared API 36 minimum physical API." >&2
+            exit 1
+          }
+          grep -P -q '^apiLevel\t36$' "$drifted_run_dir/environment.tsv" || {
+            echo "The harness did not derive the recorded API level from the declared platform." >&2
+            exit 1
+          }
+          echo "Declared API 36 produced a matching pinned-device contract in the report."
+          # An inconsistent declaration must block explicitly, never silently default.
+          python - "$(cygpath -w "$requirements")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          data["androidSdk"]["apiLevel"] = 36
+          data["androidSdk"]["platform"] = "android-35"
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PYEOF
+          set +e
+          bad_output="$("$harness" --report-self-test --out-dir "$RUNNER_TEMP/gate0a-inconsistent-declaration" 2>&1)"
+          bad_code=$?
+          set -e
+          printf '%s\n' "$bad_output"
+          if [[ $bad_code -ne 2 ]]; then
+            echo "An inconsistent tool-requirements.json did not block the harness with exit 2 (exit $bad_code)." >&2
+            exit 1
+          fi
+          grep -q 'BLOCKED' <<<"$bad_output" || {
+            echo "An inconsistent tool-requirements.json did not produce a BLOCKED message." >&2
+            exit 1
+          }
+          echo "Inconsistent declaration blocked the harness explicitly, as required."
+
+      - name: Generate a hardware-shaped report with the repo-only fixture generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v python3 >/dev/null 2>&1; then
+            shim_dir="$RUNNER_TEMP/python3-shim"
+            mkdir -p "$shim_dir"
+            printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$shim_dir/python3"
+            chmod +x "$shim_dir/python3"
+            export PATH="$shim_dir:$PATH"
+          fi
+          # The sample self-test is always evidenceClass=sample with preflight=WARN,
+          # so it never exercises the physical-device import rules. This repo-only
+          # generator (never packaged into the field kit) runs the harness's own
+          # write_report() against a seeded default Pixel 11 run, so the fixture
+          # carries the exact invariants of a completed hardware run.
+          out_parent="$RUNNER_TEMP/gate0a-report-hwfixture"
+          rm -rf "$out_parent"
+          set +e
+          output="$(bash scripts/generate-gate0a-hardware-report-fixture.sh --out-dir "$out_parent" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -ne 0 ]]; then
+            echo "Hardware fixture generation exited $code." >&2
+            exit 1
+          fi
+          report_path="$(printf '%s\n' "$output" | sed -n 's/.*GATE0A_HW_FIXTURE_OK report=//p' | tail -n 1 | tr -d '\r')"
+          if [[ -z "$report_path" ]]; then
+            echo "The generator exited 0 but did not report a successful fixture write." >&2
+            exit 1
+          fi
+          echo "GATE0A_HW_REPORT=$report_path" >> "$GITHUB_ENV"
+          # Independent verification: never trust the exit code or log alone.
+          test -s "$report_path" || { echo "report.json is missing: $report_path" >&2; exit 1; }
+          python - "$(cygpath -w "$report_path")" <<'PYEOF'
+          import json, os, sys
+          from datetime import datetime
+          size = os.path.getsize(sys.argv[1])
+          # The documented hardware report is ~250 KB; the fixture must stay
+          # above the old 200 KB UI gate so a regressed size limit fails here.
+          assert size > 200_000, size
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              report = json.load(handle)
+          assert report["schema"] == "cas-gate0a-report-v2", report["schema"]
+          assert report["evidenceClass"] == "physical-device-observation", report["evidenceClass"]
+          assert report["status"] == "complete", report["status"]
+          assert report["preflight"]["status"] == "PASS", report["preflight"]["status"]
+          assert report["target"]["model"] == "Pixel 11", report["target"]["model"]
+          assert report["target"]["isEmulator"] is False, report["target"]["isEmulator"]
+          assert report["target"]["usbState"] == "device", report["target"]["usbState"]
+          # Cross-field invariants the report writer must preserve.
+          assert report["preflight"]["unresolvedWarnings"] == report["warnings"]
+          assert report["summary"]["eventCount"] == len(report["events"]) == len(report["observations"])
+          # The documented hardware run's exact volume: 219 events (200
+          # repeats), one logcat capture per launch/navigation sample, all
+          # referenced in evidence.logs.
+          assert report["repeatCount"] == 200, report["repeatCount"]
+          assert report["summary"]["eventCount"] == 219, report["summary"]["eventCount"]
+          assert len(report["evidence"]["logs"]) > 200, len(report["evidence"]["logs"])
+          counts = report["summary"]["eventCounts"]
+          assert sum(counts.values()) == report["summary"]["eventCount"], counts
+          started_ms = int(datetime.fromisoformat(report["startedAtUtc"].replace("Z", "+00:00")).timestamp() * 1000)
+          assert abs(report["startedAtMs"] - started_ms) <= 2000, (report["startedAtMs"], started_ms)
+          finished_ms = int(datetime.fromisoformat(report["finishedAtUtc"].replace("Z", "+00:00")).timestamp() * 1000)
+          assert report["finishedAtMs"] == finished_ms, (report["finishedAtMs"], finished_ms)
+          print("hardware-shaped report.json parsed; status:", report["status"])
+          PYEOF
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -221,6 +893,47 @@ jobs:
           # so a harness/app schema drift fails here instead of in the field.
           pnpm --filter @workspace/api-server run validate:gate0a-report \
             "$(cygpath -w "$GATE0A_RUN_DIR/report.json")"
+
+      - name: The hardware-shaped report must pass the app's import validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Same validateGate0aImport rules as POST /api/cas/gate0a/import, now
+          # against the physical-device-observation shape: Pixel 11 identity,
+          # authorized adb state, and the real package hash are all checked.
+          pnpm --filter @workspace/api-server run validate:gate0a-report \
+            "$(cygpath -w "$GATE0A_HW_REPORT")"
+
+      - name: A physical report from an unapproved device model must be rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Import validation must only accept physical evidence from the
+          # approved Pixel 11 target; derive the negative case from the passing
+          # hardware report so it fails exactly on the device-model rule.
+          unapproved="$RUNNER_TEMP/gate0a-report-unapproved-model.json"
+          python - "$(cygpath -w "$GATE0A_HW_REPORT")" "$(cygpath -w "$unapproved")" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              report = json.load(handle)
+          report["target"]["model"] = "Pixel 10"
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              json.dump(report, handle)
+          PYEOF
+          set +e
+          output="$(pnpm --filter @workspace/api-server run validate:gate0a-report "$(cygpath -w "$unapproved")" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The validator accepted a physical report from an unapproved device model." >&2
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -q "REJECTED" || {
+            echo "The validator failed without reporting a rejection reason." >&2
+            exit 1
+          }
+          echo "Unapproved-device physical report rejected by the app's import validation, as required."
 
       - name: A report the app would reject must fail validation
         shell: bash
