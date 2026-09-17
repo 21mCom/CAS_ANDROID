@@ -5,9 +5,13 @@
 # actually turns red when the test app crashes on launch, and stays green
 # for a healthy launch.
 #
-# The harness extracts the job's `script:` block VERBATIM from the workflow
-# file (so any future edit to the detection logic is what gets tested) and
-# runs it against a fake `adb` that simulates healthy and crash scenarios.
+# The job's detection logic lives in the committed script
+# .github/scripts/emulator-smoke-test.sh (the workflow invokes it as a
+# single `script:` line because android-emulator-runner runs each inline
+# script line as a separate `sh -c`). This harness runs THAT FILE VERBATIM
+# against a fake `adb` that simulates healthy and crash scenarios, and
+# separately asserts the workflow still invokes the file — so a future edit
+# to either side of the contract is what gets tested.
 # No Android SDK or emulator is required.
 #
 # Usage:  bash .github/scripts/verify-launch-smoke-detection.sh
@@ -21,41 +25,49 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$REPO_ROOT/.github/workflows/android-test-package-build.yml"
+SCRIPT_UNDER_TEST="$REPO_ROOT/.github/scripts/emulator-smoke-test.sh"
 FIXTURES="$REPO_ROOT/.github/scripts/launch-smoke-fixtures"
-
-# ---------------------------------------------------------------------------
-# Extract the launch-smoke-test job's `script: |` block from the workflow.
-# The block scalar's content indent is the `script:` key indent + 2 spaces.
-# ---------------------------------------------------------------------------
-extract_script() {
-  awk '
-    /^  launch-smoke-test:/ { in_job = 1 }
-    in_job && /^[[:space:]]+script: \|/ {
-      match($0, /^[[:space:]]*/); base = RLENGTH; in_block = 1; next
-    }
-    in_block {
-      if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-      match($0, /^[[:space:]]+/)
-      if (RLENGTH <= base) exit
-      print substr($0, base + 3)
-    }
-  ' "$WORKFLOW"
-}
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-EXTRACTED="$TMP_ROOT/launch-smoke-script.sh"
-extract_script > "$EXTRACTED"
+# ---------------------------------------------------------------------------
+# The script under test is the committed file itself — run it verbatim so
+# any future edit to the detection logic is what gets tested.
+# ---------------------------------------------------------------------------
+if [ ! -f "$SCRIPT_UNDER_TEST" ]; then
+  echo "HARNESS ERROR: smoke script missing at $SCRIPT_UNDER_TEST." >&2
+  exit 2
+fi
+EXTRACTED="$SCRIPT_UNDER_TEST"
 
-# Guard: fail loudly if the extraction drifted from what we expect to test.
+# ---------------------------------------------------------------------------
+# Contract guard: the launch-smoke-test job must still invoke that file as
+# its `script:` line. If someone re-inlines the logic (which silently breaks
+# under android-emulator-runner's per-line sh -c execution) or points the
+# job elsewhere, this harness would be testing a script CI no longer runs —
+# fail loudly instead.
+# ---------------------------------------------------------------------------
+if ! awk '
+    /^  launch-smoke-test:/ { in_job = 1 }
+    in_job && /^[[:space:]]+script:[[:space:]]+bash \.github\/scripts\/emulator-smoke-test\.sh[[:space:]]*$/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$WORKFLOW"; then
+  echo "HARNESS ERROR: the launch-smoke-test job no longer invokes" >&2
+  echo "  'bash .github/scripts/emulator-smoke-test.sh' as its script: line." >&2
+  echo "The detection logic must live in that committed file (inline multi-line" >&2
+  echo "scripts break under android-emulator-runner's per-line sh -c execution)." >&2
+  exit 2
+fi
+
+# Guard: fail loudly if the script drifted from what we expect to test.
 # Structural markers only — detection patterns are intentionally NOT listed
 # here, so a broken pattern is reported as a scenario FAILURE (exit 1), not
 # a harness error (exit 2).
 for needle in "am start" "pidof com.covertalert.pixeltest" "logcat -d" "Smoke test passed" "locksettings set-pin" "sys.user.0.ce_available" "gate0a-local-journal.xml"; do
   if ! grep -qF "$needle" "$EXTRACTED"; then
-    echo "HARNESS ERROR: extracted script does not contain '$needle'." >&2
-    echo "The workflow structure may have changed; update the extractor." >&2
+    echo "HARNESS ERROR: smoke script does not contain '$needle'." >&2
+    echo "The script structure may have changed; update this harness." >&2
     exit 2
   fi
 done

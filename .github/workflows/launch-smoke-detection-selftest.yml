@@ -2,8 +2,9 @@ name: Launch smoke detection self-test
 
 # Runs the no-emulator crash-detection self-test harness whenever the
 # detection script it guards could change: the launch-smoke-test job's
-# `script:` block lives in android-test-package-build.yml, and the harness
-# extracts that block verbatim — so a future edit to either side of the
+# detection logic lives in .github/scripts/emulator-smoke-test.sh (invoked
+# by android-test-package-build.yml as a single `script:` line), and the
+# harness runs that file verbatim — so a future edit to either side of the
 # contract turns this job red before the broken detection ships to CI.
 
 on:
@@ -11,12 +12,14 @@ on:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/workflows/launch-smoke-detection-selftest.yml"
+      - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-launch-smoke-detection.sh"
       - ".github/scripts/launch-smoke-fixtures/**"
   push:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/workflows/launch-smoke-detection-selftest.yml"
+      - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-launch-smoke-detection.sh"
       - ".github/scripts/launch-smoke-fixtures/**"
   workflow_dispatch:
