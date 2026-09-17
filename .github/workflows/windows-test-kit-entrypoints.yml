@@ -12,6 +12,7 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
       - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
@@ -20,6 +21,7 @@ on:
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
       - "scripts/generate-gate0a-hardware-report-fixture.sh"
       - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/check-gate0a-guide-freshness.sh"
       - "scripts/fixtures/tool-requirements-parity/**"
   push:
     paths:
@@ -32,6 +34,7 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
       - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
@@ -40,6 +43,7 @@ on:
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
       - "scripts/generate-gate0a-hardware-report-fixture.sh"
       - "scripts/check-tool-requirements-parity.sh"
+      - "scripts/check-gate0a-guide-freshness.sh"
       - "scripts/fixtures/tool-requirements-parity/**"
   workflow_dispatch:
 
@@ -171,6 +175,140 @@ jobs:
           # SHA256SUMS.txt must verify against the shipped files.
           cd "$COMMITTED_HANDOFF_ROOT"
           sha256sum -c SHA256SUMS.txt
+
+  gate0a-guide-freshness:
+    name: Committed Gate 0A run-guide PDF matches its generator
+    # ubuntu-latest: the mvp-handoff-freshness job proves the ZIP matches the
+    # committed PDF, but nothing proves the committed PDF still matches
+    # generate-gate0a-guide-readable.mjs. Editing the generator without
+    # regenerating would ship a stale guide in every future handoff while the
+    # freshness job stays green. PDF bytes are not deterministic across
+    # Chromium runs, so the check compares rendered content (page count plus
+    # per-page extracted text), never bytes. node, google-chrome, and bash are
+    # preinstalled; pdftotext comes from poppler-utils.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PDF text-extraction tools and a stable font set
+        run: |
+          set -euo pipefail
+          # pdftotext/pdfinfo come from poppler-utils. fonts-liberation is
+          # metric-compatible with the guide's Arial/Helvetica stack, so the
+          # regenerated PDF paginates identically instead of reflowing a
+          # checklist block onto an extra page because a fallback font's
+          # metrics differ from the workspace the PDF was committed from.
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils fonts-liberation
+
+      - name: Committed run-guide PDF must match a fresh regeneration
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          bash scripts/check-gate0a-guide-freshness.sh
+
+      - name: An unregenerated source edit must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: edit the generator's guide content WITHOUT
+          # regenerating the committed PDF, then require the check to fail and
+          # to name the drifted page. Only the checkout is modified; the
+          # workflow restores the generator afterwards so no later step sees
+          # the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q 'Measure the handoff\.' "$generator"
+          sed -i 's/Measure the handoff\./Measure the stale handoff./' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF that no longer matches its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'page(s): 1' <<<"$output" || {
+            echo "The freshness check failed without naming the drifted page." >&2
+            exit 1
+          }
+          echo "An unregenerated source edit turned the freshness check red, as required."
+
+      - name: An unregenerated CSS-only change must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: change a safety-significant color in the generator
+          # WITHOUT regenerating the committed PDF. The text layer and page
+          # count stay identical, so only the rendered-pixel comparison can
+          # catch this drift class; require the check to fail and name the
+          # drifted page. Only the checkout is modified; the workflow restores
+          # the generator afterwards so no later step sees the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q -- '--red:#8f2e25' "$generator"
+          sed -i 's/--red:#8f2e25/--red:#1a6e2e/' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF whose safety colors no longer match its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'rendered pixels differ on page(s): 1' <<<"$output" || {
+            echo "The freshness check failed without naming the visually drifted page." >&2
+            exit 1
+          }
+          echo "An unregenerated CSS-only change turned the freshness check red, as required."
+
+      - name: An unregenerated localized border-color change must turn the freshness check red
+        run: |
+          set -euo pipefail
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          # Negative test: recolor ONLY the footer's 1px rule, leaving every
+          # word, the page count, and every broad color block untouched. This
+          # is the smallest realistic visual drift (~700 rendered pixels per
+          # page); a percentage-of-page tolerance would wave it through, so
+          # the check's absolute noise budget is what must catch it. Require
+          # the check to fail and name every footer-bearing page. Only the
+          # checkout is modified; the workflow restores the generator
+          # afterwards so no later step sees the drifted source.
+          generator="artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
+          grep -q 'border-top:1px solid var(--line)' "$generator"
+          sed -i 's/border-top:1px solid var(--line)/border-top:1px solid #000000/' "$generator"
+          trap 'git checkout -- "$generator"' EXIT
+          set +e
+          output="$(bash scripts/check-gate0a-guide-freshness.sh 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $code -eq 0 ]]; then
+            echo "The freshness check accepted a committed PDF whose footer rule color no longer matches its generator." >&2
+            exit 1
+          fi
+          grep -q 'GATE0A_GUIDE_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness check failed without reporting the stale guide." >&2
+            exit 1
+          }
+          grep -q 'rendered pixels differ on page(s): 1 2 3 4 5 6' <<<"$output" || {
+            echo "The freshness check failed without naming every footer-bearing page." >&2
+            exit 1
+          }
+          echo "An unregenerated localized border-color change turned the freshness check red, as required."
 
   windows-entrypoints:
     name: Windows PowerShell launcher smoke checks
