@@ -11,11 +11,10 @@ on:
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
-      - "artifacts/covert-alert-system/android-test-package/scripts/**"
-      - "artifacts/covert-alert-system/android-test-package/tool-requirements.json"
-      - "artifacts/covert-alert-system/android-test-package/README.md"
-      - "artifacts/covert-alert-system/android-test-package/START-HERE-WINDOWS.md"
-      - "artifacts/covert-alert-system/android-test-package/docs/**"
+      - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
+      - "artifacts/covert-alert-system/android-test-package/**"
+      - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
@@ -32,11 +31,10 @@ on:
       - "artifacts/covert-alert-system/scripts/test-windows-entrypoints.ps1"
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
-      - "artifacts/covert-alert-system/android-test-package/scripts/**"
-      - "artifacts/covert-alert-system/android-test-package/tool-requirements.json"
-      - "artifacts/covert-alert-system/android-test-package/README.md"
-      - "artifacts/covert-alert-system/android-test-package/START-HERE-WINDOWS.md"
-      - "artifacts/covert-alert-system/android-test-package/docs/**"
+      - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
+      - "artifacts/covert-alert-system/android-test-package/**"
+      - "deliverables/CAS-Pixel11-MVP-Handoff-*.zip"
       - "artifacts/api-server/package.json"
       - "artifacts/api-server/src/lib/gate0a-report.ts"
       - "artifacts/api-server/scripts/validate-gate0a-report.ts"
@@ -51,6 +49,11 @@ on:
 # check jobs extract it and test only what the ZIP contains. A packaging
 # regression that drops, renames, or stale-copies a script fails the build
 # instead of shipping a broken kit.
+#
+# The MVP handoff ZIP in deliverables/ (CAS-Pixel11-MVP layout, produced by
+# package-mvp-handoff.ps1) is covered the same way: the mvp-handoff-freshness
+# job rebuilds it from the current tree and fails if the committed ZIP's
+# contents differ, so a hand-assembled or stale handoff cannot ship again.
 
 jobs:
   package-kit:
@@ -78,6 +81,96 @@ jobs:
           name: windows-test-kit
           path: ${{ runner.temp }}/CAS-Pixel11-Windows-Test-Kit-v6.zip
           retention-days: 7
+
+  mvp-handoff-freshness:
+    name: Committed MVP handoff ZIP matches the current kit tree
+    # ubuntu-latest: the comparison must be byte-exact across platforms, and a
+    # Windows checkout could normalize line endings differently than the Linux
+    # workspace the deliverable is committed from. pwsh, python3, and bash are
+    # preinstalled; only the Windows entry-point gate is deferred to the
+    # windows-entrypoints job (it needs powershell.exe and CMD).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Locate exactly one committed handoff ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $committed = @(Get-ChildItem -LiteralPath deliverables -Filter 'CAS-Pixel11-MVP-Handoff-v*-mvp.zip' -File)
+          if ($committed.Count -ne 1) {
+              throw ("Expected exactly one committed MVP handoff ZIP in deliverables/, found {0}. Rebuild the deliverable with artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1." -f $committed.Count)
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "COMMITTED_HANDOFF_ZIP=$($committed[0].FullName)"
+
+      - name: Rebuild the MVP handoff package from the current tree
+        shell: pwsh
+        run: |
+          # The packager runs the drift, hardcode-floor, and validator-parity
+          # gates against the staged package before writing the ZIP, so a
+          # drifted tree fails here even before the content comparison.
+          $freshZip = Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-fresh.zip'
+          pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $freshZip
+          if ($LASTEXITCODE -ne 0) { throw "package-mvp-handoff.ps1 exited $LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $freshZip -PathType Leaf)) { throw "Packaging reported success but $freshZip is missing." }
+
+      - name: Committed handoff ZIP must match the fresh scripted rebuild
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The 2026-09-16 handoff ZIP went stale within hours of a merge
+          # because nothing compared it to the kit tree. Any content
+          # difference here means deliverables/ holds a stale package: rebuild
+          # it with package-mvp-handoff.ps1 and commit the result.
+          function Expand-Handoff([string]$Zip, [string]$Destination) {
+              Expand-Archive -LiteralPath $Zip -DestinationPath $Destination -Force
+              $root = Join-Path $Destination 'CAS-Pixel11-MVP'
+              if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "ZIP $Zip does not contain the CAS-Pixel11-MVP handoff root." }
+              return $root
+          }
+          function Get-RelativeFilePaths([string]$Root) {
+              @(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
+                  $_.FullName.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+              })
+          }
+
+          $committedRoot = Expand-Handoff $env:COMMITTED_HANDOFF_ZIP (Join-Path $env:RUNNER_TEMP 'handoff-committed')
+          $freshRoot = Expand-Handoff (Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-fresh.zip') (Join-Path $env:RUNNER_TEMP 'handoff-fresh')
+          Add-Content -Path $env:GITHUB_ENV -Value "COMMITTED_HANDOFF_ROOT=$committedRoot"
+
+          $committedFiles = @(Get-RelativeFilePaths $committedRoot)
+          $freshFiles = @(Get-RelativeFilePaths $freshRoot)
+          $missing = @($freshFiles | Where-Object { $committedFiles -notcontains $_ })
+          $unexpected = @($committedFiles | Where-Object { $freshFiles -notcontains $_ })
+          if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+              $missing | ForEach-Object { Write-Host "MISSING from committed ZIP: $_" }
+              $unexpected | ForEach-Object { Write-Host "STALE in committed ZIP: $_" }
+              throw ("The committed handoff ZIP file set differs from a fresh rebuild ({0} missing, {1} stale). Rebuild with package-mvp-handoff.ps1." -f $missing.Count, $unexpected.Count)
+          }
+
+          $drifted = @()
+          foreach ($relative in $freshFiles) {
+              $freshHash = (Get-FileHash -LiteralPath (Join-Path $freshRoot $relative) -Algorithm SHA256).Hash
+              $committedHash = (Get-FileHash -LiteralPath (Join-Path $committedRoot $relative) -Algorithm SHA256).Hash
+              if ($freshHash -ne $committedHash) { $drifted += $relative }
+          }
+          if ($drifted.Count -gt 0) {
+              $drifted | ForEach-Object { Write-Host "STALE content in committed ZIP: $_" }
+              throw ("The committed handoff ZIP is stale: {0} file(s) differ from the current tree. Rebuild with package-mvp-handoff.ps1." -f $drifted.Count)
+          }
+          Write-Host ("Committed MVP handoff ZIP matches the current kit tree ({0} files verified)." -f $freshFiles.Count)
+
+      - name: The committed handoff manifest must verify clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Independent verification of what the operator receives: the shipped
+          # SHA256SUMS.txt must verify against the shipped files.
+          cd "$COMMITTED_HANDOFF_ROOT"
+          sha256sum -c SHA256SUMS.txt
 
   windows-entrypoints:
     name: Windows PowerShell launcher smoke checks
