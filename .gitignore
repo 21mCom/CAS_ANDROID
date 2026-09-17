@@ -60,3 +60,6 @@ scripts/.cache/
 # Android test-package build outputs
 /artifacts/covert-alert-system/android-test-package/.gradle/
 /artifacts/covert-alert-system/android-test-package/app/build/
+
+# Local Android toolchain + emulator state (task verification rigs)
+/android/
