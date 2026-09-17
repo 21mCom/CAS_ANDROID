@@ -250,6 +250,54 @@ the field Pixel, or production readiness. Keep the emulator JSON/Markdown
 record with the host timing log and mark the run as simulated when importing
 or reviewing it.
 
+## CI: SMS send/receipt flow on the emulator
+
+The `sms-receipt-flow-test` job in
+`.github/workflows/android-test-package-build.yml` proves the device-direct
+delivery path end-to-end before each release: it starts a throwaway dev API
+(PostgreSQL + `CAS_SMS_DELIVERY_MODE=device`) on the runner, boots the
+emulator, and runs `.github/scripts/verify-sms-flow.sh`, which:
+
+1. Preflights the handset-facing contracts over plain HTTP: `device-pending`
+   and both receipt endpoints must refuse a missing device token (401) and a
+   malformed body (400), and `device-pending` must return an `items` array.
+2. Drives the app headlessly through `SmsFlowActivity` — a debug-source-set
+   activity with `android:exported="false"`, so other apps (and on API 35,
+   the plain adb shell user) cannot start it; the harness elevates with
+   `adb root` first, which needs a rootable image like the CI emulator. It
+   accepts caller-controlled responder numbers and can reuse the stored
+   device credential, so it must never be exported or shipped in a release
+   build. The handset's radio failure receipt must move the console's outbox
+   item QUEUED → DEAD_LETTER.
+3. Re-queues the item through the console endpoint, then drives the
+   `requeue` mode with a fixed number; the handset picks it up from
+   `device-pending`, re-sends, and the receipt must move the item → SENT.
+4. Asserts the on-device journal shows the receipts were actually POSTed
+   (`SMS_RECEIPT_OUTCOME … REPORTED`) and that nothing crashed.
+
+`SmsFlowActivity` accepts `mode` (`alert`/`requeue`), `serverUrl`,
+`deviceToken`, and `responders` extras and persists them to `TestStore` before
+running, so the harness can swap the responder list between phases without UI
+taps. The harness tunnels the runner's dev API into the device with
+`adb reverse tcp:<port> tcp:<port>`, so the app talks to
+`http://127.0.0.1:<port>` — the same mechanism works on an emulator and on a
+USB-attached field device, and unlike the qemu `10.0.2.2` host alias it does
+not depend on the host's network namespace. Plain HTTP is allowed only for
+these loopback endpoints (`network_security_config.xml`, and `AlertSender`
+accepts exactly those hosts); every real destination stays HTTPS-only.
+
+Any drift in the `sms-receipt`/`device-receipt` or `device-pending` contracts
+fails the job loudly: the preflight rejects the drifted response, or the
+outbox state never reaches the expected state within the polling budget.
+
+A note on running the harness outside CI: it only needs an ADB-attached device
+whose radio can actually send SMS. Sandboxed/containerized hosts whose
+emulated cellular modem never registers (no SIM, `isms`/`phone` services
+absent, `SmsManager` throwing `UnsupportedOperationException: Sms is not
+supported` for every send) cannot complete the SENT leg — the harness fails
+there loudly, as designed. Use CI or a workstation whose emulator has a
+working fake modem for the full pass.
+
 ## Windows workstation preflight
 
 Use the Windows entry point before building or running the disposable package.

@@ -23,8 +23,8 @@ object AlertSender {
 
     fun trigger(context: Context, baseUrl: String): Result {
         val trimmed = baseUrl.trim().trimEnd('/')
-        if (!trimmed.startsWith("https://")) {
-            return Result(false, "Server URL must start with https://")
+        if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {
+            return Result(false, "Server URL must start with https:// (plain HTTP is only accepted for loopback dev endpoints that cannot leave the machine: 127.0.0.1 via adb reverse, or the emulator's 10.0.2.2 host alias)")
         }
         val channels = buildList {
             add("SMS")
@@ -65,4 +65,17 @@ object AlertSender {
             }
         }.getOrElse { Result(false, "Request failed: ${it.message ?: it.javaClass.simpleName}") }
     }
+
+    /**
+     * Plain HTTP is only tolerated for endpoints that cannot leave the local
+     * machine: 127.0.0.1 reaches a dev API forwarded over USB/emulator via
+     * `adb reverse` (used by the emulator CI job and for field debugging
+     * against a laptop), and 10.0.2.2 is the emulator's alias for the host
+     * machine's loopback, which does not route on physical hardware.
+     * Everything else stays HTTPS-only.
+     */
+    private fun isDevLoopback(url: String): Boolean =
+        url == "http://10.0.2.2" || url.startsWith("http://10.0.2.2:") ||
+            url == "http://127.0.0.1" || url.startsWith("http://127.0.0.1:") ||
+            url == "http://localhost" || url.startsWith("http://localhost:")
 }

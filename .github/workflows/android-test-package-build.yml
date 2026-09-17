@@ -5,16 +5,24 @@ on:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
+      - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      # The sms-receipt-flow job gates the handset-facing API contract too, so
+      # API server and schema changes must trigger this workflow.
+      - "artifacts/api-server/**"
+      - "lib/db/**"
   push:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
+      - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      - "artifacts/api-server/**"
+      - "lib/db/**"
   workflow_dispatch:
 
 jobs:
@@ -385,3 +393,123 @@ jobs:
               exit 1
             fi
             echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), BootReceiver (BOOT_COMPLETED), and BootReceiver (LOCKED_BOOT_COMPLETED, verified while user 0 locked) all exercised; pre-unlock journal entry present; no fatal logcat entries."
+
+  sms-receipt-flow-test:
+    name: Drive the handset SMS send/receipt/re-queue flow against a dev API
+    needs: assemble-debug
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      # Throwaway credential for the ephemeral CI database; the handset
+      # endpoints fail closed without one, so the job sets a literal value on
+      # both sides. Not a real secret — the database dies with the runner.
+      CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+      CAS_FLOW_API_PORT: "5055"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up pnpm and Node
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: gate0a-app-debug-apk
+          path: apk
+
+      - name: Start a disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          # Service containers do not exist on macOS runners; the images ship
+          # PostgreSQL via Homebrew, so bootstrap a throwaway cluster exactly
+          # like scripts/disposable-review-database.mjs does locally.
+          brew list --versions postgresql@14 > /dev/null 2>&1 || brew install postgresql@14
+          pgbin="$(brew --prefix postgresql@14)/bin"
+          pgdata="$RUNNER_TEMP/cas-flow-pg"
+          "$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null
+          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 5432" -w start > /dev/null
+          "$pgbin/createdb" -h 127.0.0.1 -p 5432 -U runner cas_flow
+          echo "DATABASE_URL=postgresql://runner@127.0.0.1:5432/cas_flow" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies and push the schema
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --filter @workspace/api-server...
+          pnpm --filter @workspace/db run push-force
+
+      - name: Start the dev API in device-delivery mode
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/api-server run build
+          PORT=${{ env.CAS_FLOW_API_PORT }} NODE_ENV=development \
+            CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \
+            DATABASE_URL="$DATABASE_URL" \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-flow-api.log 2>&1 &
+          up=""
+          for i in $(seq 1 45); do
+            if curl -s "http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}/api/cas/state" > /dev/null 2>&1; then up=1; break; fi
+            sleep 2
+          done
+          if [ -z "$up" ]; then
+            echo "::error::dev API never came up"
+            tail -50 /tmp/cas-flow-api.log || true
+            exit 1
+          fi
+          echo "dev API is up on port ${{ env.CAS_FLOW_API_PORT }} (CAS_SMS_DELIVERY_MODE=device)"
+
+      - name: Boot emulator and prove send + receipt + re-queue pickup
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          CAS_FLOW_API_HOST: http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}
+        with:
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            apk="apk/app-debug.apk"
+            if [ ! -f "$apk" ]; then
+              echo "::error::Downloaded APK missing at $apk"
+              exit 1
+            fi
+            # The harness owns the whole flow: adb reverse tunnel, contract
+            # preflight, bad-number DEAD_LETTER, console re-queue,
+            # device-pending pickup, fixed-number SENT, plus on-device journal
+            # evidence. Any drift in the sms-receipt or device-pending
+            # contract fails this step loudly.
+            CAS_FLOW_APK="$apk" bash .github/scripts/verify-sms-flow.sh

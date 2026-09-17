@@ -11,6 +11,8 @@ description: adb shell cannot send BOOT_COMPLETED on API 35; the emulator CI job
 
 LOCKED_BOOT_COMPLETED sits on the same framework protected-broadcast allowlist (`frameworks/base/core/res/AndroidManifest.xml`), enforced by the same single check — the shell block verified live for BOOT_COMPLETED applies to it.
 
+The same shell-uid denial applies to `am start -n pkg/.NonExportedActivity`: on API 35, uid=2000 gets `SecurityException ... not exported` for non-exported activities, while root (uid 0) is exempt. Driver scripts for debug-only non-exported entry points must `adb root` (and re-run `adb reverse` afterwards — restarting adbd drops reverse tunnels).
+
 **Injection ≠ direct boot:** sending `am broadcast -a ...LOCKED_BOOT_COMPLETED` after the device has unlocked does NOT exercise the pre-unlock path — credential-encrypted storage is already available then, so a CE-storage regression in a receiver stays green. Real direct-boot coverage requires the device to actually be locked: set a lockscreen PIN (`locksettings set-pin`), reboot, assert `sys.user.0.ce_available` is not "true" (calibrate it reads "true" while unlocked first), and let the system deliver LOCKED_BOOT_COMPLETED naturally. The launch-smoke job does exactly this.
 
 **Why:** a code review (2026-09-15) rejected an injected-broadcast phase as overstated direct-boot coverage for exactly this reason.
