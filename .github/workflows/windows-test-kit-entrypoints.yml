@@ -891,8 +891,16 @@ jobs:
           set -euo pipefail
           # Runs the same validateGate0aImport rules as POST /api/cas/gate0a/import,
           # so a harness/app schema drift fails here instead of in the field.
-          pnpm --filter @workspace/api-server run validate:gate0a-report \
-            "$(cygpath -w "$GATE0A_RUN_DIR/report.json")"
+          # Require the validator's ACCEPTED marker in the output: pnpm exits 0
+          # when it finds no project (e.g. a job restructure that drops the
+          # checkout), so exit code alone cannot prove the validator ran.
+          output="$(pnpm --filter @workspace/api-server run validate:gate0a-report \
+            "$(cygpath -w "$GATE0A_RUN_DIR/report.json")" 2>&1)"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" | grep -q "ACCEPTED" || {
+            echo "The validator never reported ACCEPTED; the report was not actually validated." >&2
+            exit 1
+          }
 
       - name: The hardware-shaped report must pass the app's import validation
         shell: bash
@@ -901,8 +909,15 @@ jobs:
           # Same validateGate0aImport rules as POST /api/cas/gate0a/import, now
           # against the physical-device-observation shape: Pixel 11 identity,
           # authorized adb state, and the real package hash are all checked.
-          pnpm --filter @workspace/api-server run validate:gate0a-report \
-            "$(cygpath -w "$GATE0A_HW_REPORT")"
+          # Require the ACCEPTED marker for the same reason as the self-test
+          # step above: a pnpm no-op exits 0 without running the validator.
+          output="$(pnpm --filter @workspace/api-server run validate:gate0a-report \
+            "$(cygpath -w "$GATE0A_HW_REPORT")" 2>&1)"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" | grep -q "ACCEPTED" || {
+            echo "The validator never reported ACCEPTED; the hardware-shaped report was not actually validated." >&2
+            exit 1
+          }
 
       - name: A physical report from an unapproved device model must be rejected
         shell: bash
