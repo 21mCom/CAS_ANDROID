@@ -89,7 +89,12 @@ jobs:
   launch-smoke-test:
     name: Boot API 35 emulator and launch MainActivity
     needs: assemble-debug
-    runs-on: macos-latest
+    # ubuntu-latest, not macos: GitHub's macOS runners are Apple Silicon VMs
+    # without nested virtualization, so the emulator dies at launch with
+    # "HVF error: HV_UNSUPPORTED" (actions/runner-images#9460). Linux runners
+    # expose KVM, which the android-emulator-runner docs recommend for
+    # hardware-accelerated CI emulators.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -102,10 +107,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # No android-actions/setup-android step: macos-latest ships the Android
+      # No android-actions/setup-android step: ubuntu-latest ships the Android
       # SDK preinstalled and android-emulator-runner manages the emulator SDK
       # pieces itself. setup-android@v3 fails on current runners (removed
       # 'tools' package in the SDK repository).
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
 
       - name: Download debug APK
         uses: actions/download-artifact@v4
@@ -118,10 +130,9 @@ jobs:
         with:
           api-level: 35
           target: google_apis
-          # macos-latest runners are Apple Silicon (arm64). Google does not
-          # publish x86_64 system images for darwin-arm64 hosts, so arch must
-          # be arm64-v8a — x86_64 fails AVD creation on the runner image.
-          arch: arm64-v8a
+          # ubuntu-latest is x86_64 with KVM, so the hardware-accelerated
+          # x86_64 system image is the fast, supported choice here.
+          arch: x86_64
           profile: pixel_6
           force-avd-creation: false
           disable-animations: true
