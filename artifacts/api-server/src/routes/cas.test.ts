@@ -2499,7 +2499,7 @@ test("the device-direct recovery loop: failed receipt, re-queue, handset pickup,
 
 test("a stale receipt from before a re-queue cannot mark the re-queued item SENT", async () => {
   await withSmsDeliveryMode("device", async () => {
-    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST" });
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
     const { id } = (await trigger.json()) as { id: string };
     const postReceipt = (body: Record<string, unknown>) =>
       fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
@@ -2533,7 +2533,7 @@ test("a stale receipt from before a re-queue cannot mark the re-queued item SENT
     // 2. The operator fixes the responder list and re-queues: a fresh
     //    delivery-cycle token is minted and handed to the handset via the
     //    device-pending list.
-    const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST" });
+    const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST", headers: AUTH_HEADERS });
     assert.equal(requeue.status, 200);
     assert.equal((await smsRow()).state, "QUEUED");
     const firstToken = (await smsRow()).deviceCycleToken;
@@ -2565,7 +2565,7 @@ test("a stale receipt from before a re-queue cannot mark the re-queued item SENT
     });
     assert.equal(deadAgain.status, 200);
     assert.equal((await smsRow()).state, "DEAD_LETTER");
-    const requeueAgain = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST" });
+    const requeueAgain = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST", headers: AUTH_HEADERS });
     assert.equal(requeueAgain.status, 200);
     const secondToken = (await smsRow()).deviceCycleToken;
     assert.ok(secondToken && secondToken !== firstToken);
@@ -3096,6 +3096,122 @@ test("the enrolled-device credential authorizes the console write endpoints", as
     body: JSON.stringify({ not: "a report" }),
   });
   assert.equal(importReport.status, 400);
+});
+
+test("bootstrap seeds both readiness tables from the console's { gates, setup } payload", async () => {
+  // The exact shapes the console posts from use-field-test (initialGates /
+  // initialSetup) when it finds both tables empty.
+  const setup = [
+    { id: "cover-app", label: "Cover app selected", detail: "Choose the benign app that will host the entry path on the managed Pixel.", group: "Device surface", complete: true, mode: "owner" },
+    { id: "sim", label: "Test SIM present", detail: "Confirm the Pixel has the intended SIM, service, and enough balance for SMS tests.", group: "Connectivity", complete: false, mode: "owner" },
+  ];
+  const gates = [
+    { id: "proxy-launch", index: "01", name: "Proxy Launch", short: "Cover app → alert surface", status: "partial", criterion: "A hardware shortcut or approved entry path must reach the alert surface on the stock Pixel without an observable dead end.", evidence: ["Pixel 11 is the approved physical target; no physical launch has been recorded yet."], nextAction: "Exercise the chosen shortcut three times while the device is locked.", owner: "Operator" },
+  ];
+
+  const first = await fetch(`${baseUrl}/cas/bootstrap`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ gates, setup }),
+  });
+  assert.equal(first.status, 201);
+  assert.deepEqual((await first.json()) as { seeded: boolean }, { seeded: true });
+
+  const setupRows = await db.select().from(casSetupReadiness).orderBy(asc(casSetupReadiness.id));
+  assert.deepEqual(
+    setupRows.map(({ id, label, group, complete, mode }) => ({ id, label, group, complete, mode })),
+    [
+      { id: "cover-app", label: "Cover app selected", group: "Device surface", complete: true, mode: "owner" },
+      { id: "sim", label: "Test SIM present", group: "Connectivity", complete: false, mode: "owner" },
+    ],
+  );
+  const gateRows = await db.select().from(casGateEvidence);
+  assert.equal(gateRows.length, 1);
+  assert.equal(gateRows[0].id, "proxy-launch");
+  assert.equal(gateRows[0].status, "partial");
+  assert.deepEqual(gateRows[0].evidence, ["Pixel 11 is the approved physical target; no physical launch has been recorded yet."]);
+
+  // A second bootstrap must not overwrite or duplicate the seeded catalog.
+  const repeat = await fetch(`${baseUrl}/cas/bootstrap`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ gates: [], setup: [{ ...setup[0], complete: false }] }),
+  });
+  assert.equal(repeat.status, 201);
+  assert.deepEqual((await repeat.json()) as { seeded: boolean }, { seeded: false });
+  const afterRepeat = await db.select().from(casSetupReadiness).where(eq(casSetupReadiness.id, "cover-app"));
+  assert.equal(afterRepeat[0].complete, true);
+  assert.equal((await db.select({ id: casSetupReadiness.id }).from(casSetupReadiness)).length, 2);
+
+  // A malformed payload is a 400, never a half-applied seed.
+  const malformed = await fetch(`${baseUrl}/cas/bootstrap`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "verified" }),
+  });
+  assert.equal(malformed.status, 400);
+});
+
+test("PATCH /cas/setup/:id toggles cas_setup_readiness.complete from the console's { complete } payload", async () => {
+  const before = await db.select().from(casSetupReadiness).where(eq(casSetupReadiness.id, "sim"));
+  assert.equal(before[0].complete, false);
+  const gateStatusesBefore = (await db.select({ id: casGateEvidence.id, status: casGateEvidence.status }).from(casGateEvidence))
+    .map((row) => `${row.id}:${row.status}`)
+    .sort();
+
+  const response = await fetch(`${baseUrl}/cas/setup/sim`, {
+    method: "PATCH",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ complete: true }),
+  });
+  assert.equal(response.status, 200);
+  const row = (await response.json()) as { id: string; label?: string; complete: boolean };
+  assert.equal(row.id, "sim");
+  // The response is a setup-readiness row (label/group), not gate evidence.
+  assert.equal(row.label, "Test SIM present");
+
+  const after = await db.select().from(casSetupReadiness).where(eq(casSetupReadiness.id, "sim"));
+  assert.equal(after[0].complete, true);
+
+  // Gate evidence is a different table and must be untouched by a setup toggle.
+  const gateStatusesAfter = (await db.select({ id: casGateEvidence.id, status: casGateEvidence.status }).from(casGateEvidence))
+    .map((gateRow) => `${gateRow.id}:${gateRow.status}`)
+    .sort();
+  assert.deepEqual(gateStatusesAfter, gateStatusesBefore);
+
+  const unknown = await fetch(`${baseUrl}/cas/setup/no-such-entry`, {
+    method: "PATCH",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ complete: false }),
+  });
+  assert.equal(unknown.status, 404);
+
+  const wrongShape = await fetch(`${baseUrl}/cas/setup/sim`, {
+    method: "PATCH",
+    headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "verified" }),
+  });
+  assert.equal(wrongShape.status, 400);
+});
+
+test("POST /cas/incidents/test mints its own id and journals the local test record", async () => {
+  const response = await fetch(`${baseUrl}/cas/incidents/test`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(response.status, 201);
+  const { id } = (await response.json()) as { id: string };
+  assert.ok(id.length > 0);
+
+  const incidents = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].status, "RESOLVED");
+  assert.equal(incidents[0].priority, "P3");
+  const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  assert.deepEqual(events.map((event) => event.type), ["TEST_RECORDED"]);
+
+  // A second test incident gets a distinct server-minted id.
+  const again = await fetch(`${baseUrl}/cas/incidents/test`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(again.status, 201);
+  const second = (await again.json()) as { id: string };
+  assert.notEqual(second.id, id);
 });
 
 test("the enrolled-device credential authorizes trigger, ack, and resolve", async () => {
