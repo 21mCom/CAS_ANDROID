@@ -31,7 +31,22 @@ export const casOutbox = pgTable("cas_outbox", {
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
   lastError: text("last_error"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
+  // Correlation for device-direct receipts: a server-generated token
+  // identifying the current delivery cycle. Null for the initial cycle
+  // (the handset's first send is triggered locally and never learns one);
+  // minted fresh on every operator re-queue and handed to the handset via
+  // the device-pending list, which echoes it back in the receipt. A receipt
+  // echoing an older token belongs to a superseded batch and is rejected
+  // (410) so it cannot mark the re-queued item SENT. Deliberately NOT a
+  // timestamp: handset and console wall clocks are not guaranteed to agree.
+  deviceCycleToken: text("device_cycle_token"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const casTransportCooldowns = pgTable("cas_transport_cooldowns", {
+  transport: text("transport").primaryKey(),
+  nextAllowedAt: timestamp("next_allowed_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const casSetupReadiness = pgTable("cas_setup_readiness", {

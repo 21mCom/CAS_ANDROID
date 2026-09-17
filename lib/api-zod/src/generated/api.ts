@@ -168,6 +168,36 @@ export const ProcessCasOutboxBody = zod.object({
 export const ProcessCasOutboxResponse = zod.record(zod.string(), zod.unknown())
 
 
+/**
+ * @summary Re-queue an abandoned (DEAD_LETTER) delivery
+ */
+export const RequeueCasOutboxItemParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const requeueCasOutboxItemBodyReasonMax = 500;
+
+
+
+export const RequeueCasOutboxItemBody = zod.object({
+  "reason": zod.string().min(1).max(requeueCasOutboxItemBodyReasonMax).optional()
+})
+
+export const RequeueCasOutboxItemResponse = zod.unknown()
+
+
+/**
+ * Outbox counts by state plus the delivery worker heartbeat (interval, batch size, last tick, last error) so responders can spot a stalled or dead-lettering pipeline without server logs.
+ * @summary Read outbox pipeline health
+ */
+export const GetCasOutboxStatusResponse = zod.object({
+  "counts": zod.record(zod.string(), zod.number()).describe('Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).'),
+  "oldestPendingAt": zod.coerce.date().nullable(),
+  "lastDeliveryError": zod.record(zod.string(), zod.unknown()).nullable(),
+  "worker": zod.record(zod.string(), zod.unknown()).nullable()
+})
+
+
 export const AcknowledgeCasIncidentParams = zod.object({
   "id": zod.coerce.string()
 })
@@ -202,3 +232,5 @@ export const UpdateCasGateBody = zod.object({
 })
 
 export const UpdateCasGateResponse = zod.unknown()
+
+
