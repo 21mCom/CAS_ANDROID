@@ -635,8 +635,10 @@ router.post("/cas/outbox/:id/requeue", async (req, res, next) => {
 
 router.patch("/cas/setup/:id", async (req, res, next) => {
   try {
-    const body = z.object({ status: z.enum(["verified", "partial", "blocked", "not-started"]) }).parse(req.body);
-    const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
+    // Setup readiness items are toggled complete/incomplete from the console;
+    // this is cas_setup_readiness, not gate evidence.
+    const body = z.object({ complete: z.boolean() }).parse(req.body);
+    const [row] = await db.update(casSetupReadiness).set({ complete: body.complete, updatedAt: new Date() }).where(eq(casSetupReadiness.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Setup item not found" });
     return res.json(row);
   } catch (error) { return next(error); }
