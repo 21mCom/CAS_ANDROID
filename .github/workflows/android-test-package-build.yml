@@ -6,16 +6,49 @@ on:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - ".github/scripts/emulator-smoke-test.sh"
+      - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
+      - "scripts/test-receipt-durability.sh"
+      - "scripts/receipt-durability/**"
+      # The sms-receipt-flow job gates the handset-facing API contract too, so
+      # API server and schema changes must trigger this workflow.
+      - "artifacts/api-server/**"
+      - "lib/db/**"
   push:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - ".github/scripts/emulator-smoke-test.sh"
+      - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
+      - "scripts/test-receipt-durability.sh"
+      - "scripts/receipt-durability/**"
+      - "artifacts/api-server/**"
+      - "lib/db/**"
   workflow_dispatch:
 
 jobs:
+  receipt-durability:
+    name: Receipt durability harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The script downloads its own pinned kotlinc + org.json jar into
+      # scripts/.cache (sha256-verified) and proves the handset's
+      # batch→receipt handoff survives process death at every boundary.
+      - name: Run receipt durability harness
+        run: scripts/test-receipt-durability.sh
+
   assemble-debug:
     name: Compile Gate 0A debug APK
     runs-on: ubuntu-latest
@@ -25,17 +58,63 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # tool-requirements.json is the single source of truth shared with
+          # the Windows workstation preflight (scripts/windows-preflight.ps1),
+          # the same way gradle-version.txt pins the Gradle release.
+          jdk="$(jq -er '.jdk.minimumMajor' tool-requirements.json)"
+          api="$(jq -er '.androidSdk.apiLevel' tool-requirements.json)"
+          bt="$(jq -er '.androidSdk.buildToolsMinimum' tool-requirements.json)"
+          echo "jdk=$jdk" >> "$GITHUB_OUTPUT"
+          echo "api-level=$api" >> "$GITHUB_OUTPUT"
+          echo "build-tools=$bt" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
 
       # No android-actions/setup-android step: ubuntu-latest ships the Android
       # SDK preinstalled (ANDROID_HOME set, licenses accepted), and
       # setup-android@v3 now fails on the runner because it installs the newest
       # cmdline-tools (16.0) and runs `sdkmanager tools`, but the 'tools'
       # package was removed from the SDK repository (exit 1 before the build).
+
+      - name: Install and verify the declared SDK platform and build-tools
+        env:
+          API_LEVEL: ${{ steps.tool-requirements.outputs.api-level }}
+          BUILD_TOOLS_MIN: ${{ steps.tool-requirements.outputs.build-tools }}
+        run: |
+          set -euo pipefail
+          # CI must satisfy the same declaration the Windows preflight enforces;
+          # building with whatever the runner happens to ship would let CI stay
+          # green on a toolchain the field kit would reject.
+          # The runner image ships cmdline-tools under ANDROID_HOME but no longer
+          # puts sdkmanager on PATH (run 35203546119 failed with exit 127), so
+          # resolve the binary explicitly with a PATH fallback.
+          sdkmanager_bin="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          if [ ! -x "$sdkmanager_bin" ]; then
+            echo "::error::sdkmanager not found on PATH or at \$ANDROID_HOME/cmdline-tools/latest/bin — runner image drifted."
+            exit 1
+          fi
+          "$sdkmanager_bin" --sdk_root="$ANDROID_HOME" \
+            "platforms;android-$API_LEVEL" "build-tools;$BUILD_TOOLS_MIN" > /dev/null
+          jar="$ANDROID_HOME/platforms/android-$API_LEVEL/android.jar"
+          if [ ! -f "$jar" ]; then
+            echo "::error::Declared platform android-$API_LEVEL is missing ($jar) after sdkmanager install."
+            exit 1
+          fi
+          newest="$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -1)"
+          if [ "$(printf '%s\n%s\n' "$newest" "$BUILD_TOOLS_MIN" | sort -V | head -1)" != "$BUILD_TOOLS_MIN" ]; then
+            echo "::error::Newest installed build-tools $newest is below the declared minimum $BUILD_TOOLS_MIN."
+            exit 1
+          fi
+          echo "SDK satisfies tool-requirements.json: platform android-$API_LEVEL present, build-tools $newest >= $BUILD_TOOLS_MIN."
 
       - name: Read pinned Gradle version
         id: gradle-version
@@ -75,6 +154,9 @@ jobs:
         working-directory: artifacts/covert-alert-system/android-test-package
         run: |
           set -euo pipefail
+          # The install/verify step above guarantees the newest build-tools
+          # release is at or above the declared minimum, so this aapt always
+          # comes from a qualifying release.
           aapt="$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)"
           apk="app/build/outputs/apk/debug/app-debug.apk"
           "$aapt" dump xmltree "$apk" AndroidManifest.xml > /tmp/apk-manifest.txt
@@ -89,7 +171,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot API 35 emulator and launch MainActivity
+    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED + LOCKED_BOOT_COMPLETED
     needs: assemble-debug
     # ubuntu-latest, not macos: GitHub's macOS runners are Apple Silicon VMs
     # without nested virtualization, so the emulator dies at launch with
@@ -103,11 +185,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
 
       # No android-actions/setup-android step: ubuntu-latest ships the Android
       # SDK preinstalled and android-emulator-runner manages the emulator SDK
@@ -127,10 +218,10 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot API 35 emulator, install APK, launch MainActivity
+      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED and LOCKED_BOOT_COMPLETED
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
           target: google_apis
           # ubuntu-latest is x86_64 with KVM, so the hardware-accelerated
           # x86_64 system image is the fast, supported choice here.
@@ -145,3 +236,129 @@ jobs:
           # on Ubuntu (no pipefail). The smoke test therefore lives in a
           # committed script invoked as a single line.
           script: bash .github/scripts/emulator-smoke-test.sh
+
+  sms-receipt-flow-test:
+    name: Drive the handset SMS send/receipt/re-queue flow against a dev API
+    needs: assemble-debug
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      # Throwaway credential for the ephemeral CI database; the handset
+      # endpoints fail closed without one, so the job sets a literal value on
+      # both sides. Not a real secret — the database dies with the runner.
+      CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+      # Synthetic credential for the trigger/re-queue gate (CAS_ALERT_TOKEN);
+      # matches what verify-sms-flow.sh presents as its Bearer token.
+      CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+      CAS_FLOW_API_PORT: "5055"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
+
+      # No android-actions/setup-android step: setup-android@v3 fails on
+      # current runner images (removed 'tools' package in the SDK repository,
+      # proven red on both ubuntu-latest and macos-latest), and the preinstalled
+      # SDK plus android-emulator-runner's own SDK management are sufficient.
+
+      - name: Set up pnpm and Node
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: gate0a-app-debug-apk
+          path: apk
+
+      - name: Start a disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          # Service containers do not exist on macOS runners; the images ship
+          # PostgreSQL via Homebrew, so bootstrap a throwaway cluster exactly
+          # like scripts/disposable-review-database.mjs does locally.
+          brew list --versions postgresql@14 > /dev/null 2>&1 || brew install postgresql@14
+          pgbin="$(brew --prefix postgresql@14)/bin"
+          pgdata="$RUNNER_TEMP/cas-flow-pg"
+          "$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null
+          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 5432" -w start > /dev/null
+          "$pgbin/createdb" -h 127.0.0.1 -p 5432 -U runner cas_flow
+          echo "DATABASE_URL=postgresql://runner@127.0.0.1:5432/cas_flow" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies and push the schema
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --filter @workspace/api-server...
+          pnpm --filter @workspace/db run push-force
+
+      - name: Start the dev API in device-delivery mode
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/api-server run build
+          PORT=${{ env.CAS_FLOW_API_PORT }} NODE_ENV=development \
+            CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \
+            CAS_ALERT_TOKEN="$CAS_FLOW_ALERT_TOKEN" \
+            DATABASE_URL="$DATABASE_URL" \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-flow-api.log 2>&1 &
+          up=""
+          for i in $(seq 1 45); do
+            if curl -s "http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}/api/cas/state" > /dev/null 2>&1; then up=1; break; fi
+            sleep 2
+          done
+          if [ -z "$up" ]; then
+            echo "::error::dev API never came up"
+            tail -50 /tmp/cas-flow-api.log || true
+            exit 1
+          fi
+          echo "dev API is up on port ${{ env.CAS_FLOW_API_PORT }} (CAS_SMS_DELIVERY_MODE=device)"
+
+      - name: Boot emulator and prove send + receipt + re-queue pickup
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          CAS_FLOW_API_HOST: http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}
+        with:
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            apk="apk/app-debug.apk"
+            if [ ! -f "$apk" ]; then
+              echo "::error::Downloaded APK missing at $apk"
+              exit 1
+            fi
+            # The harness owns the whole flow: adb reverse tunnel, contract
+            # preflight, bad-number DEAD_LETTER, console re-queue,
+            # device-pending pickup, fixed-number SENT, plus on-device journal
+            # evidence. Any drift in the sms-receipt or device-pending
+            # contract fails this step loudly.
+            CAS_FLOW_APK="$apk" bash .github/scripts/verify-sms-flow.sh

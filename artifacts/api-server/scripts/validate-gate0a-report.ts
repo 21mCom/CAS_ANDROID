@@ -5,8 +5,11 @@
  * Usage: tsx scripts/validate-gate0a-report.ts <path-to-report.json>
  * Exits 0 when the app would accept the report, 1 otherwise.
  *
- * CI runs this against the measure-gate0a.sh --report-self-test output so a
- * harness/app schema drift fails before a field operator hits it on import.
+ * CI runs this against the measure-gate0a.sh --report-self-test output (sample
+ * shape) and the scripts/generate-gate0a-hardware-report-fixture.sh output
+ * (physical-device-observation shape, produced by the harness's own
+ * write_report()) so a harness/app schema drift fails before a field operator
+ * hits it on import.
  */
 import { readFile } from "node:fs/promises";
 import { validateGate0aImport } from "../src/lib/gate0a-report";
@@ -33,6 +36,14 @@ try {
 const result = validateGate0aImport(report);
 if (!result.ok) {
   console.error(`REJECTED: ${result.error}`);
+  // Print every structured issue (path + message) so the CI log shows each
+  // failing field, not just the first few embedded in the error summary.
+  if (result.issues) {
+    console.error(`Failing fields (${result.issues.length}):`);
+    for (const issue of result.issues) {
+      console.error(`  - ${issue.path ? `${issue.path}: ` : ""}${issue.message}`);
+    }
+  }
   console.error("The CovertAlertSystem web app would refuse to import this Gate 0A report.");
   process.exit(1);
 }

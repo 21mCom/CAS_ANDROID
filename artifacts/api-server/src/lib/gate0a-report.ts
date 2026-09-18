@@ -131,7 +131,10 @@ export const gate0aReportSchema = z.object({
   }).strict().optional(),
   artifacts: z.record(z.string().max(512)).optional(),
   evidence: z.object({
-    logs: z.array(z.string().max(512)).max(200),
+    // A default hardware run (200 repeats) captures one logcat file per launch,
+    // so a real report references ~205 logs; the bound leaves headroom for
+    // larger --repeat series while staying finite.
+    logs: z.array(z.string().max(512)).max(1000),
     screenshots: z.array(z.string().max(512)).max(200),
     rawReferences: z.array(z.string().max(512)).max(500),
   }).strict(),
@@ -192,10 +195,25 @@ export function hasUnsafeJsonContent(value: unknown, depth = 0): boolean {
     hasUnsafeJsonContent(entry, depth + 1));
 }
 
+export type Gate0aValidationIssue = {
+  /** Dotted path to the offending report field, e.g. "target.model" ("" for the report root). */
+  path: string;
+  /** Human-readable validation message for that field. */
+  message: string;
+};
 export type Gate0aValidationResult =
   | { ok: true; report: Gate0aReport }
-  | { ok: false; error: string };
+  | { ok: false; error: string; issues?: Gate0aValidationIssue[] };
 
+/**
+ * The structured issue list carries up to this many entries so an operator
+ * importing a badly truncated or schema-drifted report can see every failing
+ * field, while staying bounded for a 10k-event report where every event is
+ * invalid. The plain-text error summary stays short (MAX_SUMMARY_ISSUES) and
+ * points at the full list for the remainder.
+ */
+const MAX_REPORTED_ISSUES = 50;
+const MAX_SUMMARY_ISSUES = 3;
 /**
  * Applies the exact accept/reject rules of POST /api/cas/gate0a/import to an
  * already-parsed JSON value. Both the route and the CI validator call this so
@@ -207,7 +225,7 @@ export function validateGate0aImport(body: unknown): Gate0aValidationResult {
   }
   const parsed = gate0aReportSchema.safeParse(body);
   if (!parsed.success) {
-    return { ok: false, error: "Invalid cas-gate0a-report-v2 report" };
+    return { ok: false, ...describeSchemaIssues(parsed.error) };
   }
   const report = parsed.data;
   if (report.status === "blocked" || report.preflight.status === "BLOCKED") {
@@ -217,4 +235,37 @@ export function validateGate0aImport(body: unknown): Gate0aValidationResult {
     };
   }
   return { ok: true, report };
+}
+
+/**
+ * Summarizes the top zod issues into a short message a field operator can act
+ * on (which field failed and why) plus a structured issue list for clients.
+ * The list carries up to MAX_REPORTED_ISSUES entries so the gates panel can
+ * show every failing field; the message embeds only the first
+ * MAX_SUMMARY_ISSUES and counts the rest.
+ */
+function describeSchemaIssues(error: z.ZodError): { error: string; issues: Gate0aValidationIssue[] } {
+  const issues = error.issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => ({
+    path: formatIssuePath(issue.path),
+    message: issue.message,
+  }));
+  const detail = issues
+    .slice(0, MAX_SUMMARY_ISSUES)
+    .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message))
+    .join("; ");
+  const overflowCount = error.issues.length - Math.min(error.issues.length, MAX_SUMMARY_ISSUES);
+  const overflow = error.issues.length > MAX_SUMMARY_ISSUES
+    ? ` (and ${overflowCount} more issue${overflowCount === 1 ? "" : "s"})`
+    : "";
+  return {
+    error: `Invalid cas-gate0a-report-v2 report — ${detail}${overflow}`,
+    issues,
+  };
+}
+
+function formatIssuePath(path: PropertyKey[]): string {
+  return path
+    .map((segment) => (typeof segment === "number" ? `[${segment}]` : String(segment)))
+    .join(".")
+    .replace(/\.\[/g, "[");
 }

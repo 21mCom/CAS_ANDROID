@@ -3,9 +3,10 @@
     Lifecycle and validation commands for the pinned CAS Gate 0A emulator.
 
 .DESCRIPTION
-    Creates, starts, validates, resets, stops, or reports the CAS_Pixel_8a_API_35
-    Android Virtual Device. Every result is explicitly simulated emulator
-    evidence and cannot establish physical Pixel readiness.
+    Creates, starts, validates, resets, stops, or reports the pinned
+    CAS_Pixel_8a_API_<apiLevel> Android Virtual Device (the API level derives
+    from tool-requirements.json). Every result is explicitly simulated
+    emulator evidence and cannot establish physical Pixel readiness.
 
     The script never selects a physical ADB serial. It only acts on an emulator
     whose ro.boot.qemu.avd_name matches the pinned AVD name.
@@ -39,10 +40,35 @@ if ($StartupSmokeCheck) {
     exit 0
 }
 
-$script:AvdName = 'CAS_Pixel_8a_API_35'
-$script:ApiLevel = 35
+# The pinned emulator contract derives its API level, system image, and AVD
+# name from tool-requirements.json at the package root (the same declaration
+# the Windows preflight, the Gradle build, and GitHub Actions read), parsed
+# by the shared kit parser so the pinned-device checks move with the declared
+# Android SDK platform instead of drifting from it. Only the device profile
+# and architecture are fixed here.
+$script:ToolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
+$script:SharedParserPath = Join-Path $scriptDirectory 'cas-tool-requirements.ps1'
+if (-not (Test-Path $script:SharedParserPath -PathType Leaf)) {
+    # Not Write-Error: with $ErrorActionPreference = 'Stop' it would terminate
+    # the script with exit 1 before this block's exit 2 runs.
+    Write-Host ('BLOCKED: the shared tool-requirements parser is missing at {0}; restore the complete, unmodified test kit before using the pinned emulator.' -f $script:SharedParserPath) -ForegroundColor Red
+    exit 2
+}
+. $script:SharedParserPath
+$script:ToolRequirements = Get-ToolRequirements $script:ToolRequirementsPath
+if ($null -eq $script:ToolRequirements) {
+    # Not Write-Error: with $ErrorActionPreference = 'Stop' it would terminate
+    # the script with exit 1 before this block's exit 2 runs.
+    Write-Host ('BLOCKED: tool-requirements.json is missing or invalid at {0}; restore the complete, unmodified test kit before using the pinned emulator.' -f $script:ToolRequirementsPath) -ForegroundColor Red
+    exit 2
+}
+
+$script:AvdName = 'CAS_Pixel_8a_API_{0}' -f $script:ToolRequirements.apiLevel
+$script:ApiLevel = $script:ToolRequirements.apiLevel
+$script:SdkPlatform = $script:ToolRequirements.sdkPlatform
 $script:Abi = 'x86_64'
-$script:SystemImage = 'system-images;android-35;google_apis;x86_64'
+$script:SystemImage = 'system-images;{0};google_apis;x86_64' -f $script:SdkPlatform
+$script:SystemImageSysdir = 'system-images\{0}\google_apis\x86_64\' -f $script:SdkPlatform
 $script:DeviceProfile = 'pixel_8a'
 $script:EvidenceClass = 'simulated-emulator'
 $script:OutputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -177,7 +203,7 @@ function Assert-PinnedAvd {
     }
 
     $imageSysdir = (Get-ConfigValue -Config $config -Name 'image.sysdir.1').Replace('/', '\').TrimStart('\')
-    $expectedSysdir = 'system-images\android-35\google_apis\x86_64\'
+    $expectedSysdir = $script:SystemImageSysdir
     $abiType = Get-ConfigValue -Config $config -Name 'abi.type'
     $deviceName = Get-ConfigValue -Config $config -Name 'hw.device.name'
 
@@ -206,7 +232,7 @@ function Ensure-PinnedAvd {
         return
     }
 
-    $imageDir = Join-Path $Tools.sdkRoot 'system-images\android-35\google_apis\x86_64'
+    $imageDir = Join-Path $Tools.sdkRoot $script:SystemImageSysdir.TrimEnd('\')
     if (-not (Test-Path $imageDir -PathType Container)) {
         Fail ('Pinned system image is missing: {0}. Run the approved SDK preparation with explicit operator approval, then retry.' -f $script:SystemImage)
     }

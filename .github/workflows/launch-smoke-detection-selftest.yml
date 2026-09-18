@@ -1,0 +1,39 @@
+name: Launch smoke detection self-test
+
+# Runs the no-emulator crash-detection self-test harness whenever the
+# detection script it guards could change: the launch-smoke-test job's
+# detection logic lives in .github/scripts/emulator-smoke-test.sh (invoked
+# by android-test-package-build.yml as a single `script:` line), and the
+# harness runs that file verbatim — so a future edit to either side of the
+# contract turns this job red before the broken detection ships to CI.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/android-test-package-build.yml"
+      - ".github/workflows/launch-smoke-detection-selftest.yml"
+      - ".github/scripts/emulator-smoke-test.sh"
+      - ".github/scripts/verify-launch-smoke-detection.sh"
+      - ".github/scripts/launch-smoke-fixtures/**"
+  push:
+    paths:
+      - ".github/workflows/android-test-package-build.yml"
+      - ".github/workflows/launch-smoke-detection-selftest.yml"
+      - ".github/scripts/emulator-smoke-test.sh"
+      - ".github/scripts/verify-launch-smoke-detection.sh"
+      - ".github/scripts/launch-smoke-fixtures/**"
+  workflow_dispatch:
+
+jobs:
+  verify-detection:
+    name: Prove crash detection still turns red (no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run the detection self-test harness
+        # Pure bash against a fake adb; no Android SDK or emulator needed.
+        run: bash .github/scripts/verify-launch-smoke-detection.sh
