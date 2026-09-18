@@ -56,7 +56,9 @@ The harness no longer depends on someone remembering to run it. `.github/workflo
 - `.github/scripts/launch-smoke-fixtures/**` (the simulated logcat fixtures),
 - the self-test workflow itself.
 
-Verified locally before wiring: with the workflow unmodified the harness passes 8/8; with all three detection greps in the guarded script block replaced by a never-matching pattern (the silent-breakage shape this protects against) the harness exits 1 reporting `FAIL fatal-logcat-with-live-process` and `FAIL boot-receiver-crash`. The guarded workflow was restored byte-identical afterwards (`git status` clean). First-real-GitHub-run confirmation belongs to the CI-run confirmation tasks.
+Verified locally before wiring: with the workflow unmodified the harness passes 8/8; with all three detection greps in the guarded script block replaced by a never-matching pattern (the silent-breakage shape this protects against) the harness exits 1 reporting `FAIL fatal-logcat-with-live-process` and `FAIL boot-receiver-crash`. The guarded workflow was restored byte-identical afterwards (`git status` clean).
+
+**First real GitHub run — confirmed 2026-09-18.** The workflow ran green on `ubuntu-latest` on its first real execution (run 35318475129, branch `ci-153`, 12/12 scenarios). The red proof was then repeated on the hosted runner: scratch branch `ci-153-broken-detection` neutralized all three logcat detection greps in `emulator-smoke-test.sh`, and the self-test job went red exactly as designed (run 35318562762 — `FAIL fatal-logcat-with-live-process`, `FAIL boot-receiver-crash`, harness exit 1). The scratch branch was deleted afterwards, so no broken detection remains anywhere. The same push proved the real-emulator `launch-smoke-test` job green through all four entry points (MainActivity, PROXY_TRIGGER, BOOT_COMPLETED, LOCKED_BOOT_COMPLETED after a PIN-protected reboot) on run 35318475149.
 
 ## Re-verifying on real CI (scratch branch recipe)
 

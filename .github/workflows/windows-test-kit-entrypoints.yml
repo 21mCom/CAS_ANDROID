@@ -437,6 +437,10 @@ jobs:
               throw 'The gate failed without identifying the hardcoded comparison and API keyword literal.'
           }
           Write-Host 'Hardcoded API-floor literals turned the gate red while the drift gate stayed green, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
 
       - name: Packaged scripts must not hardcode the JDK minimum
         shell: pwsh
@@ -489,6 +493,10 @@ jobs:
           if ($output -notmatch 'measure-gate0a\.sh') { throw 'The gate failed without naming the drifted harness script.' }
           if ($output -notmatch 'JDK-major comparison') { throw 'The gate failed without identifying the hardcoded JDK-major comparisons.' }
           Write-Host 'Hardcoded JDK-minimum comparisons turned the gate red while the drift and API-floor gates stayed green, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
 
       - name: A reintroduced stale literal must fail the drift gate
         shell: pwsh
@@ -519,6 +527,10 @@ jobs:
               throw 'The gate failed without identifying the drifted JDK, SDK platform, and build-tools literals.'
           }
           Write-Host 'Reintroduced stale literals turned the drift gate red, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
 
       - name: A missing tool-requirements.json must block the packaged preflight
         shell: pwsh
@@ -547,6 +559,10 @@ jobs:
           if ($output -match 'Java command') { throw 'The preflight continued past the missing declaration and guessed tool requirements.' }
           if (Get-ChildItem -LiteralPath $brokenCopy -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) { throw 'The preflight wrote a result file for a broken kit.' }
           Write-Host 'A missing tool-requirements.json blocked the preflight, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
 
       - name: A missing gradle-version.txt must block the packaged preflight
         shell: pwsh
@@ -576,6 +592,10 @@ jobs:
           if ($output -match 'Gradle command') { throw 'The preflight continued past the missing declaration and guessed the Gradle release.' }
           if (Get-ChildItem -LiteralPath $brokenCopy -Recurse -Filter 'cas-windows-preflight-*.json' -ErrorAction SilentlyContinue) { throw 'The preflight wrote a result file for a broken kit.' }
           Write-Host 'A missing gradle-version.txt blocked the preflight, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
 
       - name: Run entry-point checks against the packaged kit
         shell: pwsh
