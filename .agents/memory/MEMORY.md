@@ -14,7 +14,7 @@
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
 - [Windows PowerShell 5.1 native traps](windows-powershell-51-native-traps.md) — 5.1 mangles quoted native args; native stderr aborts 2>&1 captures under EAP=Stop; pwsh 7 reproduces neither.
 - [pwsh CI step exit codes](pwsh-lastexitcode-step-exit.md) — a pwsh step exits with the last NATIVE command's $LASTEXITCODE; negative-test steps must end with explicit exit 0.
-- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — connector is scope-less and askpass mints invalid tokens; pushes/Actions use the GITHUB_PAT secret; a repo watchdog workflow warns before the PAT lapses.
+- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — connector is scope-less/read-only; pushes and Actions logs use the GITHUB_PAT secret; a repo watchdog workflow warns before the PAT lapses.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
 - [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
 - [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor/jdkfloor gates catch scripted comparisons; fixtures may need all three markers.
