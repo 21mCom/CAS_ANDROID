@@ -7,7 +7,15 @@ console for an operator to acknowledge and resolve.
 **What this MVP does:** phone → HTTPS POST → durable P1 incident in the console,
 then the handset texts every configured responder directly from its own SIM
 (device-direct SMS — no third-party gateway, no subscription) and reports the
-outcome back so the console marks the delivery SENT.
+outcome back so the console marks the delivery SENT. WhatsApp, XMPP, and email
+— when configured on the server — are delivered by the console's outbox
+worker, not the phone.
+
+**No-screen-flash rule:** the app never opens another app's UI for alerting.
+If an attacker is holding the phone, anything that flashes on screen
+escalates the situation — so the only things the handset does are send SMS
+(invisible) and POST receipts; the only app it can launch is the configured
+cover app.
 
 **What this MVP deliberately does not do yet:** notify responders by XMPP,
 capture location, or record evidence. Those are the next milestones, not part
@@ -81,10 +89,11 @@ publishes the app, use the published URL instead — it is stable and stays up.
 2. Tap **Save responder numbers**.
 3. Tap **Grant SMS permission** and approve the system dialog. The app sends
    SMS itself, so Android requires this one-time grant.
-4. Optional: tick **Also alert via WhatsApp** to have the phone open each
-   responder's WhatsApp chat with the alert pre-filled after the SMS goes
-   out. The free WhatsApp app has no automatic-send API, so you tap send in
-   each chat; the console marks the WHATSAPP item from the handoff report.
+
+There is deliberately no per-channel setup on the phone beyond SMS:
+WhatsApp, XMPP, and email are configured on the server and delivered by its
+outbox worker, so responder-provider credentials never touch the handset and
+the screen stays silent during an alert.
 
 ## Step 7 — Send the first real alert
 
@@ -93,11 +102,9 @@ publishes the app, use the published URL instead — it is stable and stays up.
    and an incident id, followed by `SMS_SEND_OUTCOME` showing each responder
    delivered (radio results usually land within a few seconds).
 3. Each responder phone receives the alert SMS from the Pixel's own number.
-   If WhatsApp alerting is enabled, WhatsApp opens with one pre-filled chat
-   per responder — tap send in each; the console's WHATSAPP item turns `SENT`
-   when the handoff report arrives ("handed to WhatsApp", not
-   delivery-confirmed). XMPP and email items deliver through their configured
-   providers and turn `SENT` within one worker tick (~10 s).
+   WhatsApp, XMPP, and email items (whichever the server has configured)
+   deliver through their configured providers and turn `SENT` within one
+   worker tick (~10 s) — none of them touch the phone or its screen.
 4. On any browser, open the CAS console at the server address, then open the
    incidents/overview view: a P1 incident in `ACTIVE_UNACKED` state appears
    and its SMS outbox item shows `SENT` once the handset's receipt arrives.
@@ -111,14 +118,12 @@ wrong responder number (e.g. `1`), send an alert, and watch the console mark
 the SMS item `DEAD_LETTER` with a device-reported failure. Fix the number on
 the phone, press **Re-queue** on the console incident, then tap **Check
 re-queued deliveries** on the phone — the item turns `SENT` and the journal
-shows the full abandonment → re-queue → delivery sequence. The same drill
-works for the WHATSAPP item when WhatsApp alerting is enabled (with WhatsApp
-absent from the phone, the report arrives as `WHATSAPP_NOT_INSTALLED`).
+shows the full abandonment → re-queue → delivery sequence.
 
 Expected behavior for repeat taps: while an incident is still active, another
 tap folds into the same incident (trigger count increases) instead of creating
 duplicates, and the handset journals `FOLDED_INTO_ACTIVE` without re-sending
-SMS/WhatsApp — matching the console's decision not to queue new deliveries.
+SMS — matching the console's decision not to queue new deliveries.
 This is by design.
 
 ## Step 8 — Record Gate 0A sign-off (console, any browser)
@@ -145,17 +150,17 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
 | SMS outbox item shows `DEAD_LETTER` with "device-reported failure" | Fix the responder number on the phone, re-queue from the console, then tap **Check re-queued deliveries** on the phone |
 | Responder got the SMS but the console still shows QUEUED | The phone has no data connection, so its receipt could not reach the server; it retries on the next send or re-queue check. If the phone's journal shows `SKIPPED` with "no device access token", enter the token (Step 5) and tap **Check re-queued deliveries** |
 | `*_RECEIPT_OUTCOME` = FAILED (HTTP 401) | The device access token on the phone does not match the server's `CAS_DEVICE_TOKEN` secret; re-enter it and tap **Check re-queued deliveries** |
-| WhatsApp did not open after the alert | WhatsApp is not installed, or the WhatsApp checkbox is off; the console's WHATSAPP item dead-letters with `WHATSAPP_NOT_INSTALLED` |
-| Console shows WHATSAPP `SENT` but the responder got nothing | SENT means handed to WhatsApp; a chat was left without tapping send — reopen WhatsApp and finish it |
+| WHATSAPP item stays `QUEUED` | The server has no `CAS_WHATSAPP_PROVIDER_URL`/`CAS_WHATSAPP_RECIPIENTS` configured; WhatsApp is delivered by the console's worker, never the phone — a device receipt naming WhatsApp is refused (409) by design |
 
 ## Safety notes
 
 - This build adds the alert POST plus device-direct SMS to the responder
   numbers configured on the handset, and no other new capability. It does not
   access location, capture evidence, change Device Owner state, or reboot the
-  phone. Sent SMS is not written to the phone's Messages app. The optional
-  WhatsApp path only opens pre-filled chats in the official WhatsApp app;
-  nothing is sent without the operator's tap.
+  phone. Sent SMS is not written to the phone's Messages app. No alert path
+  opens another app's UI: the only activity the app can start besides its own
+  screens is the configured cover app (CI enforces this with a static
+  silent-channel check on the app sources).
 - Gate 0A harness scripts (`run-pixel11-qualification.cmd`, `run-pixel11-full.cmd`)
   are unchanged and remain available; the physical 200-repeat evidence from
   2026-09-14 stays valid.

@@ -3,8 +3,14 @@
 For the agentic operator on the Windows workstation with the Pixel 11 attached.
 Run the whole matrix in one session and report back with the template at the
 bottom. API-side drills use `scripts\cas-api-drills.ps1` so the phone is only
-needed for the two paths that genuinely require it (real SMS over the SIM,
-WhatsApp tap-to-send).
+needed for the one path that genuinely requires it (real SMS over the SIM).
+
+**No-screen-flash rule:** no alert path on the device may open another app's
+UI — if an attacker is holding the phone, anything that flashes on screen
+escalates the situation. The handset only ever sends SMS and POSTs receipts;
+every other channel (WhatsApp included) fans out server-side through the
+outbox worker. A static CI check (`check-silent-alert-channels.sh`) fails the
+build if any alert path regains the ability to surface a third-party UI.
 
 Vocabulary:
 
@@ -18,15 +24,19 @@ Vocabulary:
 | Channel | Who delivers | What `SENT` means | Config |
 | --- | --- | --- | --- |
 | SMS | The Pixel itself, over its own SIM | Handset reported radio success per responder | Responder numbers on the phone; server runs `CAS_SMS_DELIVERY_MODE=device` |
-| WHATSAPP | The Pixel, via the official WhatsApp app | **Handed to WhatsApp** with the alert pre-filled — an operator tap sends it; not delivery-confirmed | WhatsApp checkbox on the phone; server runs `CAS_DEVICE_CHANNELS=SMS,WHATSAPP` |
+| WHATSAPP | The console's outbox worker → WhatsApp Business Cloud API messages endpoint | Provider accepted the message (HTTPS POST, idempotency-keyed) | `CAS_WHATSAPP_PROVIDER_URL` + `CAS_WHATSAPP_PROVIDER_TOKEN` + `CAS_WHATSAPP_RECIPIENTS` |
 | XMPP | The console's outbox worker → configured provider endpoint | Provider accepted the stanza (HTTPS POST, idempotency-keyed) | `CAS_XMPP_PROVIDER_URL` + `CAS_XMPP_RECIPIENTS` |
 | EMAIL | The console's outbox worker → configured provider endpoint | Provider accepted the message | `CAS_EMAIL_PROVIDER_URL` + `CAS_EMAIL_RECIPIENTS` |
 
-In the current dev deployment, XMPP and EMAIL point at an in-process **dev
-provider sink** (`/api/cas/dev/provider-inbox`) that records exactly what
-would have been sent — enough to prove the pipeline end-to-end without any
-third-party account. Real provider accounts replace the URLs later; nothing
-else changes.
+The handset never opens the WhatsApp app (or any other app) for alerting —
+that keeps the screen silent and keeps responder-provider credentials off
+the phone entirely, limiting the damage if the phone is captured.
+
+In the current dev deployment, WHATSAPP, XMPP, and EMAIL point at an
+in-process **dev provider sink** (`/api/cas/dev/provider-inbox`) that records
+exactly what would have been sent — enough to prove the pipeline end-to-end
+without any third-party account. Real provider accounts replace the URLs
+later; nothing else changes.
 
 ## T0 — Workstation and server preflight
 
@@ -40,8 +50,9 @@ else changes.
 
    `<shared-token>` is the same value as the server's `CAS_DEVICE_TOKEN`
    secret. Pass: `smsDeliveryMode` is `device`, `deviceChannels` contains
-   `SMS` and `WHATSAPP`, `deviceAuthConfigured` is true, worker heartbeat
-   `running` is true.
+   `SMS` only (WhatsApp is a server-side gateway channel now — if it shows
+   under `deviceChannels`, the server still runs the retired config),
+   `deviceAuthConfigured` is true, worker heartbeat `running` is true.
 
 ## T1 — Build and install the app
 
@@ -72,24 +83,38 @@ prints `0.4.0-mvp`.
 4. Pass: SMS item → `SENT`; journal shows
    `DELIVERY_ABANDONED → DELIVERY_REQUEUED → DELIVERY_REPORTED`. Resolve.
 
-## T4 — WhatsApp handoff (phone required)
+## T4 — WhatsApp through the provider sink (API only)
 
-1. Tick **Also alert via WhatsApp**, send an alert.
-2. Pass: WhatsApp opens with one pre-filled chat per responder; tapping send
-   delivers real WhatsApp messages. The console's WHATSAPP item turns `SENT`
-   (= handed off) after the report; journal wording says "handed to
-   WhatsApp", not "delivered".
+Same shape as T6/T7 — WhatsApp is a server-side channel now:
 
-## T5 — WhatsApp failure path (phone required, one of two ways)
+```powershell
+Clear-CasProviderInbox
+Invoke-CasTrigger          # note the incident id
+Watch-CasOutbox -IncidentId <id>
+Get-CasProviderInbox
+```
 
-- If WhatsApp is **not** installed: the report arrives as
-  `WHATSAPP_NOT_INSTALLED` and the item dead-letters — then re-queue after
-  enabling/installing and tap **Check re-queued deliveries** (it picks up
-  both SMS and WHATSAPP re-queued items).
-- Or simulate it API-side: `Send-CasDeviceReceipt -IncidentId <id> -Channel
-  WHATSAPP -Recipient "+1555000111" -Ok:$false -ErrorText WHATSAPP_NOT_INSTALLED`.
+Pass: the incident's WHATSAPP item turns `SENT` within ~15 s (one worker
+tick), and the inbox shows a Cloud-API-shaped message
+(`messaging_product: "whatsapp"`, `type: "text"`, `text.body` carrying the
+alert text) whose `Idempotency-Key` is `<incident>-whatsapp:<recipient>`.
+Resolve the incident.
 
-Pass: `DEAD_LETTER` with masked recipient; recovery via re-queue → `SENT`.
+## T5 — WhatsApp stays off the handset (API only)
+
+This drills the no-screen-flash rule at the API boundary: the console must
+never treat WhatsApp as something the phone delivers.
+
+1. `Invoke-CasTrigger` on a fresh incident, then `Get-CasDevicePending`.
+   Pass: the list offers the handset only its SMS item — never a WHATSAPP
+   item.
+2. `Send-CasDeviceReceipt -IncidentId <id> -Channel WHATSAPP -Recipient
+   "+1555000111" -Ok:$true` → must be refused with HTTP 409
+   ("not an enabled device channel"), and the incident's WHATSAPP outbox
+   item is unaffected.
+3. Re-queue the SMS item from the console, then tap **Check re-queued
+   deliveries** on the phone. Pass: only SMS is re-sent; nothing opens on
+   the phone's screen.
 
 ## T6 — XMPP through the provider sink (API only)
 
@@ -144,8 +169,8 @@ T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
 T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>
 T3 SMS dead-letter:  PASS/FAIL — <journal sequence seen>
-T4 WhatsApp handoff: PASS/FAIL/SKIP — <chats opened? console state?>
-T5 WhatsApp failure: PASS/FAIL/SKIP — <error code seen>
+T4 WhatsApp sink:      PASS/FAIL — <messaging_product/idempotency key seen>
+T5 WhatsApp off-phone: PASS/FAIL — <409 seen? pending list SMS-only?>
 T6 XMPP sink:        PASS/FAIL — <stanzaId seen>
 T7 email sink:       PASS/FAIL — <subject seen>
 T8 failure honesty:  PASS/FAIL — <replay:true seen?>

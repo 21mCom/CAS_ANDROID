@@ -42,11 +42,15 @@ export function smsDeliveryMode(
  * through the device receipt endpoint, so a server-side claim could only
  * fail "not-configured" and would race the handset's receipt.
  *
- * WHATSAPP is tap-to-send on the handset (the free WhatsApp app has no
- * unattended-send API); the receipt then means "handed to WhatsApp", not
- * carrier-confirmed delivery.
+ * SMS is the only device channel. Every other alert channel (WhatsApp,
+ * XMPP, email) is delivered server-side by the outbox worker, because the
+ * threat model forbids the handset from surfacing alert activity on screen:
+ * the old device-side WhatsApp path deep-linked into the WhatsApp UI with a
+ * pre-filled message, which is exactly the kind of visible handoff an
+ * attacker holding the phone must never see. WhatsApp now goes through the
+ * provider gateway (CAS_WHATSAPP_*) like XMPP and email.
  */
-export type DeviceChannel = "SMS" | "WHATSAPP";
+export type DeviceChannel = "SMS";
 
 export function deviceChannels(
   env: NodeJS.ProcessEnv = process.env,
@@ -59,11 +63,13 @@ export function deviceChannels(
     .map((value) => value.trim().toUpperCase())
     .filter((value) => value.length > 0);
   for (const channel of channels) {
-    if (channel !== "SMS" && channel !== "WHATSAPP") {
+    if (channel !== "SMS") {
       // Fail explicitly, same rule as the mode itself: an unknown channel
-      // must not silently drop alerts or strand outbox items.
+      // must not silently drop alerts or strand outbox items. WHATSAPP in
+      // particular is retired as a device channel — configure the
+      // CAS_WHATSAPP_* provider variables instead of listing it here.
       throw new Error(
-        `Invalid CAS_DEVICE_CHANNELS entry: "${channel}" (supported: SMS, WHATSAPP)`,
+        `Invalid CAS_DEVICE_CHANNELS entry: "${channel}" (supported: SMS)`,
       );
     }
   }

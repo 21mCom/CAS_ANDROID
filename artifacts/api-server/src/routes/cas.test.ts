@@ -19,6 +19,7 @@ import {
   casIncidentEvents,
   casIncidents,
   casOutbox,
+  casProviderDeliveries,
   casSetupReadiness,
   casTransportCooldowns,
 } from "@workspace/db/schema";
@@ -34,7 +35,9 @@ import {
   createCasDeliverySender,
   createEmailProvider,
   createSmsProvider,
+  createWhatsAppProvider,
   createXmppProvider,
+  loadConfiguredProviders,
 } from "../lib/delivery-providers";
 import {
   getCasOutboxWorkerHeartbeat,
@@ -76,6 +79,12 @@ process.env.CAS_SMS_PROVIDER_URL = "https://sms-provider.invalid/submit";
 process.env.CAS_SMS_RECIPIENTS = "+1555000111";
 delete process.env.CAS_EMAIL_PROVIDER_URL;
 delete process.env.CAS_EMAIL_RECIPIENTS;
+// WhatsApp is a gateway channel too: clear any ambient provider config so
+// only tests that set it explicitly queue WHATSAPP rows.
+delete process.env.CAS_WHATSAPP_PROVIDER_URL;
+delete process.env.CAS_WHATSAPP_PROVIDER_TOKEN;
+delete process.env.CAS_WHATSAPP_FROM;
+delete process.env.CAS_WHATSAPP_RECIPIENTS;
 // The trigger route only queues outbox items for channels that can actually
 // deliver, so the suite runs with a syntactically valid placeholder XMPP
 // config to keep the XMPP row that older tests expect. Nothing ever fetches
@@ -88,6 +97,7 @@ process.env.CAS_XMPP_RECIPIENTS = "ops@example.org";
 async function clearCasData() {
   await db.delete(casIncidentEvents);
   await db.delete(casOutbox);
+  await db.delete(casProviderDeliveries);
   await db.delete(casIncidents);
   await db.delete(casTransportCooldowns);
 }
@@ -2609,7 +2619,7 @@ test("a stale receipt from before a re-queue cannot mark the re-queued item SENT
   });
 });
 
-// ---- Multi-channel outbox: WhatsApp device channel + EMAIL gateway ----
+// ---- Multi-channel outbox: WhatsApp gateway channel + device-channel refusal ----
 
 async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   const previous: Record<string, string | undefined> = {};
@@ -2629,16 +2639,19 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
 }
 
 test("trigger queues only channels that can deliver: no doomed rows for unconfigured providers", async () => {
-  // Device mode with SMS+WHATSAPP on the handset and no XMPP configured
-  // (suite placeholder unset): exactly the two deliverable rows, no XMPP row
-  // that could only ever dead-letter.
+  // Device mode with SMS on the handset, WhatsApp configured as a
+  // server-side provider, and no XMPP configured (suite placeholder unset):
+  // exactly the two deliverable rows, no XMPP row that could only ever
+  // dead-letter.
   await withEnv(
     {
       CAS_SMS_DELIVERY_MODE: "device",
-      CAS_DEVICE_CHANNELS: "SMS,WHATSAPP",
+      CAS_DEVICE_CHANNELS: "SMS",
       CAS_DEVICE_TOKEN: DEVICE_TOKEN,
       CAS_XMPP_PROVIDER_URL: undefined,
       CAS_XMPP_RECIPIENTS: undefined,
+      CAS_WHATSAPP_PROVIDER_URL: "http://127.0.0.1:9/cas-test-whatsapp",
+      CAS_WHATSAPP_RECIPIENTS: "+1555000333",
     },
     async () => {
       const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
@@ -2673,100 +2686,74 @@ test("trigger queues XMPP and EMAIL items when their providers are configured", 
   );
 });
 
-test("whatsapp device channel: pending lists it, worker never claims it, receipt drives it", async () => {
-  await withEnv(
-    { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS,WHATSAPP" , CAS_DEVICE_TOKEN: DEVICE_TOKEN },
-    async () => {
-      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
-      assert.equal(trigger.status, 201);
-      const { id } = (await trigger.json()) as { id: string };
+test("whatsapp gateway channel: the worker claims it and delivers through the configured provider", async () => {
+  // WhatsApp is server-side now: the outbox worker delivers it through the
+  // configured provider like XMPP/email, the handset never sees it, and the
+  // device-pending list never offers it to a handset.
+  const provider = await startStubProvider(() => 200);
+  try {
+    await withEnv(
+      {
+        CAS_SMS_DELIVERY_MODE: "device",
+        CAS_DEVICE_CHANNELS: "SMS",
+        CAS_DEVICE_TOKEN: DEVICE_TOKEN,
+        CAS_WHATSAPP_PROVIDER_URL: provider.url,
+        CAS_WHATSAPP_RECIPIENTS: "+1555000333",
+        CAS_XMPP_PROVIDER_URL: undefined,
+        CAS_XMPP_RECIPIENTS: undefined,
+      },
+      async () => {
+        const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+        assert.equal(trigger.status, 201);
+        const { id } = (await trigger.json()) as { id: string };
 
-      // device-pending lists both device channels with their transport.
-      const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
-        items: Array<{ id: string; incidentId: string; transport: string }>;
-      };
-      assert.deepEqual(
-        pending.items.filter((item) => item.incidentId === id).map((item) => item.transport).sort(),
-        ["SMS", "WHATSAPP"],
-      );
+        // device-pending offers the handset only its SMS item — WhatsApp is
+        // not a device channel, so the handset can never pick it up.
+        const pending = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
+          items: Array<{ id: string; incidentId: string; transport: string }>;
+        };
+        assert.deepEqual(
+          pending.items.filter((item) => item.incidentId === id).map((item) => item.transport),
+          ["SMS"],
+        );
 
-      // The worker claims neither device channel; only the gateway-delivered
-      // XMPP item is claimed (send throws so nothing is delivered).
-      const sent: string[] = [];
-      await processCasOutbox({
-        workerId: "whatsapp-worker",
-        maxItems: 10,
-        send: async (item) => {
-          sent.push(item.transport);
-          throw new Error("no provider in test");
-        },
-      });
-      assert.deepEqual(sent, ["XMPP"]);
-      const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
-      const whatsapp = rows.find((row) => row.transport === "WHATSAPP");
-      assert.ok(whatsapp);
-      assert.equal(whatsapp.state, "QUEUED");
-      assert.equal(whatsapp.attempts, 0);
+        const result = await processCasOutbox({
+          workerId: "whatsapp-gateway-worker",
+          maxItems: 10,
+          send: createCasDeliverySender(loadConfiguredProviders()),
+        });
+        assert.equal(result.sent, 1);
+        assert.equal(result.failed, 0);
 
-      // A WhatsApp failure receipt dead-letters with the responder masked.
-      const badReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...deviceAuth },
-        body: JSON.stringify({
-          channel: "WHATSAPP",
-          results: [{ recipient: "+1555000222", ok: false, error: "WHATSAPP_NOT_INSTALLED" }],
-        }),
-      });
-      assert.equal(badReceipt.status, 200);
-      assert.deepEqual(await badReceipt.json(), { id, state: "DEAD_LETTER" });
-      const deadRow = (await db.select().from(casOutbox)
-        .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.transport} = 'WHATSAPP'`))[0];
-      assert.match(deadRow.lastError ?? "", /WHATSAPP_NOT_INSTALLED/);
-      assert.match(deadRow.lastError ?? "", /•••22/);
-      assert.ok(!deadRow.lastError?.includes("+1555000222"));
+        const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+        const whatsapp = rows.find((row) => row.transport === "WHATSAPP");
+        assert.equal(whatsapp?.state, "SENT");
 
-      // Re-queue puts it back on the handset's pickup list.
-      const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-whatsapp/requeue`, {
-        method: "POST",
-        headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      assert.equal(requeue.status, 200);
-      const pendingAgain = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as {
-        items: Array<{ id: string; transport: string; cycleToken: string | null }>;
-      };
-      const whatsappItem = pendingAgain.items.find((item) => item.id === `${id}-whatsapp`);
-      assert.equal(whatsappItem?.transport, "WHATSAPP");
-      // The re-queue minted a fresh delivery-cycle token; the handset echoes
-      // it in the replacement send's receipt.
-      const cycleToken = whatsappItem?.cycleToken;
-      assert.ok(cycleToken);
+        // The provider saw a strict Cloud-API-shaped message; the
+        // Idempotency-Key header still rides along for gateways that honor
+        // it, and the durable ledger records the acceptance.
+        assert.equal(provider.requests.length, 1);
+        const request = provider.requests[0];
+        assert.equal(request.idempotencyKey, `${id}-whatsapp:+1555000333`);
+        assert.deepEqual(
+          Object.keys(request.payload).sort(),
+          ["messaging_product", "text", "to", "type"],
+        );
+        assert.equal(request.payload.messaging_product, "whatsapp");
+        assert.equal(request.payload.to, "+1555000333");
+        assert.equal(request.payload.type, "text");
+        assert.ok(String((request.payload.text as { body: string }).body).includes(id));
 
-      // A successful receipt marks it SENT; a replay is a cheap no-op.
-      const okReceipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...deviceAuth },
-        body: JSON.stringify({ channel: "WHATSAPP", cycleToken, results: [{ recipient: "+1555000222", ok: true }] }),
-      });
-      assert.equal(okReceipt.status, 200);
-      assert.deepEqual(await okReceipt.json(), { id, state: "SENT" });
-      const replay = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...deviceAuth },
-        body: JSON.stringify({ channel: "WHATSAPP", cycleToken, results: [{ recipient: "+1555000222", ok: true }] }),
-      });
-      assert.equal(replay.status, 200);
-      assert.deepEqual(await replay.json(), { id, state: "SENT", replay: true });
-
-      const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
-      const types = events.map((event) => event.type);
-      assert.ok(types.includes("DELIVERY_ABANDONED"));
-      assert.ok(types.includes("DELIVERY_REQUEUED"));
-      assert.ok(types.includes("DELIVERY_REPORTED"));
-      const reported = events.find((event) => event.type === "DELIVERY_REPORTED");
-      assert.match(reported?.detail ?? "", /handed the WhatsApp alert/);
-    },
-  );
+        const ledger = await db.select().from(casProviderDeliveries)
+          .where(eq(casProviderDeliveries.incidentId, id));
+        assert.equal(ledger.length, 1);
+        assert.equal(ledger[0].transport, "WHATSAPP");
+        assert.ok(!ledger[0].recipientMasked.includes("+1555000333"));
+      },
+    );
+  } finally {
+    await provider.close();
+  }
 });
 
 test("device receipt for a channel the console did not queue is refused", async () => {
@@ -2800,6 +2787,90 @@ test("device receipt for a channel the console did not queue is refused", async 
       assert.equal(smsRow.state, "SENT");
     },
   );
+});
+
+test("WHATSAPP adapter submits a strict Cloud-API text message: the mock rejects any field Meta does not define", async () => {
+  // Strict mock of graph.facebook.com/<version>/<phone-number-id>/messages:
+  // 400 on any body field outside the Cloud API message schema (Meta behaves
+  // this way), 401 without a bearer token.
+  const provider = await startStubProvider((request) => {
+    const allowed = new Set(["messaging_product", "to", "type", "text"]);
+    for (const key of Object.keys(request.payload)) {
+      if (!allowed.has(key)) return 400;
+    }
+    if (request.payload.messaging_product !== "whatsapp") return 400;
+    if (request.payload.type !== "text") return 400;
+    const text = request.payload.text as Record<string, unknown> | undefined;
+    if (!text || typeof text.body !== "string" || Object.keys(text).some((k) => k !== "body")) return 400;
+    if (request.authorization !== "Bearer wa-token") return 401;
+    return 200;
+  });
+  try {
+    // The acceptance ledger references the incident, so the synthetic id
+    // needs a row.
+    await db.insert(casIncidents).values({ id: "inc-wa-1", priority: "P1", status: "ACTIVE_UNACKED" });
+    const whatsapp = createWhatsAppProvider({
+      url: provider.url,
+      token: "wa-token",
+      recipients: ["+1555000111", "+1555000222"],
+    });
+    await whatsapp.send(
+      { incidentId: "inc-wa-1", transport: "WHATSAPP", priority: "P1", body: "CAS P1 alert body" },
+      "inc-wa-1-whatsapp",
+    );
+    assert.equal(provider.requests.length, 2);
+    assert.equal(provider.requests[0].authorization, "Bearer wa-token");
+    assert.equal(provider.requests[0].idempotencyKey, "inc-wa-1-whatsapp:+1555000111");
+    assert.equal(provider.requests[0].payload.to, "+1555000111");
+    assert.equal(
+      (provider.requests[0].payload.text as { body: string }).body,
+      "CAS P1 alert body",
+    );
+    assert.equal(provider.requests[1].idempotencyKey, "inc-wa-1-whatsapp:+1555000222");
+  } finally {
+    await provider.close();
+  }
+});
+
+test("WHATSAPP adapter retry after partial acceptance re-sends only the unaccepted recipient", async () => {
+  // The Cloud API cannot honor an idempotency key, so dedup must be durable
+  // on our side: a worker retry (crash after the first recipient's 2xx,
+  // claim expiry mid-send) must skip the recipient whose acceptance is
+  // already recorded in the cas_provider_deliveries ledger.
+  let failSecond = true;
+  const provider = await startStubProvider((request) => {
+    if (failSecond && request.payload.to === "+1555000222") {
+      failSecond = false;
+      return 500;
+    }
+    return 200;
+  });
+  try {
+    await db.insert(casIncidents).values({ id: "inc-wa-2", priority: "P1", status: "ACTIVE_UNACKED" });
+    const whatsapp = createWhatsAppProvider({
+      url: provider.url,
+      recipients: ["+1555000111", "+1555000222"],
+    });
+    const message = { incidentId: "inc-wa-2", transport: "WHATSAPP", priority: "P1", body: "CAS P1 alert body" } as const;
+
+    // First attempt: recipient 1 accepted, recipient 2 fails -> retryable.
+    await assert.rejects(whatsapp.send(message, "inc-wa-2-whatsapp"), /server-outage|failing/);
+    assert.deepEqual(provider.requests.map((r) => r.payload.to), ["+1555000111", "+1555000222"]);
+
+    // Retry: recipient 1 is skipped via the ledger, only recipient 2 is sent.
+    await whatsapp.send(message, "inc-wa-2-whatsapp");
+    assert.deepEqual(provider.requests.map((r) => r.payload.to), ["+1555000111", "+1555000222", "+1555000222"]);
+
+    // A further retry sends nothing — both acceptances are recorded.
+    await whatsapp.send(message, "inc-wa-2-whatsapp");
+    assert.equal(provider.requests.length, 3);
+
+    const ledger = await db.select().from(casProviderDeliveries)
+      .where(eq(casProviderDeliveries.incidentId, "inc-wa-2"));
+    assert.equal(ledger.length, 2);
+  } finally {
+    await provider.close();
+  }
 });
 
 test("EMAIL adapter submits subject and body through its provider with outbox-ID idempotency keys", async () => {
@@ -2873,12 +2944,12 @@ test("trigger queues only the handset's requested device channels plus configure
   await withEnv(
     {
       CAS_SMS_DELIVERY_MODE: "device",
-      CAS_DEVICE_CHANNELS: "SMS,WHATSAPP",
+      CAS_DEVICE_CHANNELS: "SMS",
       CAS_DEVICE_TOKEN: DEVICE_TOKEN,
     },
     async () => {
-      // Handset with the WhatsApp checkbox off asks for SMS only; the
-      // console must not queue a WHATSAPP row nobody will report against.
+      // The handset asks for SMS, the only device channel; the console queues
+      // it plus every configured provider channel (the suite's XMPP row).
       const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
         headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
@@ -2893,27 +2964,21 @@ test("trigger queues only the handset's requested device channels plus configure
       const folded = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
         headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceChannels: ["SMS", "WHATSAPP"] }),
+        body: JSON.stringify({ deviceChannels: ["SMS"] }),
       });
       assert.equal(folded.status, 200);
       assert.equal(((await folded.json()) as { reused: boolean }).reused, true);
-    },
-  );
 
-  await withEnv(
-    {
-      CAS_SMS_DELIVERY_MODE: "device",
-      CAS_DEVICE_CHANNELS: "SMS",
-      CAS_DEVICE_TOKEN: DEVICE_TOKEN,
-    },
-    async () => {
-      // A valid channel the console has not enabled is a loud 409.
+      // The retired WHATSAPP device channel is a loud 409, not a silent
+      // drop: an APK from the tap-to-send build learns the console did not
+      // queue that channel and still sends its SMS directly.
       const conflict = await fetch(`${baseUrl}/cas/incidents/trigger`, {
         method: "POST",
         headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ deviceChannels: ["WHATSAPP"] }),
       });
       assert.equal(conflict.status, 409);
+      assert.match(((await conflict.json()) as { error: string }).error, /not enabled/);
 
       // Unknown channel names are rejected outright.
       const bad = await fetch(`${baseUrl}/cas/incidents/trigger`, {

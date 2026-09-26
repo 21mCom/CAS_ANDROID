@@ -12,16 +12,8 @@ object TestStore {
     private const val COVER_PACKAGE = "cover_package"
     private const val ALERT_SERVER_URL = "alert_server_url"
     private const val SMS_RESPONDERS = "sms_responders"
-    private const val WHATSAPP_ENABLED = "whatsapp_enabled"
     private const val DEVICE_TOKEN = "device_access_token"
     private const val ALERT_TOKEN = "alert_token"
-
-    /** Whether alerts also hand off to WhatsApp (tap-to-send) after the SMS. */
-    fun setWhatsAppEnabled(context: Context, enabled: Boolean) =
-        storage(context).edit().putBoolean(WHATSAPP_ENABLED, enabled).apply()
-
-    fun whatsAppEnabled(context: Context): Boolean =
-        storage(context).getBoolean(WHATSAPP_ENABLED, false)
 
     /**
      * Shared handset credential (X-CAS-Device-Token) for the console's

@@ -160,10 +160,10 @@ physical Pixel evidence and cannot establish Gate 0A readiness.
 
 After a completed run, use the files in the printed run directory.
 
-Alert-channel work (MVP alert loop, device-direct SMS/WhatsApp, XMPP/email
-provider drills) lives in `MVP-HANDOFF-WINDOWS.md`; the full verification
-matrix for the Windows operator is `HANDOFF-TEST-KIT.md` with
-`scripts\cas-api-drills.ps1`.
+Alert-channel work (MVP alert loop, device-direct SMS, server-side
+WhatsApp/XMPP/email provider drills) lives in `MVP-HANDOFF-WINDOWS.md`; the
+full verification matrix for the Windows operator is `HANDOFF-TEST-KIT.md`
+with `scripts\cas-api-drills.ps1`.
 
 ```text
 gate0a-results/<UTC timestamp>-<process id>/report.json

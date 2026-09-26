@@ -1,4 +1,9 @@
+import { createHash } from "node:crypto";
+import { db } from "@workspace/db";
+import { casProviderDeliveries } from "@workspace/db/schema";
+import { eq } from "drizzle-orm";
 import type { CasOutbox } from "@workspace/db/schema";
+import { maskRecipient } from "./cas-device-delivery";
 import type { CasDeliverySender } from "../routes/cas";
 
 /**
@@ -30,6 +35,21 @@ import type { CasDeliverySender } from "../routes/cas";
  *   CAS_EMAIL_PROVIDER_TOKEN bearer token for the provider (optional)
  *   CAS_EMAIL_FROM           sender address (optional)
  *   CAS_EMAIL_RECIPIENTS     comma-separated recipient addresses (required)
+ *
+ * WHATSAPP (server-side only — the handset never opens the WhatsApp UI):
+ *   CAS_WHATSAPP_PROVIDER_URL   full HTTPS URL of the WhatsApp Business
+ *                               Cloud API messages resource, including the
+ *                               sender phone-number ID in the path:
+ *                               https://graph.facebook.com/vXX.X/<phone-number-id>/messages
+ *   CAS_WHATSAPP_PROVIDER_TOKEN bearer token for the Cloud API (optional)
+ *   CAS_WHATSAPP_RECIPIENTS     comma-separated recipient numbers (required)
+ *   The Cloud API has no idempotency contract: it ignores unknown headers
+ *   and rejects unknown body fields. Duplicate suppression is therefore
+ *   durable on our side — every accepted (recipient, outbox item) pair is
+ *   recorded in the cas_provider_deliveries ledger, and a retried send
+ *   skips recipients whose acceptance is already recorded. The
+ *   Idempotency-Key header is still sent because a gateway sitting in front
+ *   of Meta (and the dev provider sink) can honor the replay contract.
  *
  * Provider URL policy: endpoints must be HTTPS because submissions carry
  * bearer credentials and alert content. Plain HTTP is accepted only for
@@ -177,7 +197,7 @@ function providerUrlError(url: string): string | undefined {
 }
 
 export type ProviderAdapter = {
-  transport: "SMS" | "XMPP" | "EMAIL";
+  transport: "SMS" | "XMPP" | "EMAIL" | "WHATSAPP";
   send: (message: CasAlertMessage, idempotencyKey: string) => Promise<void>;
 };
 
@@ -389,6 +409,91 @@ export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
   };
 }
 
+export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter {
+  return {
+    transport: "WHATSAPP",
+    send: async (message, idempotencyKey) => {
+      const urlError = providerUrlError(config.url);
+      if (urlError) {
+        throw new CasProviderError("not-configured", `WHATSAPP ${urlError}`, {
+          retryable: false,
+        });
+      }
+      // The WhatsApp Business Cloud API has no idempotency contract: unknown
+      // body fields are rejected and the Idempotency-Key header is ignored.
+      // Duplicate suppression is therefore durable on our side via the
+      // cas_provider_deliveries ledger — a retried send (worker crash after
+      // partial acceptance, claim expiry) skips recipients whose acceptance
+      // is already recorded instead of messaging them twice.
+      for (const recipient of config.recipients) {
+        const key = `${idempotencyKey}:${recipient}`;
+        const keyHash = createHash("sha256").update(key).digest("hex");
+        const [recorded] = await db
+          .select({ keyHash: casProviderDeliveries.keyHash })
+          .from(casProviderDeliveries)
+          .where(eq(casProviderDeliveries.keyHash, keyHash));
+        if (recorded) continue;
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          // Still sent: a gateway in front of Meta (or the dev provider
+          // sink) can honor the replay contract even though Meta cannot.
+          "Idempotency-Key": key,
+        };
+        if (config.token) headers.Authorization = `Bearer ${config.token}`;
+
+        let response: Response;
+        try {
+          response = await fetch(config.url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              // Strict WhatsApp Business Cloud API message shape — only
+              // fields the API defines. The sender phone-number ID is part
+              // of the configured endpoint path, not the body.
+              messaging_product: "whatsapp",
+              to: recipient,
+              type: "text",
+              text: { body: message.body },
+            }),
+            signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+            redirect: "manual",
+          });
+        } catch (error) {
+          throw classifyFetchFailure("WHATSAPP", error);
+        }
+
+        if (response.status >= 200 && response.status < 300) {
+          // Record acceptance before moving on. If the process dies between
+          // the provider's 2xx and this insert, one duplicate is possible on
+          // retry — the ledger makes the common retry paths duplicate-free;
+          // only a crash inside this narrow window can still double-send.
+          await db
+            .insert(casProviderDeliveries)
+            .values({
+              keyHash,
+              transport: "WHATSAPP",
+              incidentId: message.incidentId,
+              recipientMasked: maskRecipient(recipient),
+            })
+            .onConflictDoNothing();
+          continue;
+        }
+        const detail = await response.text().catch(() => "");
+        const classified = classifyStatus(
+          "WHATSAPP",
+          response.status,
+          detail.slice(0, 200) || response.statusText,
+          response.headers.get(IDEMPOTENCY_REPLAYED_HEADER) === "true",
+          response.headers.get("location"),
+          parseRetryAfterMs(response.headers.get("retry-after")),
+        );
+        if (classified) throw classified;
+      }
+    },
+  };
+}
+
 function parseRecipients(raw: string | undefined): string[] {
   return (raw ?? "")
     .split(",")
@@ -398,7 +503,7 @@ function parseRecipients(raw: string | undefined): string[] {
 
 function readConfig(
   env: NodeJS.ProcessEnv,
-  prefix: "CAS_SMS" | "CAS_XMPP" | "CAS_EMAIL",
+  prefix: "CAS_SMS" | "CAS_XMPP" | "CAS_EMAIL" | "CAS_WHATSAPP",
   fromKey: string,
 ): ProviderConfig | undefined {
   const url = env[`${prefix}_PROVIDER_URL`];
@@ -417,6 +522,7 @@ export type CasProviderAdapters = {
   sms?: ProviderAdapter;
   xmpp?: ProviderAdapter;
   email?: ProviderAdapter;
+  whatsapp?: ProviderAdapter;
 };
 
 export function loadConfiguredProviders(
@@ -425,10 +531,12 @@ export function loadConfiguredProviders(
   const sms = readConfig(env, "CAS_SMS", "CAS_SMS_FROM");
   const xmpp = readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID");
   const email = readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM");
+  const whatsapp = readConfig(env, "CAS_WHATSAPP", "CAS_WHATSAPP_FROM");
   return {
     sms: sms ? createSmsProvider(sms) : undefined,
     xmpp: xmpp ? createXmppProvider(xmpp) : undefined,
     email: email ? createEmailProvider(email) : undefined,
+    whatsapp: whatsapp ? createWhatsAppProvider(whatsapp) : undefined,
   };
 }
 
@@ -441,11 +549,12 @@ export function loadConfiguredProviders(
  */
 export function configuredProviderTransports(
   env: NodeJS.ProcessEnv = process.env,
-): Array<"SMS" | "XMPP" | "EMAIL"> {
-  const transports: Array<"SMS" | "XMPP" | "EMAIL"> = [];
+): Array<"SMS" | "XMPP" | "EMAIL" | "WHATSAPP"> {
+  const transports: Array<"SMS" | "XMPP" | "EMAIL" | "WHATSAPP"> = [];
   if (readConfig(env, "CAS_SMS", "CAS_SMS_FROM")) transports.push("SMS");
   if (readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID")) transports.push("XMPP");
   if (readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM")) transports.push("EMAIL");
+  if (readConfig(env, "CAS_WHATSAPP", "CAS_WHATSAPP_FROM")) transports.push("WHATSAPP");
   return transports;
 }
 
@@ -466,7 +575,9 @@ export function createCasDeliverySender(
           ? adapters.xmpp
           : item.transport === "EMAIL"
             ? adapters.email
-            : undefined;
+            : item.transport === "WHATSAPP"
+              ? adapters.whatsapp
+              : undefined;
     if (!adapter) {
       throw new CasProviderError(
         "not-configured",

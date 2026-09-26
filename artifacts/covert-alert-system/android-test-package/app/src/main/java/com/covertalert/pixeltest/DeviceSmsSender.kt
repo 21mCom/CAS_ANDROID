@@ -204,7 +204,9 @@ object DeviceSmsSender {
     /**
      * Picks up SMS deliveries an operator re-queued in the console and
      * re-sends them from the SIM. Runs on a background thread; journals the
-     * outcome. WHATSAPP items on the same list are WhatsAppAlerter's job.
+     * outcome. SMS is the only device-direct channel — every other channel
+     * is delivered by the server-side worker, so a non-SMS entry on this
+     * list is skipped, never surfaced on screen.
      *
      * Items are skipped while this handset still owes them an answer: an
      * unfinished batch (their SMS may already have left the SIM with the
@@ -397,43 +399,6 @@ object DeviceSmsSender {
                 "incidentId" to pending.incidentId,
                 "outcome" to "FAILED",
                 "reason" to "could not durably persist the receipt; the batch stays queued for recovery",
-            ))
-            return
-        }
-        Thread { postReceipt(context, receipt) }.start()
-    }
-
-    /**
-     * Shared receipt reporting for the device-delivered channels
-     * (WhatsAppAlerter uses it too): durably persists the per-recipient
-     * outcome first, then posts it to the console's device-receipt endpoint
-     * on a background thread. The persisted copy is removed only when the
-     * console accepts the receipt (any 2xx, including the replay of an
-     * already-SENT item); a data outage or process death in between leaves it
-     * queued for retryPendingReceipts.
-     */
-    fun reportChannelOutcome(
-        context: Context,
-        incidentId: String,
-        channel: String,
-        results: List<Triple<String, Boolean, String?>>,
-        sendId: String? = null,
-        cycleToken: String? = null,
-    ) {
-        val receipt = PendingReceipt(
-            receiptId = sendId ?: "$channel-$incidentId-${java.util.UUID.randomUUID()}",
-            incidentId = incidentId,
-            channel = channel,
-            queuedAtMs = System.currentTimeMillis(),
-            results = results,
-            cycleToken = cycleToken,
-        )
-        val store = TestStore.receiptStore(context.applicationContext)
-        if (!ReceiptDurability.enqueueReceipt(store, receipt)) {
-            TestStore.record(context, "${channel}_RECEIPT_OUTCOME", mapOf(
-                "incidentId" to incidentId,
-                "outcome" to "FAILED",
-                "reason" to "could not durably persist the receipt",
             ))
             return
         }

@@ -137,6 +137,12 @@ expect_status "sms-receipt refuses a missing device token" 401 "$status"
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
 expect_status "sms-receipt rejects a malformed body" 400 "$status"
 
+# The on-screen WhatsApp handoff was removed (no-screen-flash rule): WhatsApp
+# is a server-side gateway channel now, so a device receipt naming it must be
+# refused loudly instead of steering a handset flow that no longer exists.
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"WHATSAPP","results":[{"recipient":"+15550100","ok":true}]}' "$CAS_FLOW_DEVICE_TOKEN")"
+expect_status "device-receipt refuses the retired WHATSAPP device channel" 409 "$status"
+
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger")"
 expect_status "trigger refuses a missing alert credential" 401 "$status"
 

@@ -300,6 +300,9 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
 });
 
 const deviceReceiptSchema = z.object({
+  // WHATSAPP stays in the enum so APKs from the retired tap-to-send build
+  // get the designed loud 409 ("not an enabled device channel") below
+  // instead of an opaque 400 schema rejection.
   channel: z.enum(["SMS", "WHATSAPP"]).default("SMS"),
   // The current delivery-cycle token, which the handset picked up from the
   // device-pending list with the re-queued item and echoes back here.
@@ -321,8 +324,9 @@ const deviceReceiptSchema = z.object({
 
 /**
  * Device-direct receipt: the alerting handset reports the outcome of a
- * channel it delivered itself (SMS over its own SIM, or WhatsApp via a
- * tap-to-send handoff). All recipients OK transitions the outbox item to
+ * channel it delivered itself (SMS over its own SIM — the only device
+ * channel; everything else is delivered server-side so the handset never
+ * surfaces another app's UI). All recipients OK transitions the outbox item to
  * SENT; any failure dead-letters it immediately — the handset is the only
  * delivery agent for these channels, so there is no server-side retry, and
  * the recovery path is the operator fixing the responder configuration and
@@ -372,7 +376,9 @@ async function handleDeviceReceipt(
       return res.status(400).json({ error: "Invalid device receipt", issues: body.error.issues });
     }
     const channel = channelOverride ?? body.data.channel;
-    if (!channels.includes(channel)) {
+    // The receipt schema still accepts retired channel names (WHATSAPP) so
+    // APKs from the tap-to-send build get this loud 409, not a 400.
+    if (!(channels as string[]).includes(channel)) {
       return res.status(409).json({
         error: `${channel} is not an enabled device channel (CAS_DEVICE_CHANNELS=${channels.join(",")}); the handset must not report receipts for channels the console did not queue.`,
       });
@@ -431,10 +437,9 @@ async function handleDeviceReceipt(
           incidentId,
           type: "DELIVERY_REPORTED",
           priority: "P1",
-          detail:
-            channel === "SMS"
-              ? `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM (device-direct mode; no gateway involved).`
-              : `Handset confirmed it handed the WhatsApp alert to WhatsApp for ${total} responder(s) (tap-to-send handoff; the free WhatsApp app has no unattended-send API, so SENT means handed to WhatsApp, not delivery-confirmed).`,
+          // Only device-enabled channels reach this point (others are
+          // refused 409 above), and SMS is the sole device channel.
+          detail: `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM (device-direct mode; no gateway involved).`,
           createdAt: now,
         });
         return "sent" as const;
@@ -454,10 +459,7 @@ async function handleDeviceReceipt(
         incidentId,
         type: "DELIVERY_ABANDONED",
         priority: "P1",
-        detail:
-          channel === "SMS"
-            ? `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. Fix the responder configuration on the handset and re-queue this delivery; the handset picks re-queued items up from the device-pending list.`
-            : `Handset reported it could not hand the WhatsApp alert to WhatsApp for ${failed.length} of ${total} responder(s): ${failureSummary}. Check WhatsApp is installed and the responder numbers are correct on the handset, then re-queue this delivery.`,
+        detail: `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. Fix the responder configuration on the handset and re-queue this delivery; the handset picks re-queued items up from the device-pending list.`,
         createdAt: now,
       });
       return "dead-lettered" as const;
@@ -536,10 +538,13 @@ router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) 
 });
 
 // The handset declares which device channels it will actually deliver for
-// this alert (e.g. the WhatsApp checkbox); the console queues the
-// intersection with the channels it has enabled, so a channel nobody will
-// deliver never creates an outbox row that can only dead-letter. An omitted
-// list means "every enabled device channel" (API drills and older APKs).
+// this alert (SMS is the only device channel; everything else fans out
+// server-side so the phone's screen never shows alert activity); the
+// console queues the intersection with the channels it has enabled, so a
+// channel nobody will deliver never creates an outbox row that can only
+// dead-letter. An omitted list means "every enabled device channel" (API
+// drills and older APKs). WHATSAPP stays in the enum so APKs from the
+// retired tap-to-send build get the loud 409 below instead of a 400.
 const triggerSchema = z.object({
   deviceChannels: z.array(z.enum(["SMS", "WHATSAPP"])).max(4).optional(),
 });
@@ -556,7 +561,11 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
     }
     const enabledDevice = deviceChannels();
     const requested = parsed.data.deviceChannels;
-    const notEnabled = (requested ?? []).filter((channel) => !enabledDevice.includes(channel));
+    // The request schema still accepts retired channel names (WHATSAPP) so
+    // they fail loudly here with 409 instead of as a 400 schema error.
+    const notEnabled = (requested ?? []).filter(
+      (channel) => !(enabledDevice as string[]).includes(channel),
+    );
     if (notEnabled.length > 0) {
       // Loud mismatch, not a silent drop: the handset learns the console did
       // not queue that channel, still sends its alert directly, and journals

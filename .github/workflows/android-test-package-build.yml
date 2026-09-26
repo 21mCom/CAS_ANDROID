@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
+      - ".github/scripts/check-silent-alert-channels.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -18,6 +19,7 @@ on:
     paths:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
+      - ".github/scripts/check-silent-alert-channels.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -57,6 +59,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      # The no-screen-flash rule is cheaper to check statically than on an
+      # emulator: no alert path may reference a third-party messenger or
+      # start a visible activity besides the configured cover app.
+      - name: Silent-channel invariant (no on-screen handoff)
+        run: bash .github/scripts/check-silent-alert-channels.sh
 
       - name: Read tool requirements
         id: tool-requirements

@@ -43,6 +43,21 @@ export const casOutbox = pgTable("cas_outbox", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const casProviderDeliveries = pgTable("cas_provider_deliveries", {
+  // Durable per-recipient acceptance ledger for providers that cannot honor
+  // the Idempotency-Key replay contract (the WhatsApp Business Cloud API has
+  // no idempotency). Keyed by a SHA-256 hash of "<outbox-id>:<recipient>"
+  // because the privacy invariant forbids persisting full responder numbers;
+  // the masked form is stored only so an operator can read the ledger. A
+  // retried send skips recipients whose acceptance is already recorded, so a
+  // worker crash after partial acceptance cannot duplicate those messages.
+  keyHash: text("key_hash").primaryKey(),
+  transport: text("transport").notNull(),
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id),
+  recipientMasked: text("recipient_masked").notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const casTransportCooldowns = pgTable("cas_transport_cooldowns", {
   transport: text("transport").primaryKey(),
   nextAllowedAt: timestamp("next_allowed_at", { withTimezone: true }).notNull(),

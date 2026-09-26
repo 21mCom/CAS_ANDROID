@@ -12,11 +12,12 @@ import java.net.URL
  * Gate 0A harness runs never call this; it is only invoked from the MVP button.
  *
  * The POST body declares which device channels this handset will actually
- * deliver for the alert (always SMS here, plus WHATSAPP when the operator
- * enabled the checkbox), so the console only queues deliveries someone will
- * carry out. `reused` in the response means the trigger folded into an
- * already-active incident and the console queued nothing new — the handset
- * must not re-send physical messages either.
+ * deliver for the alert (always SMS here — it is the only device-direct
+ * channel; every other channel fans out server-side so no alert path on
+ * this handset can surface another app's UI), so the console only queues
+ * deliveries someone will carry out. `reused` in the response means the
+ * trigger folded into an already-active incident and the console queued
+ * nothing new — the handset must not re-send physical messages either.
  *
  * The trigger endpoint is credential-gated: without the enrolled-device token
  * the server rejects the request with 401 and no incident is created.
@@ -33,11 +34,7 @@ object AlertSender {
         if (credential.isEmpty()) {
             return Result(false, "Alert credential required - save the token before sending")
         }
-        val channels = buildList {
-            add("SMS")
-            if (TestStore.whatsAppEnabled(context)) add("WHATSAPP")
-        }
-        val payload = JSONObject().put("deviceChannels", JSONArray(channels)).toString()
+        val payload = JSONObject().put("deviceChannels", JSONArray(listOf("SMS"))).toString()
         return runCatching {
             val connection = (URL("$trimmed/api/cas/incidents/trigger").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"

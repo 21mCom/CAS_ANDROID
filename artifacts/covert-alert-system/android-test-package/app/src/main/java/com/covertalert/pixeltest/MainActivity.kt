@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -127,18 +126,9 @@ class MainActivity : Activity() {
             TestStore.record(this, "SMS_RESPONDERS_CONFIGURED", mapOf("count" to TestStore.smsResponders(this).size))
             refreshReport()
         })
-        root.addView(CheckBox(this).apply {
-            text = "Also alert via WhatsApp (opens each chat pre-filled; you tap send)"
-            isChecked = TestStore.whatsAppEnabled(this@MainActivity)
-            setOnCheckedChangeListener { _, checked ->
-                TestStore.setWhatsAppEnabled(this@MainActivity, checked)
-                TestStore.record(this@MainActivity, "WHATSAPP_TOGGLED", mapOf(
-                    "enabled" to checked,
-                    "whatsAppInstalled" to WhatsAppAlerter.isInstalled(this@MainActivity),
-                ))
-                refreshReport()
-            }
-        })
+        // No other-channel controls by design: SMS is the only channel the
+        // handset delivers itself. Every other channel fans out server-side
+        // so no alert path on this device can surface another app's UI.
         root.addView(button("Grant SMS permission") {
             if (smsPermissionGranted) {
                 TestStore.record(this, "SMS_PERMISSION", mapOf("outcome" to "ALREADY_GRANTED"))
@@ -258,15 +248,12 @@ class MainActivity : Activity() {
                     // The repeat tap folded into the still-active incident and
                     // the console queued no new deliveries, so the handset
                     // must not re-send physical messages either.
-                    TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS/WhatsApp"))
+                    TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS"))
                 } else {
                     // Device-direct: even when the trigger POST fails (no
                     // data, server down) the alert still leaves this handset
                     // by SMS.
                     sendSmsFromHandset(if (result.ok) result.incidentId else null)
-                    if (TestStore.whatsAppEnabled(this@MainActivity)) {
-                        sendWhatsAppFromHandset(if (result.ok) result.incidentId else null)
-                    }
                 }
             }
             runOnUiThread {
@@ -279,14 +266,6 @@ class MainActivity : Activity() {
     private fun sendSmsFromHandset(incidentId: String?) {
         val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
         TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
-    }
-
-    private fun sendWhatsAppFromHandset(incidentId: String?) {
-        // Tap-to-send: opens one WhatsApp chat per responder with the alert
-        // pre-filled; the console's WHATSAPP item is marked from the handoff
-        // receipt (SENT there means handed to WhatsApp, not delivered).
-        val outcome = WhatsAppAlerter.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
-        TestStore.record(this, "MVP_WHATSAPP_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
     }
 
     private fun checkRequeued() {
@@ -302,10 +281,6 @@ class MainActivity : Activity() {
             DeviceSmsSender.recoverUnfinishedBatches(this)
             val outcome = DeviceSmsSender.sendRequeued(this)
             TestStore.record(this, "REQUEUE_CHECK", mapOf("detail" to outcome))
-            if (TestStore.whatsAppEnabled(this@MainActivity)) {
-                val waOutcome = WhatsAppAlerter.sendRequeued(this@MainActivity)
-                TestStore.record(this@MainActivity, "WHATSAPP_REQUEUE_CHECK", mapOf("detail" to waOutcome))
-            }
             runOnUiThread { refreshReport() }
         }.start()
     }
