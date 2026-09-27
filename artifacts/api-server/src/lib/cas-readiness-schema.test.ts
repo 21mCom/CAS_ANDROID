@@ -24,11 +24,21 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
+  activeIncidentSchema,
   bootstrapGateSchema,
   bootstrapSchema,
   bootstrapSetupSchema,
+  casPrioritySchema,
+  casStateResponseSchema,
   gatePatchSchema,
+  incidentLocationSchema,
+  kernelEventSchema,
+  kernelStatusSchema,
+  outboxItemSchema,
   setupPatchSchema,
+  stateGateSchema,
+  stateIncidentRowSchema,
+  stateSetupSchema,
 } from "./cas-readiness-schema";
 
 const consoleHookPath = path.resolve(
@@ -82,6 +92,26 @@ function unionLiterals(node: ts.TypeNode, context: string): string[] {
     }
     return member.literal.text;
   });
+}
+
+/** The declared type node of one property on an object-literal type alias. */
+function propertyTypeNode(typeName: string, fieldName: string): ts.TypeNode {
+  const alias = sourceFile.statements.find(
+    (statement): statement is ts.TypeAliasDeclaration =>
+      ts.isTypeAliasDeclaration(statement) && statement.name.text === typeName,
+  );
+  if (!alias || !ts.isTypeLiteralNode(alias.type)) fail(`${typeName} type not readable`);
+  const member = alias.type.members.find(
+    (entry): entry is ts.PropertySignature =>
+      ts.isPropertySignature(entry) && entry.name.getText(sourceFile) === fieldName,
+  );
+  if (!member || !member.type) fail(`${typeName}.${fieldName} not found`);
+  return member.type;
+}
+
+/** String literals of a union-typed property on a console type. */
+function propertyUnionLiterals(typeName: string, fieldName: string): string[] {
+  return unionLiterals(propertyTypeNode(typeName, fieldName), `${typeName}.${fieldName}`);
 }
 
 /** Evaluate a `const x = [...]` literal from the console source. */
@@ -266,5 +296,121 @@ test("console PATCH /cas/gates/:id payload keys match the shared gate patch sche
     sorted(fetchPayloadKeys("/cas/gates/")),
     sorted(Object.keys(gatePatchSchema.shape)),
     "console updateGateStatus payload and gatePatchSchema disagree",
+  );
+});
+
+// --- Read direction: GET /cas/state response vs. the console's types ---
+//
+// The console blind-casts the state response
+// (`await response.json() as Omit<FieldTestState, 'fieldRun'>`), so these
+// tests pin the shared response schemas (casStateResponseSchema and its
+// members) to the console's type declarations. The route contract test in
+// routes/cas.test.ts pins the live JSON to the same schemas; changing
+// either side without the other turns a check red.
+
+test("console FieldTestState server-fed fields match the state response schema keys", () => {
+  // fieldRun is console-local state the server never returns.
+  const serverFed = typeFieldNames("FieldTestState").filter((name) => name !== "fieldRun");
+  assert.deepEqual(
+    sorted(serverFed),
+    sorted(Object.keys(casStateResponseSchema.shape)),
+    "console FieldTestState and casStateResponseSchema disagree; change both sides together (lib/cas-readiness-schema.ts and use-field-test.tsx)",
+  );
+});
+
+test("state gate/setup response schemas serialize exactly the bootstrap fields", () => {
+  assert.deepEqual(
+    sorted(Object.keys(stateGateSchema.shape)),
+    sorted(Object.keys(bootstrapGateSchema.shape)),
+    "the state gate response schema and the bootstrap gate schema disagree",
+  );
+  assert.deepEqual(
+    sorted(Object.keys(stateSetupSchema.shape)),
+    sorted(Object.keys(bootstrapSetupSchema.shape)),
+    "the state setup response schema and the bootstrap setup schema disagree",
+  );
+});
+
+test("console Incident type fields match the state incident row schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("Incident")),
+    sorted(Object.keys(stateIncidentRowSchema.shape)),
+    "console Incident type and stateIncidentRowSchema disagree; change both sides together",
+  );
+});
+
+test("console ActiveIncident type fields match the active incident schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("ActiveIncident")),
+    sorted(Object.keys(activeIncidentSchema.shape)),
+    "console ActiveIncident type and activeIncidentSchema disagree; change both sides together",
+  );
+});
+
+test("console KernelEvent type fields match the kernel event schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("KernelEvent")),
+    sorted(Object.keys(kernelEventSchema.shape)),
+    "console KernelEvent type and kernelEventSchema disagree; change both sides together",
+  );
+});
+
+test("console OutboxItem type fields match the outbox item schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("OutboxItem")),
+    sorted(Object.keys(outboxItemSchema.shape)),
+    "console OutboxItem type and outboxItemSchema disagree; change both sides together",
+  );
+});
+
+test("console IncidentLocation type fields match the incident location schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("IncidentLocation")),
+    sorted(Object.keys(incidentLocationSchema.shape)),
+    "console IncidentLocation type and incidentLocationSchema disagree; change both sides together",
+  );
+});
+
+test("console Priority union matches the state priority enum", () => {
+  const alias = sourceFile.statements.find(
+    (statement): statement is ts.TypeAliasDeclaration =>
+      ts.isTypeAliasDeclaration(statement) && statement.name.text === "Priority",
+  );
+  if (!alias) fail("exported type Priority not found");
+  assert.deepEqual(
+    sorted(unionLiterals(alias.type, "Priority")),
+    sorted(casPrioritySchema.options),
+    "console Priority and the state priority enum disagree",
+  );
+});
+
+test("console KernelStatus union matches the kernel status enum", () => {
+  const alias = sourceFile.statements.find(
+    (statement): statement is ts.TypeAliasDeclaration =>
+      ts.isTypeAliasDeclaration(statement) && statement.name.text === "KernelStatus",
+  );
+  if (!alias) fail("exported type KernelStatus not found");
+  assert.deepEqual(
+    sorted(unionLiterals(alias.type, "KernelStatus")),
+    sorted(kernelStatusSchema.options),
+    "console KernelStatus and the kernel status enum disagree",
+  );
+});
+
+test("console OutboxItem transport/state/priority unions match the outbox item schema enums", () => {
+  assert.deepEqual(
+    sorted(propertyUnionLiterals("OutboxItem", "transport")),
+    sorted(outboxItemSchema.shape.transport.options),
+    "console OutboxItem transport and the outbox item transport enum disagree",
+  );
+  assert.deepEqual(
+    sorted(propertyUnionLiterals("OutboxItem", "state")),
+    sorted(outboxItemSchema.shape.state.options),
+    "console OutboxItem state and the outbox item state enum disagree",
+  );
+  assert.deepEqual(
+    sorted(propertyUnionLiterals("OutboxItem", "priority")),
+    sorted(outboxItemSchema.shape.priority.options),
+    "console OutboxItem priority and the outbox item priority enum disagree",
   );
 });

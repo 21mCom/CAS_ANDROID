@@ -1,30 +1,24 @@
 ---
 name: Kit gates first real CI run
-description: The first real GitHub run of the Windows test-kit gates already happened on branch ci-153 (run 35319853990, green); check code identity before burning a duplicate run for "confirm first run" tasks.
+description: The Windows test-kit gates have already executed green on a real GitHub Actions run; before burning a fresh scratch-branch run for a "confirm first run" task, prove code identity against that earlier run.
 ---
 
-GitHub Actions run **35319853990** (branch `ci-153`, head 144c3569, 2026-09-18,
-workflow "Windows test-kit entry points", all jobs success) is the first real
-windows-latest execution of: the tool-requirements drift gate, the hardcoded
-API-floor gate, the hardcoded JDK-minimum gate (each with its prove-it-breaks
-negative step), the validator-parity job, the run-guide freshness job, and the
-MVP handoff ZIP freshness job.
+The kit's tool-requirements drift gate, API-floor gate, JDK-minimum gate
+(each with its prove-it-breaks negative step), the validator-parity job, the
+run-guide freshness job, and the MVP handoff ZIP freshness job have all
+executed green on real windows-latest GitHub runners — the "first real run"
+question for these gates is settled.
 
 **Why:** these gates were merged to the workspace lineage while GitHub main
 stayed far behind, so each "confirm the first real run" task does not need a
-fresh scratch-branch push — the sweep branch already ran them. Sibling
-confirmations (drift gate, JDK hardcode gate, run-guide freshness) were
-completed by observing this run.
+fresh scratch-branch push if an earlier run already covered the same code.
 
 **How to apply:** for a "confirm gate X passes on its first real GitHub run"
-task, first check whether run 35319853990 (or a newer run on
-`/actions/workflows/windows-test-kit-entrypoints.yml/runs`) already executed
-the gate's steps green. Then prove the run tested the shipping code:
-`git diff main refs/remotes/ci/ci-153` must show no differences in the gate
-script, the workflow steps, and every file the gate scans (for the kit gates:
-`android-test-package/scripts/**` and the packager/entry-point scripts under
-`artifacts/covert-alert-system/scripts/`; docs and .kt app sources are not
-scanned). If anything in the scan surface drifted since, push a fresh scratch
-branch per the divergent-lineages recipe in `github-ci-access.md`. Job logs
-download fine with `Authorization: Bearer $GITHUB_PAT` against
-`/actions/jobs/<id>/logs`.
+task, first check the workflow's run history for an earlier green run that
+executed the gate's steps. Then prove the run tested the shipping code: diff
+main against that run's ref — the gate script, the workflow steps, and every
+file the gate scans must be identical (for the kit gates: the kit's
+scripts/** and the packager/entry-point scripts; docs and .kt app sources are
+not scanned). If anything in the scan surface drifted since, push a fresh
+scratch branch per the divergent-lineages recipe in `github-ci-access.md`.
+Job logs download fine with the PAT secret against the job-logs API.

@@ -24,9 +24,12 @@ import java.net.URL
  * CAS_ALERT_TOKEN secret), this sender exchanges it once at the enrollment
  * endpoint for this handset's own revocable device token, and the enrollment
  * credential is then DISCARDED from device storage — the provisioned handset
- * no longer holds it. A 401 means the device credential was revoked (or never
- * enrolled): the cached token is dropped, but the handset does NOT re-enroll
- * itself — that would defeat revocation. Regaining access requires the
+ * no longer holds it. Repeat alerts reuse the cached enrolled token, so the
+ * empty credential field after provisioning does not break the next alert.
+ * A 401 means the device credential was revoked (or never enrolled): the
+ * cached token is dropped, but the handset does NOT re-enroll itself — that
+ * would defeat revocation — and it never falls back to the shared device
+ * token for pickup/receipt calls either. Regaining access requires the
  * trusted operator action of re-entering the enrollment credential.
  */
 object AlertSender {
@@ -39,6 +42,17 @@ object AlertSender {
         // was consumed (discarded from storage); callers clear their input
         // field so the credential is not silently reused for a re-enrollment.
         val credentialConsumed: Boolean = false,
+        // Console-directed SMS delivery for this alert. hasSmsCircleDirective
+        // is true when the console answered with a deviceSms block; then
+        // smsCircle is null when no console circle was ever configured (the
+        // handset's own list stays authoritative), empty when the managed
+        // circle has no enabled SMS numbers (text nobody), or the definitive
+        // circle to text. smsMessage is the console's SMS template rendered
+        // for this incident. When the directive is absent (older console) the
+        // handset's local list and wording apply.
+        val hasSmsCircleDirective: Boolean = false,
+        val smsCircle: List<String>? = null,
+        val smsMessage: String? = null,
     )
 
     private data class Enrollment(val token: String?, val error: String?, val freshlyEnrolled: Boolean = false)
@@ -48,12 +62,17 @@ object AlertSender {
         if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {
             return Result(false, "Server URL must start with https:// (plain HTTP is only accepted for loopback dev endpoints that cannot leave the machine: 127.0.0.1 via adb reverse, or the emulator's 10.0.2.2 host alias)")
         }
-        // A blank enrollment credential is only fatal when this handset has
-        // not enrolled yet: after provisioning, the cached device credential
-        // authorizes the trigger — and the enrollment credential field has
-        // been cleared by then, so requiring it here would silently drop
-        // every repeat alert to direct SMS with no incident.
-        val enrolled = ensureDeviceToken(context, trimmed, enrollmentCredential.trim())
+        val enrollment = enrollmentCredential.trim()
+        // Repeat alerts reuse the enrolled credential cached from the first
+        // enrollment: an already-provisioned handset holds only that
+        // credential (the enrollment credential was discarded on purpose), so
+        // a blank field is fine as long as the cached credential remains.
+        // Only a handset that has never enrolled (or had its credential
+        // rejected) needs the enrollment credential.
+        if (enrollment.isEmpty() && TestStore.enrolledDeviceToken(context).isBlank()) {
+            return Result(false, "Enrollment credential required - save the credential before sending")
+        }
+        val enrolled = ensureDeviceToken(context, trimmed, enrollment)
         if (enrolled.token == null) {
             return Result(false, enrolled.error ?: "Device enrollment failed")
         }
@@ -83,7 +102,25 @@ object AlertSender {
                     val parsed = runCatching { JSONObject(body) }.getOrNull()
                     val id = parsed?.optString("id").orEmpty()
                     if (id.isNotBlank()) {
-                        Result(true, "HTTP $code incident=$id", id, parsed?.optBoolean("reused") == true, credentialConsumed)
+                        val deviceSms = parsed?.optJSONObject("deviceSms")
+                        val circleManaged = deviceSms != null && !deviceSms.isNull("recipients")
+                        val circle = if (circleManaged) {
+                            val numbers = deviceSms?.optJSONArray("recipients")
+                            (0 until (numbers?.length() ?: 0)).mapNotNull { numbers?.optString(it)?.takeIf(String::isNotBlank) }
+                        } else {
+                            null
+                        }
+                        val message = deviceSms?.optString("message")?.takeIf { it.isNotBlank() }
+                        Result(
+                            true,
+                            "HTTP $code incident=$id",
+                            id,
+                            parsed?.optBoolean("reused") == true,
+                            credentialConsumed,
+                            hasSmsCircleDirective = deviceSms != null,
+                            smsCircle = circle,
+                            smsMessage = message,
+                        )
                     } else {
                         Result(false, "HTTP $code but no incident id in response", credentialConsumed = credentialConsumed)
                     }
@@ -145,6 +182,7 @@ object AlertSender {
                     val deviceId = parsed?.optJSONObject("device")?.optString("id").orEmpty()
                     if (token.isNotBlank()) {
                         TestStore.setEnrolledDeviceToken(context, token)
+                        TestStore.setDeviceCredentialProvisioned(context, true)
                         // Consume the enrollment credential: a provisioned
                         // handset keeps only its own revocable device token,
                         // so a revoked phone cannot silently re-enroll.

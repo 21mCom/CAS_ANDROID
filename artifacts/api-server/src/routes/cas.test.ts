@@ -48,6 +48,7 @@ import {
   resetCasOutboxWorkerHeartbeat,
 } from "../lib/cas-outbox-status";
 import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
+import { casStateResponseSchema } from "../lib/cas-readiness-schema";
 import {
   issueDeviceCredential,
   revokeDeviceCredential,
@@ -632,6 +633,60 @@ test("trigger accepts a location fix, persists it with accuracy and capture time
     accuracyM: 12.5,
     capturedAt: capturedAt.toISOString(),
   });
+});
+
+test("GET /cas/state response validates against the console-mirrored contract schema", async () => {
+  // The suite's beforeEach does not clear the readiness tables and the
+  // bootstrap tests below expect a fresh catalog, so this test seeds its own
+  // rows and removes them again either way.
+  await db.delete(casSetupReadiness);
+  await db.delete(casGateEvidence);
+  try {
+    const bootstrap = await fetch(`${baseUrl}/cas/bootstrap`, {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        gates: [{
+          id: "contract-gate", index: "01", name: "Contract Gate", short: "shape",
+          status: "partial", criterion: "c", evidence: ["e"], nextAction: "n", owner: "o",
+        }],
+        setup: [{ id: "contract-setup", label: "Contract setup", detail: "d", group: "g", complete: true, mode: "measured" }],
+      }),
+    });
+    assert.equal(bootstrap.status, 201);
+
+    // Trigger with a location fix so the active incident exercises every
+    // nested branch of the schema: location, journal events, and outbox rows.
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        location: { latitude: 52.5163, longitude: 13.3777, accuracyM: 12.5, capturedAt: new Date().toISOString() },
+      }),
+    });
+    assert.equal(trigger.status, 201);
+
+    const response = await fetch(`${baseUrl}/cas/state`);
+    assert.ok(response.ok);
+    const body = await response.json();
+    const parsed = casStateResponseSchema.safeParse(body);
+    assert.ok(
+      parsed.success,
+      `GET /cas/state drifted from the console contract; update lib/cas-readiness-schema.ts and use-field-test.tsx together: ${parsed.success ? "" : JSON.stringify(parsed.error.issues)}`,
+    );
+    // The strict schemas only earn their keep when every variant actually
+    // passed through them; assert the seeded state was non-trivial.
+    assert.ok(parsed.data.gates.length > 0);
+    assert.ok(parsed.data.setup.length > 0);
+    assert.ok(parsed.data.incidents.length > 0);
+    assert.ok(parsed.data.activeIncident);
+    assert.ok(parsed.data.activeIncident.location);
+    assert.ok(parsed.data.activeIncident.events.length > 0);
+    assert.ok(parsed.data.activeIncident.outbox.length > 0);
+  } finally {
+    await db.delete(casSetupReadiness);
+    await db.delete(casGateEvidence);
+  }
 });
 
 test("trigger rejects malformed location fixes with 400 and commits nothing", async () => {

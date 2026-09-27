@@ -120,7 +120,12 @@ class MainActivity : Activity() {
             if (value != TestStore.alertToken(this)) {
                 // A different enrollment credential invalidates the device
                 // credential enrolled under the old one; re-enroll lazily.
+                // The provisioned flag resets too: only while it stays set
+                // does the handset refuse to fall back to the shared device
+                // token, and saving a new enrollment credential IS the
+                // deliberate re-enrollment action that lifts that refusal.
                 TestStore.setEnrolledDeviceToken(this, "")
+                TestStore.setDeviceCredentialProvisioned(this, value.isBlank())
             }
             TestStore.setAlertToken(this, value)
             // Record only whether a credential exists, never the credential.
@@ -247,8 +252,13 @@ class MainActivity : Activity() {
         TestStore.setAlertServerUrl(this, baseUrl)
         TestStore.setAlertToken(this, token)
         TestStore.setSmsResponders(this, respondersInput.text.toString())
-        if (TestStore.smsResponders(this).isEmpty()) {
-            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no responder numbers configured"))
+        // A cached enrolled credential is enough to reach the console — the
+        // enrollment credential was consumed on first enrollment and is only
+        // needed again after a revocation.
+        val hasConsoleCredential = token.isNotBlank() || TestStore.enrolledDeviceToken(this).isNotBlank()
+        val canReachConsole = baseUrl.isNotBlank() && hasConsoleCredential
+        if (TestStore.smsResponders(this).isEmpty() && !canReachConsole) {
+            TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no responder numbers configured (with no reachable console to supply its responder circle, the handset's own list is the only source)"))
             refreshReport()
             return
         }
@@ -281,18 +291,18 @@ class MainActivity : Activity() {
                 "fixAgeS" to fix?.let { (System.currentTimeMillis() - it.capturedAtMs) / 1000 },
                 "provider" to fix?.provider,
             ))
-            if (baseUrl.isBlank() || (token.isBlank() && TestStore.enrolledDeviceToken(this@MainActivity).isBlank())) {
-                // Without a server URL no incident can be committed. Without
-                // any usable credential — no enrollment credential in the
-                // field AND no previously enrolled device credential — the
-                // trigger endpoint would 401. (After provisioning the field
-                // is cleared but the enrolled credential remains, so repeat
-                // alerts must still reach the server.) Either way the alert
-                // still leaves this handset directly.
+            // A provisioned handset no longer holds the enrollment credential
+            // (it was discarded after the exchange), so a blank field must not
+            // stop later alerts: the cached enrolled credential authorizes the
+            // trigger and the incident is still created server-side.
+            if (!canReachConsole) {
+                // Without a server URL — or without any credential the
+                // trigger endpoint accepts (401 otherwise) — no incident can
+                // be committed; the alert still leaves this handset directly.
                 val reason = if (baseUrl.isBlank()) {
                     "no server URL configured; texting responders directly without an incident"
                 } else {
-                    "no alert credential configured and this handset is not enrolled; the server would reject the trigger with 401, texting responders directly without an incident"
+                    "no enrollment credential or enrolled device credential configured; the server would reject the trigger with 401, texting responders directly without an incident"
                 }
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to reason))
                 sendSmsFromHandset(null, fix)
@@ -310,12 +320,25 @@ class MainActivity : Activity() {
                     // the console queued no new deliveries, so the handset
                     // must not re-send physical messages either.
                     TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS"))
+                } else if (result.ok && result.smsCircle != null && result.smsCircle.isEmpty()) {
+                    // The console's managed responder circle has no enabled
+                    // SMS numbers: text nobody — falling back to the local
+                    // list would keep texting responders the operator
+                    // disabled in the console.
+                    TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (result.incidentId ?: "unknown"), "detail" to "NOT_SENT: the console responder circle has no enabled SMS numbers — add or enable one in the console"))
                 } else {
                     // Device-direct: even when the trigger POST fails (no
                     // data, server down) the alert still leaves this handset
                     // by SMS — with the fix, so an offline alert still tells
-                    // responders where the handset was.
-                    sendSmsFromHandset(if (result.ok) result.incidentId else null, fix)
+                    // responders where the handset was. Online sends use the
+                    // console's circle and wording; only a failed trigger
+                    // falls back to the local list and offline wording.
+                    sendSmsFromHandset(
+                        if (result.ok) result.incidentId else null,
+                        fix,
+                        if (result.ok) result.smsCircle else null,
+                        if (result.ok) result.smsMessage else null,
+                    )
                 }
             }
             runOnUiThread {
@@ -325,8 +348,21 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun sendSmsFromHandset(incidentId: String?, fix: AlertLocation.Fix? = null) {
-        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId, fix))
+    private fun sendSmsFromHandset(
+        incidentId: String?,
+        fix: AlertLocation.Fix? = null,
+        recipients: List<String>? = null,
+        message: String? = null,
+    ) {
+        // recipients/message come from the console's deviceSms directive on a
+        // successful trigger; both are null on the offline path, where the
+        // handset's own list and wording are the explicit fallback.
+        val outcome = DeviceSmsSender.sendAlert(
+            this,
+            incidentId,
+            message ?: DeviceSmsSender.alertBody(incidentId, fix),
+            respondersOverride = recipients,
+        )
         TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
     }
 

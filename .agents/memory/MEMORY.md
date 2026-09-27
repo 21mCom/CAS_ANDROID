@@ -1,7 +1,7 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep registry and worker instrumentation in lockstep.
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
-- [CAS alert API credential gate](cas-auth.md) — mutations need per-device enrolled tokens; provisioned devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
+- [CAS alert API credential gate](cas-auth.md) — mutations need per-device enrolled tokens (CAS_ALERT_TOKEN is enrollment-only); provisioned devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
@@ -24,9 +24,12 @@
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG with workspace-device state; its modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
 - [Protected broadcasts need adb root](protected-broadcasts-adb.md) — API 35 shell uid can't send protected broadcasts or start non-exported activities; LOCKED_BOOT_COMPLETED ≠ direct boot.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
-- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; a stale snapshot can revert a task merged mid-task.
+- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — a stale snapshot can revert concurrent work, even committed; diff touched files against the parent before completing.
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
-- [Kit gates first real CI run](kit-gates-first-ci-run.md) — run 35319853990 (branch ci-153) already executed the drift/API-floor/JDK-floor gates, validator parity, and guide freshness green; verify code identity before burning a duplicate run.
+- [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit's drift/API-floor/JDK-floor gates, validator parity, and guide freshness already ran green on real GitHub runners; verify code identity before burning a duplicate run.
+- [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — known issue: saving a new enrollment credential on the handset re-enables the shared-token fallback before verification, so a revoked phone resumes; fix = sticky provisioned flag.
+- [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means config-table writes in one suite change another suite's fan-out; keep new DB suites in the &&-chained invocation.
+- [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.

@@ -50,3 +50,86 @@ export const setupPatchSchema = z.object({
 export const gatePatchSchema = z.object({
   status: z.enum(["verified", "partial", "blocked", "not-started"]),
 });
+
+/**
+ * GET /api/cas/state response contract — the read direction of the
+ * console/API parity guard. The console blind-casts this response
+ * (`await response.json() as Omit<FieldTestState, 'fieldRun'>` in the
+ * load()/reload() functions of use-field-test.tsx), so a renamed field or
+ * changed enum value would render garbage instead of failing loudly.
+ *
+ * These schemas mirror the console's Incident/ActiveIncident/KernelEvent/
+ * OutboxItem/IncidentLocation types; the parity test
+ * (cas-readiness-schema.test.ts) compares them against the console's type
+ * declarations, and the route contract test (routes/cas.test.ts) validates
+ * the live JSON of a seeded incident against casStateResponseSchema.
+ * Changing either side without the other produces a red check.
+ *
+ * Gates and setup entries are serialized by the route with exactly the
+ * bootstrap seed fields, so the response reuses those schemas. Every object
+ * is strict so an added-but-unmirrored field is as red as a renamed one.
+ */
+export const casPrioritySchema = z.enum(["P1", "P2", "P3"]);
+
+export const kernelStatusSchema = z.enum(["INACTIVE", "ACTIVE_UNACKED", "ACTIVE_ACKED", "RESOLVED"]);
+
+export const stateGateSchema = bootstrapGateSchema.strict();
+
+export const stateSetupSchema = bootstrapSetupSchema.strict();
+
+/** One row of the state's incident list (the console's Incident type). */
+export const stateIncidentRowSchema = z.object({
+  id: z.string(),
+  priority: casPrioritySchema,
+  time: z.string(),
+  title: z.string(),
+  detail: z.string(),
+  state: z.string(),
+  source: z.string(),
+  sample: z.boolean(),
+}).strict();
+
+export const kernelEventSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  priority: casPrioritySchema,
+  time: z.string(),
+  detail: z.string(),
+}).strict();
+
+export const outboxItemSchema = z.object({
+  id: z.string(),
+  transport: z.enum(["SMS", "XMPP", "WHATSAPP", "EMAIL"]),
+  // LOST is only an ephemeral worker-result label, never a persisted outbox
+  // state, so it is deliberately absent here and in the console union.
+  state: z.enum(["QUEUED", "PROCESSING", "FAILED", "SENT", "DEAD_LETTER"]),
+  priority: z.enum(["P1", "P2"]),
+  attempts: z.number().int(),
+  lastError: z.string().nullable(),
+  terminal: z.boolean(),
+}).strict();
+
+export const incidentLocationSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  accuracyM: z.number(),
+  capturedAt: z.string(),
+}).strict();
+
+export const activeIncidentSchema = z.object({
+  id: z.string(),
+  status: kernelStatusSchema,
+  priority: casPrioritySchema,
+  triggerCount: z.number().int(),
+  createdAt: z.string(),
+  location: incidentLocationSchema.nullable(),
+  events: z.array(kernelEventSchema),
+  outbox: z.array(outboxItemSchema),
+}).strict();
+
+export const casStateResponseSchema = z.object({
+  gates: z.array(stateGateSchema),
+  setup: z.array(stateSetupSchema),
+  incidents: z.array(stateIncidentRowSchema),
+  activeIncident: activeIncidentSchema.nullable(),
+}).strict();

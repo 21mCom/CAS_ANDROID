@@ -24,9 +24,19 @@ mechanics included — on 2026-09-27, so it can be trusted as a gate).
 - Any change to one validator's rules must land in the other; both files carry
   lockstep comments pointing at the parity harness.
 - The Bash validator is sed-based and intentionally supports only the kit's
-  canonical one-field-per-line JSON shape; parity fixtures must use that shape.
-  Known un-covered divergence classes: compacted/reordered JSON formatting and
-  string-typed numbers (`"apiLevel": "35"` casts fine in PowerShell, fails sed).
+  canonical one-field-per-line JSON shape. That shape is contractual: the
+  PowerShell parser enforces it explicitly, so reformatted declarations
+  (compacted, inline-section, string-typed numbers) reject on both sides,
+  while field reordering within the canonical shape accepts on both.
+- The CI negative step weakens the PowerShell jdk-plausibility check and
+  requires the parity run to turn red on the missing-jdk fixture. Any new
+  guard in the PowerShell parser must let a wholly absent field fall through
+  to the plausibility checks (rather than rejecting it itself), or that
+  negative step stops going red.
+- Known residual gap (from completion review): the PowerShell guard's `\s*`
+  matches newlines, so a newline-after-colon reformat passes PowerShell but
+  fails the sed parse. Fix = horizontal-whitespace-only patterns (mind CRLF)
+  plus a rejecting fixture.
 - The parity script needs one pwsh invocation (use `PARITY_PWSH` locally); it
   extracts `load_pinned_device_constants` from the harness the same way the
   hardware-fixture generator extracts `write_report`, so keep both extraction

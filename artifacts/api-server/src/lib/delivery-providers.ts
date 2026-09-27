@@ -4,6 +4,21 @@ import { casIncidents, casProviderDeliveries } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import type { CasOutbox } from "@workspace/db/schema";
 import { maskRecipient } from "./cas-device-delivery";
+import {
+  GATEWAY_TRANSPORTS,
+  readProviderEndpoint,
+  readProviderRecipients,
+  type GatewayTransport,
+} from "./cas-provider-env";
+import {
+  DEFAULT_TEMPLATE_BODY,
+  renderTemplate,
+  isCasTemplateChannel,
+} from "./cas-message-template";
+import {
+  resolveDbRecipients,
+  resolveTemplateBody,
+} from "./cas-delivery-config";
 import type { CasDeliverySender } from "../routes/cas";
 
 /**
@@ -182,15 +197,27 @@ export function buildLocationClause(location: CasIncidentLocation | null, now: D
   return `Location: https://maps.google.com/?q=${lat},${lng} (±${Math.round(location.accuracyM)}m, fix ${age} old).`;
 }
 
-export function buildCasAlertMessage(item: CasOutbox, location: CasIncidentLocation | null = null): CasAlertMessage {
+/**
+ * Builds the alert message for an outbox item by rendering the channel's
+ * template (console-editable; DEFAULT_TEMPLATE_BODY is exactly the pre-2026
+ * hardcoded wording, so an untouched deployment sends identical text).
+ */
+export function buildCasAlertMessage(
+  item: CasOutbox,
+  location: CasIncidentLocation | null = null,
+  templateBody: string = DEFAULT_TEMPLATE_BODY,
+): CasAlertMessage {
   const timestamp = item.createdAt.toISOString().replace("T", " ").slice(0, 16);
   return {
     incidentId: item.incidentId,
     transport: item.transport,
     priority: item.priority,
-    body:
-      `CAS ${item.priority} alert ${item.incidentId} at ${timestamp}Z. ` +
-      `Begin response protocol. Do not call handset. ${buildLocationClause(location)}`,
+    body: renderTemplate(templateBody, {
+      incident_id: item.incidentId,
+      priority: item.priority,
+      time: `${timestamp}Z`,
+      location: buildLocationClause(location),
+    }),
   };
 }
 
@@ -226,7 +253,18 @@ function providerUrlError(url: string): string | undefined {
 
 export type ProviderAdapter = {
   transport: "SMS" | "XMPP" | "EMAIL" | "WHATSAPP";
-  send: (message: CasAlertMessage, idempotencyKey: string) => Promise<void>;
+  /**
+   * Sends to the given recipients, or to the adapter's configured (env)
+   * recipients when `recipientsOverride` is omitted. The console-managed
+   * responder circle is passed as the override by the delivery sender; an
+   * explicitly empty override is a loud "deliver to nobody" failure, never a
+   * silent success.
+   */
+  send: (
+    message: CasAlertMessage,
+    idempotencyKey: string,
+    recipientsOverride?: string[],
+  ) => Promise<void>;
 };
 
 const PROVIDER_TIMEOUT_MS = 10_000;
@@ -320,12 +358,27 @@ function classifyFetchFailure(
 
 type SubmissionPayload = Record<string, unknown>;
 
+function requireRecipients(
+  adapter: ProviderAdapter["transport"],
+  recipients: string[],
+): string[] {
+  if (recipients.length === 0) {
+    throw new CasProviderError(
+      "not-configured",
+      `${adapter} delivery has no recipients: no enabled responder is on this channel and no env fallback list is set. Add a responder in the console (or restore the env list) and re-queue.`,
+      { retryable: false },
+    );
+  }
+  return recipients;
+}
+
 async function submitToProvider(
   adapter: ProviderAdapter["transport"],
   config: ProviderConfig,
   payloadFor: (recipient: string, key: string) => SubmissionPayload,
   message: CasAlertMessage,
   idempotencyKey: string,
+  recipientsOverride?: string[],
 ): Promise<void> {
   const urlError = providerUrlError(config.url);
   if (urlError) {
@@ -333,11 +386,12 @@ async function submitToProvider(
       retryable: false,
     });
   }
+  const recipients = requireRecipients(adapter, recipientsOverride ?? config.recipients);
   // One provider request per recipient, each carrying a stable key derived
   // from the durable outbox ID. When a retry replays a recipient the provider
   // has already accepted, its idempotency handling (or a 409) suppresses the
   // duplicate.
-  for (const recipient of config.recipients) {
+  for (const recipient of recipients) {
     const key = `${idempotencyKey}:${recipient}`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -378,7 +432,7 @@ async function submitToProvider(
 export function createSmsProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "SMS",
-    send: (message, idempotencyKey) =>
+    send: (message, idempotencyKey, recipientsOverride) =>
       submitToProvider(
         "SMS",
         config,
@@ -390,6 +444,7 @@ export function createSmsProvider(config: ProviderConfig): ProviderAdapter {
         }),
         message,
         idempotencyKey,
+        recipientsOverride,
       ),
   };
 }
@@ -397,7 +452,7 @@ export function createSmsProvider(config: ProviderConfig): ProviderAdapter {
 export function createXmppProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "XMPP",
-    send: (message, idempotencyKey) =>
+    send: (message, idempotencyKey, recipientsOverride) =>
       submitToProvider(
         "XMPP",
         config,
@@ -413,6 +468,7 @@ export function createXmppProvider(config: ProviderConfig): ProviderAdapter {
         }),
         message,
         idempotencyKey,
+        recipientsOverride,
       ),
   };
 }
@@ -420,7 +476,7 @@ export function createXmppProvider(config: ProviderConfig): ProviderAdapter {
 export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "EMAIL",
-    send: (message, idempotencyKey) =>
+    send: (message, idempotencyKey, recipientsOverride) =>
       submitToProvider(
         "EMAIL",
         config,
@@ -433,6 +489,7 @@ export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
         }),
         message,
         idempotencyKey,
+        recipientsOverride,
       ),
   };
 }
@@ -440,20 +497,21 @@ export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
 export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "WHATSAPP",
-    send: async (message, idempotencyKey) => {
+    send: async (message, idempotencyKey, recipientsOverride) => {
       const urlError = providerUrlError(config.url);
       if (urlError) {
         throw new CasProviderError("not-configured", `WHATSAPP ${urlError}`, {
           retryable: false,
         });
       }
+      const recipients = requireRecipients("WHATSAPP", recipientsOverride ?? config.recipients);
       // The WhatsApp Business Cloud API has no idempotency contract: unknown
       // body fields are rejected and the Idempotency-Key header is ignored.
       // Duplicate suppression is therefore durable on our side via the
       // cas_provider_deliveries ledger — a retried send (worker crash after
       // partial acceptance, claim expiry) skips recipients whose acceptance
       // is already recorded instead of messaging them twice.
-      for (const recipient of config.recipients) {
+      for (const recipient of recipients) {
         const key = `${idempotencyKey}:${recipient}`;
         const keyHash = createHash("sha256").update(key).digest("hex");
         const [recorded] = await db
@@ -522,28 +580,13 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
   };
 }
 
-function parseRecipients(raw: string | undefined): string[] {
-  return (raw ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-}
-
 function readConfig(
   env: NodeJS.ProcessEnv,
-  prefix: "CAS_SMS" | "CAS_XMPP" | "CAS_EMAIL" | "CAS_WHATSAPP",
-  fromKey: string,
+  transport: GatewayTransport,
 ): ProviderConfig | undefined {
-  const url = env[`${prefix}_PROVIDER_URL`];
-  if (!url) return undefined;
-  const recipients = parseRecipients(env[`${prefix}_RECIPIENTS`]);
-  if (recipients.length === 0) return undefined;
-  return {
-    url,
-    token: env[`${prefix}_PROVIDER_TOKEN`] || undefined,
-    from: env[fromKey] || undefined,
-    recipients,
-  };
+  const endpoint = readProviderEndpoint(env, transport);
+  if (!endpoint) return undefined;
+  return { ...endpoint, recipients: readProviderRecipients(env, transport) };
 }
 
 export type CasProviderAdapters = {
@@ -553,13 +596,20 @@ export type CasProviderAdapters = {
   whatsapp?: ProviderAdapter;
 };
 
+/**
+ * Builds adapters for every transport with a provider endpoint configured.
+ * Recipients are no longer part of "configured": they are resolved per send
+ * (console-managed responders, falling back to the env list), so an operator
+ * can move the whole recipient circle into the console without keeping a
+ * redundant env copy.
+ */
 export function loadConfiguredProviders(
   env: NodeJS.ProcessEnv = process.env,
 ): CasProviderAdapters {
-  const sms = readConfig(env, "CAS_SMS", "CAS_SMS_FROM");
-  const xmpp = readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID");
-  const email = readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM");
-  const whatsapp = readConfig(env, "CAS_WHATSAPP", "CAS_WHATSAPP_FROM");
+  const sms = readConfig(env, "SMS");
+  const xmpp = readConfig(env, "XMPP");
+  const email = readConfig(env, "EMAIL");
+  const whatsapp = readConfig(env, "WHATSAPP");
   return {
     sms: sms ? createSmsProvider(sms) : undefined,
     xmpp: xmpp ? createXmppProvider(xmpp) : undefined,
@@ -569,21 +619,20 @@ export function loadConfiguredProviders(
 }
 
 /**
- * Gateway transports with a complete provider configuration (URL plus at
- * least one recipient). The trigger route only queues outbox items for these
- * channels — an unconfigured channel must not create an outbox row that can
- * only ever dead-letter, because that noise trains responders to ignore the
- * dead-letter alarm.
+ * Legacy fan-out rule: gateway transports with a complete provider
+ * configuration (URL plus at least one env-listed recipient). Retained for
+ * the pre-console fallback path and its tests; live fan-out uses
+ * deliverableGatewayTransports (cas-delivery-config), which reads the
+ * console-managed responder circle.
  */
 export function configuredProviderTransports(
   env: NodeJS.ProcessEnv = process.env,
 ): Array<"SMS" | "XMPP" | "EMAIL" | "WHATSAPP"> {
-  const transports: Array<"SMS" | "XMPP" | "EMAIL" | "WHATSAPP"> = [];
-  if (readConfig(env, "CAS_SMS", "CAS_SMS_FROM")) transports.push("SMS");
-  if (readConfig(env, "CAS_XMPP", "CAS_XMPP_FROM_JID")) transports.push("XMPP");
-  if (readConfig(env, "CAS_EMAIL", "CAS_EMAIL_FROM")) transports.push("EMAIL");
-  if (readConfig(env, "CAS_WHATSAPP", "CAS_WHATSAPP_FROM")) transports.push("WHATSAPP");
-  return transports;
+  return GATEWAY_TRANSPORTS.filter(
+    (transport) =>
+      readProviderEndpoint(env, transport) !== undefined &&
+      readProviderRecipients(env, transport).length > 0,
+  );
 }
 
 /**
@@ -618,7 +667,21 @@ export function createCasDeliverySender(
     // "location follows". Read at send time: a repeat trigger may have stored
     // a fresher fix after the outbox item was queued.
     const location = await loadIncidentLocation(item.incidentId);
-    await adapter.send(buildCasAlertMessage(item, location), idempotencyKey);
+    // Wording comes from the channel's console-editable template (default
+    // when never edited), and recipients from the console-managed responder
+    // circle. A null recipient resolution means the responders table is
+    // empty, so the adapter's env-configured list stays the fallback.
+    const templateBody = isCasTemplateChannel(item.transport)
+      ? await resolveTemplateBody(item.transport)
+      : DEFAULT_TEMPLATE_BODY;
+    const dbRecipients = isCasTemplateChannel(item.transport)
+      ? await resolveDbRecipients(item.transport)
+      : null;
+    await adapter.send(
+      buildCasAlertMessage(item, location, templateBody),
+      idempotencyKey,
+      dbRecipients ?? undefined,
+    );
   };
 }
 

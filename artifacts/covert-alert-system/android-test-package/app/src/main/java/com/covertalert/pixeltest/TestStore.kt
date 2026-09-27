@@ -15,6 +15,7 @@ object TestStore {
     private const val DEVICE_TOKEN = "device_access_token"
     private const val ALERT_TOKEN = "alert_token"
     private const val ENROLLED_DEVICE_TOKEN = "enrolled_device_token"
+    private const val DEVICE_CREDENTIAL_PROVISIONED = "device_credential_provisioned"
 
     /**
      * Shared handset credential (X-CAS-Device-Token) for the console's
@@ -65,6 +66,21 @@ object TestStore {
 
     fun enrolledDeviceToken(context: Context): String =
         storage(context).getString(ENROLLED_DEVICE_TOKEN, "").orEmpty()
+
+    /**
+     * True once this handset has completed enrollment. A provisioned handset
+     * never falls back to the shared device token: if its enrolled credential
+     * is rejected (revoked or unknown), pickup and receipt calls stop until
+     * the operator re-enters the enrollment credential — a legacy-token
+     * fallback would let a revoked phone keep mutating delivery state. Reset
+     * only when the operator saves a different enrollment credential (a
+     * deliberate re-enrollment).
+     */
+    fun setDeviceCredentialProvisioned(context: Context, value: Boolean) =
+        storage(context).edit().putBoolean(DEVICE_CREDENTIAL_PROVISIONED, value).apply()
+
+    fun deviceCredentialProvisioned(context: Context): Boolean =
+        storage(context).getBoolean(DEVICE_CREDENTIAL_PROVISIONED, false)
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

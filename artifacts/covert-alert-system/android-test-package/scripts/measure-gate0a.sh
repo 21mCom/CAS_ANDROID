@@ -174,6 +174,15 @@ load_pinned_device_constants() {
     # or a kit could pass on the packaging workstation and fail in the field.
     # scripts/check-tool-requirements-parity.sh proves the two validators agree
     # on a shared fixture set; keep this block and that parser in lockstep.
+    #
+    # The single-line sed extractions only match the kit's canonical
+    # one-field-per-line shape with unquoted numeric literals; a reformatted
+    # declaration (compacted onto shared lines, or numbers carried as quoted
+    # strings) yields empty extractions and is rejected here. The PowerShell
+    # parser enforces the same canonical shape explicitly before trusting its
+    # parsed values, so both sides reject those declarations identically.
+    # Field order within the canonical shape is not contractual: reordering
+    # the lines still matches every extraction and is accepted by both sides.
     [[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
         die "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON; restore the complete, unmodified test kit before running this harness."
     local declared_api declared_platform_api declared_jdk_major declared_build_tools

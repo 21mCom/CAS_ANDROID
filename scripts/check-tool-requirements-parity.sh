@@ -25,10 +25,19 @@ set -euo pipefail
 # kit root passed with --kit-root, so CI points it at the packaged ZIP the
 # field actually receives.
 #
-# The Bash validator intentionally supports only the kit's canonical
-# one-field-per-line declaration shape (see its own comment); every fixture
-# uses that shape, so "invalid" fixtures are invalid in ways both validators
-# are expected to catch.
+# The declaration's canonical shape is contractual: one field per line, with
+# unquoted numeric literals for jdk.minimumMajor and androidSdk.apiLevel. The
+# Bash validator's sed extractions only match that shape, and the PowerShell
+# parser enforces the same shape explicitly before trusting its parsed values.
+# Field ORDER within the canonical shape is not contractual, so
+# reordered-fields.json is expected ACCEPT on both sides. A reformatted
+# declaration — compacted onto shared lines (compacted.json,
+# section-inline.json) or carrying numbers as quoted strings
+# (string-typed-numbers.json) — is invalid in a way BOTH validators are
+# expected to catch: accepting it on the Windows workstation while the field
+# harness rejects it is exactly the drift class this gate exists for. The
+# remaining "invalid" fixtures use the canonical shape and are invalid in
+# ways both validators are expected to catch.
 #
 # Usage: scripts/check-tool-requirements-parity.sh [--kit-root DIR]
 # Prints: TOOLREQ_PARITY_OK fixtures=<n> kit=<dir>
@@ -59,6 +68,9 @@ readonly BASH_HARNESS="$KIT_ROOT/scripts/measure-gate0a.sh"
 # is missing", which both validators must reject without a fixture on disk.
 readonly FIXTURES=(
     "valid.json|accept"
+    # Canonical shape with reordered keys: field order is not contractual,
+    # so both validators must accept this.
+    "reordered-fields.json|accept"
     "invalid-json.json|reject"
     "platform-mismatch.json|reject"
     "missing-jdk.json|reject"
@@ -66,6 +78,12 @@ readonly FIXTURES=(
     "apilevel-zero.json|reject"
     "jdk-zero.json|reject"
     "buildtools-not-version.json|reject"
+    # Reformatted declarations: valid JSON the two validators used to read
+    # differently (the PowerShell parser accepted, the sed parse rejected).
+    # The canonical-shape contract makes them reject on both sides.
+    "compacted.json|reject"
+    "section-inline.json|reject"
+    "string-typed-numbers.json|reject"
     "|reject"
 )
 readonly MISSING_FILE_PATH="$FIXTURE_DIR/no-such-declaration.json"

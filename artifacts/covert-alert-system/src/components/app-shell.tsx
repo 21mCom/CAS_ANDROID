@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Activity, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, Radio, ShieldAlert, X } from 'lucide-react';
+import { Activity, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 
 const navItems = [
@@ -7,6 +7,8 @@ const navItems = [
   { href: '/gates', label: 'Feasibility gates', icon: Radio },
   { href: '/incidents', label: 'Test incidents', icon: FileClock },
   { href: '/setup', label: 'Owner setup', icon: ClipboardCheck },
+  { href: '/responders', label: 'Responders', icon: Users },
+  { href: '/messages', label: 'Alert text', icon: MessageSquareText },
 ];
 
 export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTest: () => void }) {

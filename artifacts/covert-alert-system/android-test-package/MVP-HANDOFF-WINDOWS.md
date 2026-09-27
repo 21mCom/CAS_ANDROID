@@ -150,7 +150,7 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
 | SMS outbox item shows `DEAD_LETTER` with "device-reported failure" | Fix the responder number on the phone, re-queue from the console, then tap **Check re-queued deliveries** on the phone |
 | Responder got the SMS but the console still shows QUEUED | The phone has no data connection, so its receipt could not reach the server; it retries on the next send or re-queue check. If the phone's journal shows `SKIPPED` with "no device access token", enter the token (Step 5) and tap **Check re-queued deliveries** |
 | `*_RECEIPT_OUTCOME` = FAILED (HTTP 401) | The device access token on the phone does not match the server's `CAS_DEVICE_TOKEN` secret; re-enter it and tap **Check re-queued deliveries** |
-| WHATSAPP item stays `QUEUED` | The server has no `CAS_WHATSAPP_PROVIDER_URL`/`CAS_WHATSAPP_RECIPIENTS` configured; WhatsApp is delivered by the console's worker, never the phone — a device receipt naming WhatsApp is refused (409) by design |
+| WHATSAPP item stays `QUEUED` | The server has no `CAS_WHATSAPP_PROVIDER_URL` configured, or no enabled responder carries a WhatsApp number (console → Responders page; the old `CAS_WHATSAPP_RECIPIENTS` list only applies while the circle is empty). WhatsApp is delivered by the console's worker, never the phone — a device receipt naming WhatsApp is refused (409) by design |
 
 ## Safety notes
 

@@ -72,6 +72,24 @@ export const casTransportCooldowns = pgTable("cas_transport_cooldowns", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const casResponders = pgTable("cas_responders", {
+  // The console-managed responder circle: who gets alerted and on which
+  // channels. A non-null channel address means this responder is on that
+  // channel; `enabled = false` suspends every channel without losing the
+  // record. Rows seeded from the CAS_*_RECIPIENTS environment lists get
+  // deterministic "seed-<channel>-<n>" ids so a concurrent first run cannot
+  // double-seed, and seeding only ever happens into a completely empty table
+  // (an operator's edits are never overwritten).
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  smsNumber: text("sms_number"),
+  whatsappNumber: text("whatsapp_number"),
+  emailAddress: text("email_address"),
+  xmppAddress: text("xmpp_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 /**
  * Per-device enrolled alert credentials. The shared CAS_ALERT_TOKEN secret
  * only authorizes enrolling/revoking these; every mutation endpoint
@@ -91,6 +109,7 @@ export const casDeviceCredentials = pgTable("cas_device_credentials", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
+
 export const casSetupReadiness = pgTable("cas_setup_readiness", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -120,10 +139,21 @@ export const insertCasOutboxSchema = createInsertSchema(casOutbox);
 export const insertCasSetupReadinessSchema = createInsertSchema(casSetupReadiness);
 export const insertCasGateEvidenceSchema = createInsertSchema(casGateEvidence);
 
+export type CasResponder = typeof casResponders.$inferSelect;
 export type CasIncident = typeof casIncidents.$inferSelect;
 export type CasIncidentEvent = typeof casIncidentEvents.$inferSelect;
 export type CasOutbox = typeof casOutbox.$inferSelect;
-
 export type CasDeviceCredential = typeof casDeviceCredentials.$inferSelect;
 export type CasSetupReadiness = typeof casSetupReadiness.$inferSelect;
 export type CasGateEvidence = typeof casGateEvidence.$inferSelect;
+
+export const casMessageTemplates = pgTable("cas_message_templates", {
+  // Per-channel alert wording, editable from the console. Channels without a
+  // row fall back to the built-in default body, so a fresh deployment (or a
+  // reset) behaves exactly as before templates existed.
+  channel: text("channel").primaryKey(),
+  body: text("body").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type CasMessageTemplate = typeof casMessageTemplates.$inferSelect;

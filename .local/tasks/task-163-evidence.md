@@ -72,3 +72,35 @@ The boot-smoke job's post-PIN-reboot `adb root` re-acquire failed once with
 "unable to connect for root: closed" (run 36327062669) and passed on the
 identical script in run 36328969126 — a transient adbd disconnect with no
 retry in `emulator-smoke-test.sh`.
+
+## Confirmation on the final tree (post-review repair round)
+
+The first green run (36328969126) exercised the pre-enrollment-merge tree.
+The completion review required repairing the merged tree first (cas.ts
+three-way-merge rebuild, device-token revocation fallback retired,
+SmsFlowActivity enrolled-credential retention, MainActivity/AlertSender
+repeat-alert fix, deterministic geo-fix injection). The final confirmation
+ran against that exact repaired tree:
+
+- Branch `ci-163-alert-location` head cb20459 (= workspace main a3e3335 tree,
+  content-synced). Workflow run **36333945160** — all five jobs green:
+  - `Alert location harness (JVM, no emulator)` — job 108661082333 success
+    (the task's primary new CI surface).
+  - `Drive the handset SMS send/receipt/re-queue flow against a dev API` —
+    job 108661254342 success, including the new geo-fix location assertion:
+    `Location phase passed: incident carries fix {"latitude":52.5163,
+    "longitude":13.3777,"accuracyM":5,...}`, alert phase DEAD_LETTER on the
+    broken number, re-queue phase SENT after handset pickup.
+  - Receipt durability, Gate 0A APK compile, boot-smoke jobs all success.
+- Raw final sms-flow log: `.local/tasks/task-163-sms-flow-final-joblog.txt`.
+- The contract preflight now also proves the retired shared device token is
+  refused (401) once enrollment is in use and the enrolled credential is
+  accepted (200) — lines 593-596 of the final log.
+- Local gates on the final tree: api-server typecheck 0 errors
+  (`--incremental false`), 103/103 CAS contract tests pass.
+
+Intermediate red runs on the repaired tree (each diagnosed and fixed, none
+left unexplained): adb-root flake (rerun), pickup 401 from the app's
+enrolled-credential wipe (fixed in SmsFlowActivity), NO_FIX geo race (fixed
+by boot-time injection; dumpsys location does not report injected
+coordinates on this image, so liveness is timed, not polled).
