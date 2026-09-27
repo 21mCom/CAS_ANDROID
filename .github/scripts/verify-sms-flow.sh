@@ -189,6 +189,29 @@ for attempt in 1 2 3; do
 done
 [ "$grant_ok" = 1 ] || fail "SEND_SMS is not granted after 3 pm grant attempts — the flow cannot run."
 
+# Location: the alert path captures one bounded position fix and the console
+# must store it with accuracy and capture time. Grant fine location and
+# inject a known fix into the emulator's GPS, then the alert-phase assertion
+# below proves the fix reached the incident record. Without the grant the app
+# returns instantly with no fix (by design — the alert never waits on GPS).
+loc_grant_ok=0
+for attempt in 1 2 3; do
+  adb shell pm grant "$PKG" android.permission.ACCESS_FINE_LOCATION > /dev/null 2>&1 || true
+  if adb shell dumpsys package "$PKG" 2>/dev/null | grep -q 'android.permission.ACCESS_FINE_LOCATION: granted=true'; then
+    loc_grant_ok=1
+    break
+  fi
+  echo "ACCESS_FINE_LOCATION grant attempt $attempt did not stick (system may be restarting) — retrying in 10s"
+  sleep 10
+done
+[ "$loc_grant_ok" = 1 ] || fail "ACCESS_FINE_LOCATION is not granted after 3 pm grant attempts — the location assertion cannot run."
+# Fix on the Brandenburg Gate; the alert-phase assertion matches these
+# coordinates. `adb emu geo fix` takes longitude first.
+GEO_LON="13.37770"
+GEO_LAT="52.51630"
+adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
+  || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
+
 # Package scanning lags behind install on a freshly booted emulator (observed
 # >60s under TCG with a busy post-boot system), and a launch before the
 # component registers fails with "Activity class does not exist". Retry that
@@ -271,6 +294,21 @@ done
 final_state="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r --arg id "$outbox_id" '.activeIncident.outbox | map(select(.id == $id)) | .[0].state // ""')"
 [ "$final_state" = "DEAD_LETTER" ] || fail "outbox item $outbox_id never reached DEAD_LETTER (state: ${final_state:-missing}) within ${TIMEOUT_S}s — the receipt contract or the app's failure reporting drifted."
 echo "Alert phase passed: incident $incident_id, outbox item $outbox_id -> DEAD_LETTER (broken number '$BAD_NUMBER')."
+
+# The trigger POST carried the injected fix; the console must store it with
+# its accuracy radius and capture time (age is derived at render time, so a
+# stale fix can never masquerade as current).
+loc_json="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -c '.activeIncident.location // empty')"
+[ -n "$loc_json" ] || fail "active incident has no stored location — the alert's position fix did not reach the incident record."
+# The API renders capturedAt with Date.toISOString(), which always carries
+# milliseconds; jq's fromdateiso8601 rejects those, so strip them first.
+echo "$loc_json" | jq -e '
+  (.latitude  - ('"$GEO_LAT"' | tonumber) | . as $d | ($d * $d) < 0.0001) and
+  (.longitude - ('"$GEO_LON"' | tonumber) | . as $d | ($d * $d) < 0.0001) and
+  (.accuracyM | type == "number" and . > 0) and
+  (.capturedAt | type == "string" and ((sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) < now))
+' > /dev/null || fail "stored location drifted from the injected fix ($GEO_LAT,$GEO_LON): $loc_json"
+echo "Location phase passed: incident carries fix $loc_json"
 
 # --- Step 3: console re-queue, then handset pickup with a fixed number -------
 

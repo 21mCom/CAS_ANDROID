@@ -25,7 +25,7 @@ import java.net.URL
 object AlertSender {
     data class Result(val ok: Boolean, val detail: String, val incidentId: String? = null, val reused: Boolean = false)
 
-    fun trigger(context: Context, baseUrl: String, token: String): Result {
+    fun trigger(context: Context, baseUrl: String, token: String, fix: AlertLocation.Fix? = null): Result {
         val trimmed = baseUrl.trim().trimEnd('/')
         if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {
             return Result(false, "Server URL must start with https:// (plain HTTP is only accepted for loopback dev endpoints that cannot leave the machine: 127.0.0.1 via adb reverse, or the emulator's 10.0.2.2 host alias)")
@@ -34,7 +34,11 @@ object AlertSender {
         if (credential.isEmpty()) {
             return Result(false, "Alert credential required - save the token before sending")
         }
-        val payload = JSONObject().put("deviceChannels", JSONArray(listOf("SMS"))).toString()
+        // The fix rides the trigger so the incident record carries the same
+        // coordinates, accuracy, and capture time the SMS states.
+        val payload = JSONObject().put("deviceChannels", JSONArray(listOf("SMS")))
+        if (fix != null) payload.put("location", AlertLocation.toTriggerJson(fix))
+        val payloadText = payload.toString()
         return runCatching {
             val connection = (URL("$trimmed/api/cas/incidents/trigger").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -45,7 +49,7 @@ object AlertSender {
                 setRequestProperty("Authorization", "Bearer $credential")
             }
             try {
-                connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                connection.outputStream.use { it.write(payloadText.toByteArray(Charsets.UTF_8)) }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream
                 val body = stream?.bufferedReader()?.readText().orEmpty()

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { db } from "@workspace/db";
-import { casProviderDeliveries } from "@workspace/db/schema";
+import { casIncidents, casProviderDeliveries } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import type { CasOutbox } from "@workspace/db/schema";
 import { maskRecipient } from "./cas-device-delivery";
@@ -154,7 +154,35 @@ export type CasAlertMessage = {
   body: string;
 };
 
-export function buildCasAlertMessage(item: CasOutbox): CasAlertMessage {
+/** The incident's stored position fix, as the handset reported it. */
+export type CasIncidentLocation = {
+  latitude: number;
+  longitude: number;
+  accuracyM: number;
+  capturedAt: Date;
+};
+
+/**
+ * Location clause shared with the handset's offline SMS wording
+ * (DeviceSmsSender.alertBody) — keep the two in sync. The fix's accuracy
+ * radius and age always travel with the coordinates so a stale or coarse
+ * fix is never read as current truth; with no fix the message says so
+ * instead of promising one.
+ */
+export function buildLocationClause(location: CasIncidentLocation | null, now: Date = new Date()): string {
+  if (!location) {
+    return "Location: no fix captured for this alert.";
+  }
+  const ageSeconds = Math.max(0, Math.round((now.getTime() - location.capturedAt.getTime()) / 1000));
+  const age = ageSeconds < 90
+    ? `${ageSeconds}s`
+    : `${Math.round(ageSeconds / 60)}min`;
+  const lat = location.latitude.toFixed(5);
+  const lng = location.longitude.toFixed(5);
+  return `Location: https://maps.google.com/?q=${lat},${lng} (±${Math.round(location.accuracyM)}m, fix ${age} old).`;
+}
+
+export function buildCasAlertMessage(item: CasOutbox, location: CasIncidentLocation | null = null): CasAlertMessage {
   const timestamp = item.createdAt.toISOString().replace("T", " ").slice(0, 16);
   return {
     incidentId: item.incidentId,
@@ -162,7 +190,7 @@ export function buildCasAlertMessage(item: CasOutbox): CasAlertMessage {
     priority: item.priority,
     body:
       `CAS ${item.priority} alert ${item.incidentId} at ${timestamp}Z. ` +
-      "Begin response protocol. Do not call handset. Location follows.",
+      `Begin response protocol. Do not call handset. ${buildLocationClause(location)}`,
   };
 }
 
@@ -585,6 +613,35 @@ export function createCasDeliverySender(
         { retryable: false },
       );
     }
-    await adapter.send(buildCasAlertMessage(item), idempotencyKey);
+    // The alert text carries the incident's position fix (accuracy radius and
+    // fix age included) so responders get a trustworthy where, not a bare
+    // "location follows". Read at send time: a repeat trigger may have stored
+    // a fresher fix after the outbox item was queued.
+    const location = await loadIncidentLocation(item.incidentId);
+    await adapter.send(buildCasAlertMessage(item, location), idempotencyKey);
+  };
+}
+
+/** The incident row's stored fix, or null when the alert went out with none. */
+async function loadIncidentLocation(incidentId: string): Promise<CasIncidentLocation | null> {
+  const rows = await db
+    .select({
+      latitude: casIncidents.locationLatitude,
+      longitude: casIncidents.locationLongitude,
+      accuracyM: casIncidents.locationAccuracyM,
+      capturedAt: casIncidents.locationCapturedAt,
+    })
+    .from(casIncidents)
+    .where(eq(casIncidents.id, incidentId))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.latitude == null || row.longitude == null || row.accuracyM == null || row.capturedAt == null) {
+    return null;
+  }
+  return {
+    latitude: row.latitude,
+    longitude: row.longitude,
+    accuracyM: row.accuracyM,
+    capturedAt: row.capturedAt,
   };
 }

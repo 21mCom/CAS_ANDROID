@@ -5,6 +5,12 @@
          Gate 0A harness runs still perform no network access and no messaging. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- MVP alert mode only: one position fix per alert, captured under a
+         bounded wait and sent to responders with its accuracy radius and fix
+         age. Gate 0A harness runs never capture location, and the alert still
+         leaves immediately when the permission was never granted. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Package visibility: the cover-app picker lists launchable apps,
          which needs this declaration on Android 11+. No third-party package
          queries: no alert path may surface another app's UI, so the app

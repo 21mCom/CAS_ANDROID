@@ -109,6 +109,18 @@ function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeo
   return {
     id: incident.id, status: incident.status, priority: incident.priority,
     triggerCount: incident.triggerCount, createdAt: incident.createdAt.toISOString(),
+    // Null when the alert went out with no fix; otherwise the fix exactly as
+    // the handset reported it, accuracy radius and capture time included, so
+    // the console can show its age instead of presenting it as current.
+    location: incident.locationLatitude != null && incident.locationLongitude != null
+      && incident.locationAccuracyM != null && incident.locationCapturedAt != null
+      ? {
+          latitude: incident.locationLatitude,
+          longitude: incident.locationLongitude,
+          accuracyM: incident.locationAccuracyM,
+          capturedAt: incident.locationCapturedAt.toISOString(),
+        }
+      : null,
     events: events.map((event) => ({ id: event.id, type: event.type, priority: event.priority, time: event.createdAt.toISOString(), detail: event.detail })),
     outbox: outbox.map((item) => ({
       id: item.id,
@@ -545,8 +557,23 @@ router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) 
 // dead-letter. An omitted list means "every enabled device channel" (API
 // drills and older APKs). WHATSAPP stays in the enum so APKs from the
 // retired tap-to-send build get the loud 409 below instead of a 400.
+// One position fix per alert. The handset captures it under a bounded wait
+// before the trigger POST and sends it with its accuracy radius and capture
+// time; both must travel with the coordinates everywhere they are shown so a
+// stale or wildly inaccurate fix is never presented as current truth. The
+// server does not freshness-check the fix beyond shape (a labeled stale fix
+// is worth more than none in a distress alert) — the console renders the age.
+// Numbers, not integers: coordinates and accuracy are fractional.
+const triggerLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracyM: z.number().positive().max(100_000),
+  capturedAt: z.string().datetime({ offset: true }),
+});
+
 const triggerSchema = z.object({
   deviceChannels: z.array(z.enum(["SMS", "WHATSAPP"])).max(4).optional(),
+  location: triggerLocationSchema.optional(),
 });
 
 // Every CAS mutation — trigger, incident/outbox transitions, readiness
@@ -588,15 +615,48 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
         .limit(1);
       const now = new Date();
 
+      const location = parsed.data.location;
+      const locationColumns = location
+        ? {
+            locationLatitude: location.latitude,
+            locationLongitude: location.longitude,
+            locationAccuracyM: location.accuracyM,
+            locationCapturedAt: new Date(location.capturedAt),
+          }
+        : undefined;
+
       if (active[0]) {
         const incident = active[0];
-        await tx.update(casIncidents).set({ triggerCount: incident.triggerCount + 1, updatedAt: now }).where(eq(casIncidents.id, incident.id));
-        await tx.insert(casIncidentEvents).values({ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: "Repeat trigger folded into the existing active incident; timers and outbox were not reset.", createdAt: now });
+        // A repeat trigger can carry a fresher fix than the one stored (the
+        // first alert may have gone out before the handset got a lock).
+        // Replace the stored fix only when the incoming one is newer — never
+        // let an older re-send move the incident backwards in time.
+        const incomingCapturedAt = location ? new Date(location.capturedAt) : null;
+        const storedCapturedAt = incident.locationCapturedAt;
+        const storeNewerFix = incomingCapturedAt !== null
+          && (storedCapturedAt === null || incomingCapturedAt > storedCapturedAt);
+        await tx.update(casIncidents).set({
+          triggerCount: incident.triggerCount + 1,
+          updatedAt: now,
+          ...(storeNewerFix ? locationColumns : {}),
+        }).where(eq(casIncidents.id, incident.id));
+        const events = [{ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: "Repeat trigger folded into the existing active incident; timers and outbox were not reset.", createdAt: now }];
+        if (storeNewerFix && location) {
+          events.push({
+            id: `${incident.id}-location-${randomUUID()}`,
+            incidentId: incident.id,
+            type: "LOCATION_UPDATED",
+            priority: "P2",
+            detail: `Fresher position fix stored from a repeat trigger: ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)} (±${Math.round(location.accuracyM)} m, captured ${location.capturedAt}).`,
+            createdAt: now,
+          });
+        }
+        await tx.insert(casIncidentEvents).values(events);
         return { id: incident.id, reused: true };
       }
 
       const id = `sim-${now.getTime()}-${randomUUID()}`;
-      await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now });
+      await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now, ...locationColumns });
       // Queue one outbox item per channel that can actually deliver this
       // alert: the handset's requested∩enabled device channels, plus every
       // provider-configured gateway channel that is not device-delivered.

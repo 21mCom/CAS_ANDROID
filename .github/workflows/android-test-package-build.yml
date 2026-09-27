@@ -11,6 +11,8 @@ on:
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      - "scripts/test-alert-location.sh"
+      - "scripts/alert-location/**"
       # The sms-receipt-flow job gates the handset-facing API contract too, so
       # API server and schema changes must trigger this workflow.
       - "artifacts/api-server/**"
@@ -25,6 +27,8 @@ on:
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      - "scripts/test-alert-location.sh"
+      - "scripts/alert-location/**"
       - "artifacts/api-server/**"
       - "lib/db/**"
   workflow_dispatch:
@@ -50,6 +54,27 @@ jobs:
       # batch→receipt handoff survives process death at every boundary.
       - name: Run receipt durability harness
         run: scripts/test-receipt-durability.sh
+
+  alert-location:
+    name: Alert location harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Same pinned-toolchain pattern as the receipt durability harness;
+      # proves the bounded-wait fix selection and the SMS wording rules
+      # (accuracy + age always travel with the coordinates) without a device.
+      - name: Run alert location harness
+        run: scripts/test-alert-location.sh
 
   assemble-debug:
     name: Compile Gate 0A debug APK

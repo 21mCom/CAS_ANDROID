@@ -114,6 +114,29 @@ export default function Incidents() {
                     </form>
                   )}
                 </div>
+                <div className="sm:col-span-2" data-testid="panel-incident-location">
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Position fix from handset</p>
+                  {activeIncident.location ? (
+                    <p className="mt-1 text-xs leading-5 text-[#203c49]">
+                      <a
+                        href={`https://maps.google.com/?q=${activeIncident.location.latitude.toFixed(5)},${activeIncident.location.longitude.toFixed(5)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-mono-ui font-bold text-[#a06712] underline decoration-[#e8c880] underline-offset-2 hover:text-[#203c49]"
+                        data-testid="link-incident-map"
+                      >
+                        {activeIncident.location.latitude.toFixed(5)}, {activeIncident.location.longitude.toFixed(5)}
+                      </a>
+                      {' '}· accuracy ±{Math.round(activeIncident.location.accuracyM)} m · fix{' '}
+                      {(() => {
+                        const ageSeconds = Math.max(0, Math.round((Date.now() - Date.parse(activeIncident.location.capturedAt)) / 1000));
+                        return ageSeconds < 90 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
+                      })()}{' '}old — a fix is shown with its accuracy and age, never as current truth.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs leading-5 text-[#687271]">No position fix captured for this alert (no permission, no provider, or the bounded wait expired). The alert still went out on time.</p>
+                  )}
+                </div>
               </div>
             )}
           </div>

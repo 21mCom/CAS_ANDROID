@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, integer, jsonb, pgTable, real, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 
 export const casIncidents = pgTable("cas_incidents", {
@@ -6,6 +6,14 @@ export const casIncidents = pgTable("cas_incidents", {
   priority: text("priority").notNull(),
   status: text("status").notNull(),
   triggerCount: integer("trigger_count").notNull().default(1),
+  // One position fix per alert, captured by the handset under a bounded wait
+  // and carried with its accuracy and capture time so a stale or coarse fix
+  // is never presented as current truth. All four stay null when the alert
+  // went out with no fix (permission denied, no provider, wait expired).
+  locationLatitude: doublePrecision("location_latitude"),
+  locationLongitude: doublePrecision("location_longitude"),
+  locationAccuracyM: real("location_accuracy_m"),
+  locationCapturedAt: timestamp("location_captured_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
