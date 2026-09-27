@@ -1,0 +1,76 @@
+name: API server route tests
+
+# Runs the api-server contract suite (artifacts/api-server/src/routes/cas.test.ts
+# and the sibling lib/script tests wired into `pnpm --filter @workspace/api-server test`)
+# so a breaking change to the per-device credential gate, revocation, receipt
+# handling, or the delivery-provider contract cannot merge green.
+on:
+  push:
+    paths:
+      - "artifacts/api-server/**"
+      - "lib/api-spec/**"
+      - "lib/api-zod/**"
+      - "lib/db/**"
+      - "scripts/run-cas-contract-tests.mjs"
+      - "scripts/disposable-review-database.mjs"
+      # The console parity test reads this hook from disk; a console-side type
+      # change must re-run the gate or a schema/console drift could merge green.
+      - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
+      - ".github/workflows/api-server-tests.yml"
+  pull_request:
+    paths:
+      - "artifacts/api-server/**"
+      - "lib/api-spec/**"
+      - "lib/api-zod/**"
+      - "lib/db/**"
+      - "scripts/run-cas-contract-tests.mjs"
+      - "scripts/disposable-review-database.mjs"
+      # The console parity test reads this hook from disk; a console-side type
+      # change must re-run the gate or a schema/console drift could merge green.
+      - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
+      - ".github/workflows/api-server-tests.yml"
+
+jobs:
+  route-tests:
+    name: Run the api-server contract tests against a disposable PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Put the preinstalled PostgreSQL server binaries on PATH
+        run: |
+          set -euo pipefail
+          # The test command bootstraps its own throwaway cluster via
+          # scripts/disposable-review-database.mjs, which needs initdb, pg_ctl,
+          # and createdb. ubuntu-latest ships PostgreSQL but keeps the server
+          # binaries off PATH, so expose them here. Fail loudly if a future
+          # runner image drops the package instead of silently skipping.
+          pgbin="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          if [ ! -x "$pgbin/initdb" ]; then
+            echo "::error::No initdb found under /usr/lib/postgresql — runner image changed?"
+            exit 1
+          fi
+          echo "$pgbin" >> "$GITHUB_PATH"
+          echo "Using PostgreSQL binaries from $pgbin"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --filter @workspace/api-server...
+
+      - name: Run the api-server contract tests
+        # The established test command: provisions a disposable PostgreSQL
+        # cluster, pushes the drizzle schema into it, runs every route/lib test
+        # under node --test, and tears the cluster down on pass or fail.
+        run: pnpm --filter @workspace/api-server test
