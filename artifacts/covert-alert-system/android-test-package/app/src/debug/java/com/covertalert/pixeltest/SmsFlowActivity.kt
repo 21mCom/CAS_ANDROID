@@ -16,7 +16,7 @@ import android.os.Bundle
  *     --es mode alert|requeue \
  *     --es serverUrl http://127.0.0.1:<port> \
  *     --es deviceToken <shared CAS_DEVICE_TOKEN> \
- *     --es alertToken <shared CAS_ALERT_TOKEN> \
+ *     --es alertToken <enrollment credential (CAS_ALERT_TOKEN); exchanged for a per-device token> \
  *     --es responders "+15551234567"
  *
  * (the harness tunnels the runner's dev API into the device with
@@ -44,7 +44,12 @@ class SmsFlowActivity : Activity() {
         val extras = intent.extras
         extras?.getString("serverUrl")?.let { TestStore.setAlertServerUrl(this, it) }
         extras?.getString("deviceToken")?.let { TestStore.setDeviceToken(this, it) }
-        extras?.getString("alertToken")?.let { TestStore.setAlertToken(this, it) }
+        extras?.getString("alertToken")?.let {
+            // A new enrollment credential invalidates the device credential
+            // enrolled under the old one; the next trigger re-enrolls.
+            if (it.trim() != TestStore.alertToken(this)) TestStore.setEnrolledDeviceToken(this, "")
+            TestStore.setAlertToken(this, it)
+        }
         extras?.getString("responders")?.let { TestStore.setSmsResponders(this, it) }
         val mode = extras?.getString("mode").orEmpty()
         TestStore.record(this, "SMS_FLOW_INVOKED", mapOf(

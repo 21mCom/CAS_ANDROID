@@ -1,14 +1,18 @@
 ---
 name: CAS alert API credential gate
-description: The CAS alert-mutation endpoints require a Bearer token (CAS_ALERT_TOKEN secret) and fail closed when it is unset.
+description: CAS mutation endpoints require per-device enrolled credentials; the shared CAS_ALERT_TOKEN is enrollment-only (enroll/list/revoke) and fails closed when unset.
 ---
 
-Every CAS mutation endpoint requires `Authorization: Bearer <CAS_ALERT_TOKEN>`.
+Every CAS mutation endpoint requires `Authorization: Bearer <per-device token>` issued by `POST /cas/devices/enroll`. The shared `CAS_ALERT_TOKEN` secret only authorizes device-credential management — presenting it to a mutation gets a distinct 401 reason (`enrollment-token-not-authorized`).
 
-**Why:** anyone who could reach the server URL used to be able to create P1 incidents or mutate responder state; rejections are recorded without logging the presented token.
+**Why:** a single shared token made a leaked phone/console session uncontainable (rotate-everywhere) and unattributable. Only SHA-256 hashes of device tokens are stored (`cas_device_credentials`); the plaintext is returned once at enrollment.
 
 **How to apply:**
-- With CAS_ALERT_TOKEN unset the server fails closed (401 on every guarded request) — a "broken" console after a redeploy usually means the secret is missing.
-- When gating an endpoint, sweep every non-test caller too — the debug SMS-flow activity, the emulator CI harnesses, and the PowerShell drill script each authenticate separately and silently break with 401s if missed; repack the committed handoff ZIP afterwards or operators get a pre-gate build (the mvp-handoff-freshness CI job enforces this).
-- The web console keeps the token in sessionStorage (a 401 clears it and re-asks); the Android app stores it in device-protected SharedPreferences.
+- The revocation-bypass lesson (a code review caught this): any client that retains the enrollment credential can silently re-enroll after revocation, defeating it. Provisioned devices must DISCARD the enrollment credential after enrolling, must never auto re-enroll on a 401, and regaining access must be a trusted operator action (re-entering the credential). When adding a new enrolled client, prove two successive post-revocation requests both 401 and that no new credential was issued in between.
+- Endpoints a revoked device must not keep using (e.g. the handset receipt/pickup endpoints) must treat a presented enrolled Bearer credential as authoritative — no fallback to a legacy shared token when the Bearer is revoked — or revocation is bypassable there.
+- Revocation is per-request: the gate reads `cas_device_credentials` on every call and never caches. Keep it that way — do not add an auth cache.
+- The gate fails closed at both layers: `CAS_ALERT_TOKEN` unset disables enrollment (401 `server-not-configured`); no enrolled rows means all mutations 401. Already-enrolled devices keep working with the secret unset.
+- Enrolled device tokens must NOT pass the enrollment gate (a leaked device token must not mint more credentials).
+- Changing android-test-package sources stales the committed MVP handoff ZIP (the mvp-handoff-freshness CI job enforces a repack).
 - Express 5 quirk: inserting a pre-typed middleware (`RequestHandler`) into a `router.post("/path/:id", mw, handler)` chain widens `req.params.id` to `string | string[]`; annotate the handler as `Request<{ id: string }>` rather than casting.
+- Rejections are recorded via `setCasAuthRejectionRecorder` without the presented token; revoked-token rejections also carry the device id.

@@ -14,6 +14,7 @@ object TestStore {
     private const val SMS_RESPONDERS = "sms_responders"
     private const val DEVICE_TOKEN = "device_access_token"
     private const val ALERT_TOKEN = "alert_token"
+    private const val ENROLLED_DEVICE_TOKEN = "enrolled_device_token"
 
     /**
      * Shared handset credential (X-CAS-Device-Token) for the console's
@@ -40,14 +41,30 @@ object TestStore {
         storage(context).getString(SMS_RESPONDERS, "").orEmpty()
             .split(",").map { it.trim() }.filter { it.isNotBlank() }
 
-    // The alert credential (Authorization: Bearer against the server's
-    // CAS_ALERT_TOKEN) authorizing trigger calls. It is kept in
-    // device-protected storage and is never written to the journal or report.
+    // The enrollment credential (the server's CAS_ALERT_TOKEN secret). The
+    // app exchanges it once at the enrollment endpoint for this handset's
+    // own revocable device credential (below) and never presents it on
+    // trigger calls directly. Kept in device-protected storage and never
+    // written to the journal or report.
     fun setAlertToken(context: Context, value: String) =
         storage(context).edit().putString(ALERT_TOKEN, value.trim()).apply()
 
     fun alertToken(context: Context): String =
         storage(context).getString(ALERT_TOKEN, "").orEmpty()
+
+    /**
+     * This handset's enrolled device credential, issued once by the server's
+     * enrollment endpoint in exchange for the enrollment credential above
+     * and presented as Authorization: Bearer on trigger calls. Revocable per
+     * device without rotating anything else; cleared whenever the enrollment
+     * credential changes so the next trigger re-enrolls. Never written to
+     * the journal or report.
+     */
+    fun setEnrolledDeviceToken(context: Context, value: String) =
+        storage(context).edit().putString(ENROLLED_DEVICE_TOKEN, value.trim()).apply()
+
+    fun enrolledDeviceToken(context: Context): String =
+        storage(context).getString(ENROLLED_DEVICE_TOKEN, "").orEmpty()
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

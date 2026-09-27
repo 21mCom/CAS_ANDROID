@@ -283,6 +283,12 @@ object DeviceSmsSender {
                 connectTimeout = 10_000
                 readTimeout = 10_000
                 setRequestProperty("X-CAS-Device-Token", token)
+                // Once enrolled, the handset also presents its own revocable
+                // device credential; the console then binds this call to it
+                // (strictly — a revoked handset cannot fall back to the
+                // shared device token above).
+                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
             try {
                 val code = connection.responseCode
@@ -515,6 +521,12 @@ object DeviceSmsSender {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("X-CAS-Device-Token", token)
+                // Same binding as device-pending: once enrolled, the receipt
+                // is attributable to (and revocable with) this handset's own
+                // device credential, and a revoked handset cannot fall back
+                // to the shared device token.
+                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
             try {
                 connection.outputStream.use { it.write(receipt.toPayload().toString().toByteArray(Charsets.UTF_8)) }

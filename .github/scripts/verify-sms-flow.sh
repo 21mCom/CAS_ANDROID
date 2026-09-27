@@ -19,8 +19,9 @@
 #   CAS_FLOW_APK           path to the built app-debug.apk
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
-#   CAS_FLOW_ALERT_TOKEN   alert credential (matches CAS_ALERT_TOKEN); the
-#                          trigger and console re-queue endpoints 401 without it
+#   CAS_FLOW_ALERT_TOKEN   enrollment credential (matches CAS_ALERT_TOKEN); the
+#                          script exchanges it once for a per-device token below,
+#                          and the app does the same exchange on the handset
 # Optional env:
 #   CAS_FLOW_API_DEVICE    API base URL as the device sees it. Default: the
 #                          harness runs `adb reverse tcp:<port> tcp:<port>` and
@@ -48,6 +49,18 @@ for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_T
     exit 1
   fi
 done
+
+# The alert credential is now only the enrollment credential: mutation
+# endpoints reject it directly. Exchange it once for a per-device token that
+# authorizes this run's console mutation calls (the handset app performs the
+# same exchange itself inside AlertSender).
+CAS_FLOW_ENROLLED_TOKEN="$(curl -sf -X POST "$CAS_FLOW_API_HOST/api/cas/devices/enroll" \
+  -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"label":"ci-sms-flow"}' | jq -r '.token // empty')"
+if [ -z "$CAS_FLOW_ENROLLED_TOKEN" ]; then
+  echo "::error::device enrollment failed; the API did not issue a device credential for CAS_FLOW_ALERT_TOKEN."
+  exit 1
+fi
 
 # Tunnel the host's API port into the device over adb (USB/emulator agnostic).
 API_PORT_FROM_URL="${CAS_FLOW_API_HOST##*:}"
@@ -313,7 +326,7 @@ echo "Location phase passed: incident carries fix $loc_json"
 # --- Step 3: console re-queue, then handset pickup with a fixed number -------
 
 echo "== Re-queue phase: console re-queue, handset pickup with fixed number '$GOOD_NUMBER' =="
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ALERT_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "console re-queue of the dead-lettered item" 200 "$status"
 jq -e --arg id "$outbox_id" '.id == $id and .state == "QUEUED"' /tmp/sms-flow-response.json > /dev/null \
   || fail "re-queue response drifted (expected {id, state: \"QUEUED\"}): $(cat /tmp/sms-flow-response.json | head -c 300)"

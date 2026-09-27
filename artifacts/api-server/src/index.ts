@@ -45,12 +45,12 @@ if (deviceChannels().length > 0 && deviceAccessToken() === undefined) {
     "CAS_DEVICE_TOKEN is not set: the handset pickup/receipt endpoints stay closed (503) until it is configured.",
   );
 }
-// The alert credential fails closed in the middleware too, but say so at
-// boot: an operator who never set CAS_ALERT_TOKEN otherwise discovers it as
-// the phone's first trigger returning 401 during a real alert.
+// The enrollment credential fails closed in the middleware too, but say so
+// at boot: an operator who never set CAS_ALERT_TOKEN otherwise discovers it
+// as the phone's first enrollment returning 401 during a real alert.
 if (process.env.CAS_ALERT_TOKEN === undefined) {
   logger.warn(
-    "CAS_ALERT_TOKEN is not set: the trigger and incident mutation endpoints reject every request (401) until it is configured.",
+    "CAS_ALERT_TOKEN is not set: device enrollment is disabled (401), so no new device credentials can be issued until it is configured; any devices enrolled earlier keep working.",
   );
 }
 const outboxWorker = startCasOutboxWorker();

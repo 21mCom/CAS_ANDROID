@@ -15,6 +15,7 @@ import { after, beforeEach, test } from "node:test";
 import app from "../app";
 import { db, pool } from "@workspace/db";
 import {
+  casDeviceCredentials,
   casGateEvidence,
   casIncidentEvents,
   casIncidents,
@@ -48,15 +49,22 @@ import {
 } from "../lib/cas-outbox-status";
 import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
 import {
+  issueDeviceCredential,
+  revokeDeviceCredential,
   setCasAuthRejectionRecorder,
   type CasAuthRejection,
 } from "../lib/cas-auth";
 
-// Alert trigger and incident/outbox mutations are credential-gated. The suite
-// presents this token on every guarded call; spawned API processes inherit it
-// through the spawned environment. Set before any request is made.
+// Alert trigger and incident/outbox mutations are gated on per-device
+// enrolled credentials. The shared CAS_ALERT_TOKEN is now only the
+// enrollment credential (it authorizes enroll/list/revoke), so the suite
+// enrolls one device up front and presents its token on every guarded call;
+// spawned API processes share the database and honor the same credential.
+// Set before any request is made.
 process.env.CAS_ALERT_TOKEN ??= "cas-test-alert-token";
-const AUTH_HEADERS = { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` };
+const ENROLLMENT_HEADERS = { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` };
+const suiteCredential = await issueDeviceCredential("test-suite-console");
+const AUTH_HEADERS = { authorization: `Bearer ${suiteCredential.token}` };
 
 const server = app.listen(0);
 await once(server, "listening");
@@ -3049,11 +3057,15 @@ test("handset endpoints require the device token and stay closed when none is co
     });
     assert.equal(wrongToken.status, 401);
 
-    // State mutation is closed too: a forged all-success receipt must not
-    // mark an unsent alert SENT.
+    // State mutation is closed too: a forged all-success receipt from a
+    // caller without any device credential must not mark an unsent alert
+    // SENT. The enrollment credential is presented here precisely because
+    // it must NOT authorize receipts: a presented Bearer that is not an
+    // enrolled device credential is rejected strictly, with no fallback to
+    // the (absent) legacy device-token header.
     const forged = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
       method: "POST",
-      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      headers: { ...ENROLLMENT_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
     });
     assert.equal(forged.status, 401);
@@ -3438,4 +3450,275 @@ test("the enrolled-device credential authorizes trigger, ack, and resolve", asyn
     headers: AUTH_HEADERS,
   });
   assert.equal(resolve.status, 200);
+});
+
+test("enrolled device credentials attribute the journal to the device, and revocation blocks that device within one request", async () => {
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    // Enroll two devices through the management endpoint (gated on the
+    // enrollment credential); each gets a distinct id and token.
+    const enroll = async (label: string) => {
+      const response = await fetch(`${baseUrl}/cas/devices/enroll`, {
+        method: "POST",
+        headers: { ...ENROLLMENT_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()) as {
+        device: { id: string; label: string; createdAt: string };
+        token: string;
+      };
+    };
+    const pixel = await enroll("Owner Pixel 11");
+    const consoleBrowser = await enroll("Ops console browser");
+    assert.notEqual(pixel.device.id, consoleBrowser.device.id);
+    assert.notEqual(pixel.token, consoleBrowser.token);
+
+    // Only the hash is stored: the plaintext token is not recoverable from
+    // the credential table, so a database dump yields no usable credential.
+    const stored = await db
+      .select()
+      .from(casDeviceCredentials)
+      .where(eq(casDeviceCredentials.id, pixel.device.id));
+    assert.equal(stored.length, 1);
+    assert.notEqual(stored[0].tokenHash, pixel.token);
+    assert.equal(stored[0].revokedAt, null);
+
+    // The handset triggers; the journal attributes the trigger to it.
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${pixel.token}` },
+    });
+    assert.equal(trigger.status, 201);
+    const { id } = (await trigger.json()) as { id: string };
+    const received = (await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id)))
+      .find((event) => event.type === "TRIGGER_RECEIVED");
+    assert.match(received?.detail ?? "", /Owner Pixel 11/);
+    assert.match(received?.detail ?? "", new RegExp(pixel.device.id));
+
+    // The console acks and resolves; both transitions name the console.
+    const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${consoleBrowser.token}` },
+    });
+    assert.equal(ack.status, 200);
+    const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${consoleBrowser.token}` },
+    });
+    assert.equal(resolve.status, 200);
+    const transitions = (await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id)))
+      .filter((event) => event.type === "RESPONDER_ACK" || event.type === "RESPONDER_RESOLVE");
+    assert.equal(transitions.length, 2);
+    for (const event of transitions) {
+      assert.match(event.detail, /Ops console browser/);
+      assert.match(event.detail, new RegExp(consoleBrowser.device.id));
+    }
+
+    // Revocation takes effect on the very next request: the revoked phone is
+    // blocked immediately while the other enrolled device keeps working.
+    const revoke = await fetch(`${baseUrl}/cas/devices/${pixel.device.id}/revoke`, {
+      method: "POST",
+      headers: ENROLLMENT_HEADERS,
+    });
+    assert.equal(revoke.status, 200);
+    const revokedBody = (await revoke.json()) as { id: string; revokedAt: string | null };
+    assert.ok(revokedBody.revokedAt);
+
+    const blocked = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${pixel.token}` },
+    });
+    assert.equal(blocked.status, 401);
+    const blockedBody = (await blocked.json()) as { error?: string };
+    assert.match(blockedBody.error ?? "", /revoked/i);
+
+    // And it stays blocked: a second attempt 401s again, and no new
+    // credential was issued in between — a revoked device cannot re-enroll
+    // itself, because enrollment requires the enrollment credential, which a
+    // provisioned handset no longer holds (the app discards it after
+    // enrolling and never re-enrolls on a 401).
+    const credentialsBefore = (await db.select({ id: casDeviceCredentials.id }).from(casDeviceCredentials)).length;
+    const blockedAgain = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${pixel.token}` },
+    });
+    assert.equal(blockedAgain.status, 401);
+    assert.equal(rejections.filter((rejection) => rejection.reason === "revoked-token").length, 2);
+    assert.equal((await db.select({ id: casDeviceCredentials.id }).from(casDeviceCredentials)).length, credentialsBefore);
+
+    const stillWorks = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${consoleBrowser.token}` },
+    });
+    assert.equal(stillWorks.status, 201);
+    const second = (await stillWorks.json()) as { id: string };
+    const secondReceived = (await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, second.id)))
+      .find((event) => event.type === "TRIGGER_RECEIVED");
+    assert.match(secondReceived?.detail ?? "", /Ops console browser/);
+
+    // The rejection was recorded and attributed to the revoked device —
+    // without the presented token.
+    const revokedRejection = rejections.find((rejection) => rejection.reason === "revoked-token");
+    assert.ok(revokedRejection);
+    assert.equal(revokedRejection.deviceId, pixel.device.id);
+    assert.ok(!JSON.stringify(rejections).includes(pixel.token));
+
+    // The retired shared token no longer authorizes mutations: it gets a
+    // distinct rejection steering operators at enrollment instead of an
+    // opaque invalid-token.
+    const retired = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: ENROLLMENT_HEADERS,
+    });
+    assert.equal(retired.status, 401);
+    assert.ok(rejections.some((rejection) => rejection.reason === "enrollment-token-not-authorized"));
+
+    // The management list shows both devices with usage and revocation —
+    // and never a token hash.
+    const list = await fetch(`${baseUrl}/cas/devices`, { headers: ENROLLMENT_HEADERS });
+    assert.equal(list.status, 200);
+    const { devices } = (await list.json()) as {
+      devices: Array<{ id: string; label: string; lastUsedAt: string | null; revokedAt: string | null }>;
+    };
+    const pixelRow = devices.find((device) => device.id === pixel.device.id);
+    const consoleRow = devices.find((device) => device.id === consoleBrowser.device.id);
+    assert.ok(pixelRow?.revokedAt);
+    assert.ok(pixelRow?.lastUsedAt);
+    assert.ok(consoleRow?.lastUsedAt);
+    assert.equal(consoleRow?.revokedAt ?? null, null);
+    assert.ok(!JSON.stringify(devices).includes("tokenHash"));
+
+    // Re-revoking is idempotent; an unknown id is a 404.
+    const again = await fetch(`${baseUrl}/cas/devices/${pixel.device.id}/revoke`, {
+      method: "POST",
+      headers: ENROLLMENT_HEADERS,
+    });
+    assert.equal(again.status, 200);
+    const missing = await fetch(`${baseUrl}/cas/devices/dev-nope/revoke`, {
+      method: "POST",
+      headers: ENROLLMENT_HEADERS,
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+    setCasAuthRejectionRecorder();
+  }
+});
+
+test("device-credential management requires the enrollment credential and fails closed without it", async () => {
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    const jsonHeaders = { "Content-Type": "application/json" };
+    // No credential at all: every management endpoint refuses.
+    for (const make of [
+      () => fetch(`${baseUrl}/cas/devices`),
+      () => fetch(`${baseUrl}/cas/devices/enroll`, { method: "POST", headers: jsonHeaders, body: JSON.stringify({ label: "x" }) }),
+      () => fetch(`${baseUrl}/cas/devices/dev-anything/revoke`, { method: "POST" }),
+    ]) {
+      const response = await make();
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="cas"');
+    }
+
+    // An enrolled device credential cannot manage credentials: a leaked
+    // device token must not be able to mint more credentials.
+    const device = await issueDeviceCredential("management-attempt");
+    const withDeviceToken = await fetch(`${baseUrl}/cas/devices/enroll`, {
+      method: "POST",
+      headers: { ...jsonHeaders, authorization: `Bearer ${device.token}` },
+      body: JSON.stringify({ label: "escalation attempt" }),
+    });
+    assert.equal(withDeviceToken.status, 401);
+    assert.equal(
+      (await db.select({ id: casDeviceCredentials.id }).from(casDeviceCredentials).where(eq(casDeviceCredentials.label, "escalation attempt"))).length,
+      0,
+    );
+    assert.deepEqual(
+      rejections.map((rejection) => rejection.reason),
+      ["missing-token", "missing-token", "missing-token", "invalid-token"],
+    );
+
+    // Fail closed: with CAS_ALERT_TOKEN unset the management endpoints refuse
+    // everything, while already-enrolled devices keep working — device auth
+    // no longer depends on the shared secret at all.
+    await withEnv({ CAS_ALERT_TOKEN: undefined }, async () => {
+      const closed = await fetch(`${baseUrl}/cas/devices/enroll`, {
+        method: "POST",
+        headers: { ...jsonHeaders, authorization: "Bearer anything" },
+        body: JSON.stringify({ label: "x" }),
+      });
+      assert.equal(closed.status, 401);
+      const body = (await closed.json()) as { error?: string };
+      assert.match(body.error ?? "", /not configured/);
+
+      const mutation = await fetch(`${baseUrl}/cas/incidents/test`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${device.token}` },
+      });
+      assert.equal(mutation.status, 201);
+    });
+    assert.ok(rejections.some((rejection) => rejection.reason === "server-not-configured"));
+  } finally {
+    setCasAuthRejectionRecorder();
+  }
+});
+
+test("handset receipts accept an enrolled device credential and a revoked device stays blocked even with the shared device token", async () => {
+  await withEnv(
+    { CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS", CAS_DEVICE_TOKEN: DEVICE_TOKEN },
+    async () => {
+      const enrolled = await issueDeviceCredential("receipt-handset");
+      const bearer = { authorization: `Bearer ${enrolled.token}` };
+
+      // The enrolled handset triggers and reports its receipt with its own
+      // credential alone (no shared device token); the journal attributes
+      // the delivery report to that device.
+      const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: bearer });
+      assert.equal(trigger.status, 201);
+      const { id } = (await trigger.json()) as { id: string };
+      const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...bearer },
+        body: JSON.stringify({ channel: "SMS", results: [{ recipient: "+1555000111", ok: true }] }),
+      });
+      assert.equal(receipt.status, 200);
+      const reported = (await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id)))
+        .find((event) => event.type === "DELIVERY_REPORTED");
+      assert.match(reported?.detail ?? "", /receipt-handset/);
+      assert.match(reported?.detail ?? "", new RegExp(enrolled.record.id));
+
+      // Close out the incident so the next trigger starts a fresh one.
+      assert.equal((await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS })).status, 200);
+      assert.equal((await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS })).status, 200);
+
+      // After revocation the same handset is refused at the receipt
+      // endpoint too — even while still presenting a valid shared
+      // CAS_DEVICE_TOKEN alongside its revoked credential. The Bearer
+      // credential, when presented, is authoritative: no silent fallback.
+      await revokeDeviceCredential(enrolled.record.id);
+      const second = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+      assert.equal(second.status, 201);
+      const { id: secondId } = (await second.json()) as { id: string };
+      const revokedReceipt = await fetch(`${baseUrl}/cas/incidents/${secondId}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth, ...bearer },
+        body: JSON.stringify({ channel: "SMS", results: [{ recipient: "+1555000111", ok: true }] }),
+      });
+      assert.equal(revokedReceipt.status, 401);
+      const queued = (await db.select().from(casOutbox)
+        .where(sql`${casOutbox.incidentId} = ${secondId} AND ${casOutbox.transport} = 'SMS'`))[0];
+      assert.equal(queued.state, "QUEUED");
+
+      // A legacy handset without an enrolled credential still receipts via
+      // the shared device token alone.
+      const legacy = await fetch(`${baseUrl}/cas/incidents/${secondId}/device-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...deviceAuth },
+        body: JSON.stringify({ channel: "SMS", results: [{ recipient: "+1555000111", ok: true }] }),
+      });
+      assert.equal(legacy.status, 200);
+    },
+  );
 });
