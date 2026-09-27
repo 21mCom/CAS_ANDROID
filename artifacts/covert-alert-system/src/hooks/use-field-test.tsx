@@ -92,6 +92,8 @@ export type IncidentLocation = {
 export type ActiveIncident = {
   id: string;
   status: KernelStatus;
+  /** The server serializes the incident's priority with the state payload. */
+  priority: Priority;
   triggerCount: number;
   createdAt: string;
   /** Null when the alert went out before the handset had any position fix. */

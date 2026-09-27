@@ -24,7 +24,7 @@
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG with workspace-device state; its modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
 - [Protected broadcasts need adb root](protected-broadcasts-adb.md) — API 35 shell uid can't send protected broadcasts or start non-exported activities; LOCKED_BOOT_COMPLETED ≠ direct boot.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
-- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — diff touched files against the merge base before completing; a stale snapshot can revert a task merged mid-task.
+- [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — a stale snapshot can silently revert concurrent work, even committed; diff broken files against their parent before diagnosing.
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
