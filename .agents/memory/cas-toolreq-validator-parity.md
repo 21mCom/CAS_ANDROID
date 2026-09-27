@@ -16,7 +16,9 @@ proves it over shared fixtures in `scripts/fixtures/tool-requirements-parity/`.
 **Why:** the Bash side originally skipped the jdk section, buildToolsMinimum,
 and plausibility checks the PowerShell parser enforced — a kit could pass on
 the workstation and fail in the field. The parity harness now turns red on any
-one-sided change (verified locally both directions).
+one-sided change (verified locally both directions, and the CI job itself was
+proven green on a real windows-latest runner — cygpath/pwsh/artifact-extraction
+mechanics included — on 2026-09-27, so it can be trusted as a gate).
 
 **How to apply:**
 - Any change to one validator's rules must land in the other; both files carry
