@@ -32,6 +32,10 @@ class MainActivity : Activity() {
     private val smsPermissionGranted: Boolean
         get() = checkSelfPermission(android.Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
 
+    private val locationPermissionGranted: Boolean
+        get() = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         TestStore.record(this, "OBSERVER_SCREEN_OPENED", mapOf("activityState" to if (state == null) "cold" else "warm"))
@@ -137,6 +141,23 @@ class MainActivity : Activity() {
             }
             refreshReport()
         })
+        // Location is optional by design: the alert leaves on time with "no
+        // fix captured" when permission is missing. Granting it here lets the
+        // alert carry coordinates, accuracy radius, and fix age.
+        root.addView(button("Grant location permission") {
+            if (locationPermissionGranted) {
+                TestStore.record(this, "LOCATION_PERMISSION", mapOf("outcome" to "ALREADY_GRANTED"))
+            } else {
+                requestPermissions(
+                    arrayOf(
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    ),
+                    REQUEST_LOCATION,
+                )
+            }
+            refreshReport()
+        })
         root.addView(button("Send MVP alert now") { sendMvpAlert() })
         root.addView(button("Check re-queued deliveries") { checkRequeued() })
         root.addView(button("Request pinned proxy shortcut") {
@@ -203,6 +224,11 @@ class MainActivity : Activity() {
             TestStore.record(this, "SMS_PERMISSION", mapOf("outcome" to if (granted) "GRANTED" else "DENIED"))
             refreshReport()
         }
+        if (requestCode == REQUEST_LOCATION) {
+            val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+            TestStore.record(this, "LOCATION_PERMISSION", mapOf("outcome" to if (granted) "GRANTED" else "DENIED"))
+            refreshReport()
+        }
     }
 
     private fun sendMvpAlert() {
@@ -227,9 +253,25 @@ class MainActivity : Activity() {
         TestStore.record(this, "MVP_ALERT_ATTEMPT", mapOf(
             "https" to baseUrl.startsWith("https://"),
             "responders" to TestStore.smsResponders(this).size,
+            "locationPermission" to locationPermissionGranted,
         ))
         reportView.text = "Sending MVP alert..."
         Thread {
+            // Bounded capture: at most AlertLocation.MAX_WAIT_MS before the
+            // trigger POST and SMS go out, with or without a fix.
+            val captureStart = System.currentTimeMillis()
+            val fix = LocationCapture.capture(this)
+            TestStore.record(this, "LOCATION_CAPTURE", mapOf(
+                "outcome" to when {
+                    fix == null -> "NO_FIX"
+                    fix.lastKnown -> "LAST_KNOWN"
+                    else -> "FRESH"
+                },
+                "waitedMs" to (System.currentTimeMillis() - captureStart),
+                "accuracyM" to fix?.accuracyM?.toInt(),
+                "fixAgeS" to fix?.let { (System.currentTimeMillis() - it.capturedAtMs) / 1000 },
+                "provider" to fix?.provider,
+            ))
             if (baseUrl.isBlank() || token.isBlank()) {
                 // Without a server URL — or without the alert credential the
                 // trigger endpoint requires (401 otherwise) — no incident can
@@ -240,9 +282,9 @@ class MainActivity : Activity() {
                     "no alert credential configured; the server would reject the trigger with 401, texting responders directly without an incident"
                 }
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to reason))
-                sendSmsFromHandset(null)
+                sendSmsFromHandset(null, fix)
             } else {
-                val result = AlertSender.trigger(this@MainActivity, baseUrl, token)
+                val result = AlertSender.trigger(this@MainActivity, baseUrl, token, fix)
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
                 if (result.ok && result.reused) {
                     // The repeat tap folded into the still-active incident and
@@ -252,8 +294,9 @@ class MainActivity : Activity() {
                 } else {
                     // Device-direct: even when the trigger POST fails (no
                     // data, server down) the alert still leaves this handset
-                    // by SMS.
-                    sendSmsFromHandset(if (result.ok) result.incidentId else null)
+                    // by SMS — with the fix, so an offline alert still tells
+                    // responders where the handset was.
+                    sendSmsFromHandset(if (result.ok) result.incidentId else null, fix)
                 }
             }
             runOnUiThread {
@@ -263,8 +306,8 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun sendSmsFromHandset(incidentId: String?) {
-        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
+    private fun sendSmsFromHandset(incidentId: String?, fix: AlertLocation.Fix? = null) {
+        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId, fix))
         TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
     }
 
@@ -464,3 +507,4 @@ object IntentFactory {
 }
 
 private const val REQUEST_SEND_SMS = 41
+private const val REQUEST_LOCATION = 42

@@ -106,7 +106,19 @@ class SmsFlowActivity : Activity() {
                 ))
                 sendSms(null)
             } else {
-                val result = AlertSender.trigger(this, baseUrl, alertToken)
+                // Same bounded capture as the MVP button; in the emulator the
+                // flow script injects a fix via `adb emu geo fix` and asserts
+                // the console stores it. Without the location permission this
+                // returns instantly so the alert is never delayed.
+                val fix = LocationCapture.capture(this)
+                TestStore.record(this, "SMS_FLOW_LOCATION", mapOf(
+                    "outcome" to when {
+                        fix == null -> "NO_FIX"
+                        fix.lastKnown -> "LAST_KNOWN"
+                        else -> "FRESH"
+                    },
+                ))
+                val result = AlertSender.trigger(this, baseUrl, alertToken, fix)
                 TestStore.record(this, "SMS_FLOW_TRIGGER_OUTCOME", mapOf(
                     "outcome" to if (result.ok) "SENT" else "FAILED",
                     "detail" to result.detail,
@@ -118,7 +130,7 @@ class SmsFlowActivity : Activity() {
                     // re-send physical messages either.
                     TestStore.record(this, "SMS_FLOW_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE"))
                 } else {
-                    sendSms(if (result.ok) result.incidentId else null)
+                    sendSms(if (result.ok) result.incidentId else null, fix)
                 }
             }
         }.start()
@@ -132,8 +144,8 @@ class SmsFlowActivity : Activity() {
         }.start()
     }
 
-    private fun sendSms(incidentId: String?) {
-        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
+    private fun sendSms(incidentId: String?, fix: AlertLocation.Fix? = null) {
+        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId, fix))
         TestStore.record(this, "SMS_FLOW_SMS_START", mapOf(
             "incidentId" to (incidentId ?: "offline"),
             "detail" to outcome,

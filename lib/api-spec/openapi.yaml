@@ -85,6 +85,20 @@ paths:
       operationId: triggerCasIncident
       tags: [cas]
       security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deviceChannels:
+                  type: array
+                  maxItems: 4
+                  items: { type: string, enum: [SMS, WHATSAPP] }
+                  description: Device channels this handset will deliver itself; the console queues only the intersection with enabled channels.
+                location:
+                  $ref: "#/components/schemas/TriggerLocation"
       responses:
         "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201":
@@ -217,6 +231,28 @@ components:
         reused: { type: boolean }
         status: { type: string }
       required: [id]
+    TriggerLocation:
+      type: object
+      description: >-
+        One position fix per alert, captured by the handset under a bounded
+        wait. Accuracy radius and capture time must travel with the
+        coordinates everywhere they are shown, so a stale or coarse fix is
+        never presented as current truth. On a reused trigger the server
+        stores the fix only when it is newer than the one already stored.
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        accuracyM:
+          type: number
+          format: float
+          exclusiveMinimum: 0
+          maximum: 100000
+          description: Horizontal accuracy radius in meters.
+        capturedAt:
+          type: string
+          format: date-time
+          description: When the handset's fix was taken (UTC), not when the trigger was sent.
+      required: [latitude, longitude, accuracyM, capturedAt]
     CasState:
       type: object
       properties:

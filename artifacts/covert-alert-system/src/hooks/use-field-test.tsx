@@ -81,11 +81,21 @@ export type OutboxItem = {
   terminal: boolean;
 };
 
+export type IncidentLocation = {
+  latitude: number;
+  longitude: number;
+  accuracyM: number;
+  /** ISO timestamp; the console renders its age so a stale fix is never read as current. */
+  capturedAt: string;
+};
+
 export type ActiveIncident = {
   id: string;
   status: KernelStatus;
   triggerCount: number;
   createdAt: string;
+  /** Null when the alert went out before the handset had any position fix. */
+  location: IncidentLocation | null;
   events: KernelEvent[];
   outbox: OutboxItem[];
 };

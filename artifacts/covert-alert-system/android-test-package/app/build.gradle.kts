@@ -22,8 +22,8 @@ android {
         // they are a product contract, not a workstation prerequisite.
         minSdk = 35
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.4.0-mvp"
+        versionCode = 4
+        versionName = "0.5.0-mvp"
     }
 
     buildTypes {

@@ -594,6 +594,136 @@ test("concurrent triggers reuse one incident and preserve both observations", as
   assert.ok(transitionTypes.includes("RESPONDER_RESOLVE"));
 });
 
+test("trigger accepts a location fix, persists it with accuracy and capture time, and the state endpoint shows it", async () => {
+  const capturedAt = new Date(Date.now() - 5_000);
+  const response = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    // No deviceChannels here: the test env enables none, and an explicit
+    // request for one would hit the loud 409 by design.
+    body: JSON.stringify({
+      location: { latitude: 52.5163, longitude: 13.3777, accuracyM: 12.5, capturedAt: capturedAt.toISOString() },
+    }),
+  });
+  assert.equal(response.status, 201);
+  const { id } = (await response.json()) as { id: string };
+
+  const [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 52.5163);
+  assert.equal(incident.locationLongitude, 13.3777);
+  assert.equal(incident.locationAccuracyM, 12.5);
+  assert.equal(incident.locationCapturedAt?.getTime(), capturedAt.getTime());
+
+  const state = await (await fetch(`${baseUrl}/cas/state`)).json() as {
+    activeIncident: { id: string; location: unknown };
+  };
+  assert.equal(state.activeIncident.id, id);
+  assert.deepEqual(state.activeIncident.location, {
+    latitude: 52.5163,
+    longitude: 13.3777,
+    accuracyM: 12.5,
+    capturedAt: capturedAt.toISOString(),
+  });
+});
+
+test("trigger rejects malformed location fixes with 400 and commits nothing", async () => {
+  const good = { latitude: 52.5163, longitude: 13.3777, accuracyM: 12.5, capturedAt: new Date().toISOString() };
+  const badFixes = [
+    { ...good, latitude: 91 },
+    { ...good, longitude: -181 },
+    { ...good, accuracyM: 0 },
+    { ...good, accuracyM: -5 },
+    { ...good, capturedAt: "yesterday-ish" },
+    { latitude: 52.5163, longitude: 13.3777 }, // missing accuracy + capture time
+  ];
+  for (const location of badFixes) {
+    const response = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ location }),
+    });
+    assert.equal(response.status, 400, `expected 400 for ${JSON.stringify(location)}`);
+  }
+  assert.equal((await db.select().from(casIncidents)).length, 0);
+});
+
+test("a reused trigger stores a fresher fix and journals it, but never moves backwards to an older fix", async () => {
+  const first = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(first.status, 201);
+  const { id } = (await first.json()) as { id: string };
+
+  const [noFix] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(noFix.locationLatitude, null);
+
+  // The first alert went out before any lock; the repeat trigger carries the
+  // fix the handset got later.
+  const freshCapturedAt = new Date();
+  const repeat = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ location: { latitude: 48.8566, longitude: 2.3522, accuracyM: 30, capturedAt: freshCapturedAt.toISOString() } }),
+  });
+  assert.equal(repeat.status, 200);
+  assert.equal(((await repeat.json()) as { reused: boolean }).reused, true);
+
+  let [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 48.8566);
+  assert.equal(incident.locationCapturedAt?.getTime(), freshCapturedAt.getTime());
+  let events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "LOCATION_UPDATED").length, 1);
+
+  // An older fix arriving later (e.g. a retried POST) must not clobber the
+  // fresher one — the incident never moves backwards in time.
+  const staleCapturedAt = new Date(freshCapturedAt.getTime() - 60_000);
+  const stale = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ location: { latitude: 0, longitude: 0, accuracyM: 5000, capturedAt: staleCapturedAt.toISOString() } }),
+  });
+  assert.equal(stale.status, 200);
+
+  [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 48.8566);
+  assert.equal(incident.locationCapturedAt?.getTime(), freshCapturedAt.getTime());
+  events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "LOCATION_UPDATED").length, 1);
+});
+
+test("alert message carries the maps link with accuracy and fix age, and says so when no fix was captured", async () => {
+  const { buildCasAlertMessage } = await import("../lib/delivery-providers");
+  const item = {
+    incidentId: "sim-test",
+    transport: "SMS",
+    priority: "P1",
+    createdAt: new Date("2026-09-27T10:00:00Z"),
+  } as never;
+
+  const noFix = buildCasAlertMessage(item, null);
+  assert.ok(noFix.body.includes("Location: no fix captured for this alert."));
+  assert.ok(!noFix.body.includes("Location follows"));
+
+  const withFix = buildCasAlertMessage(item, {
+    latitude: 52.5163,
+    longitude: 13.3777,
+    accuracyM: 12.5,
+    capturedAt: new Date(Date.now() - 30_000),
+  });
+  assert.ok(withFix.body.includes("https://maps.google.com/?q=52.51630,13.37770"));
+  assert.ok(withFix.body.includes("±13m"));
+  assert.ok(withFix.body.includes("fix 30s old"));
+  assert.ok(!withFix.body.includes("Location follows"));
+
+  // A stale fix keeps its age in the wording instead of reading as current.
+  const staleFix = buildCasAlertMessage(item, {
+    latitude: 52.5163,
+    longitude: 13.3777,
+    accuracyM: 800,
+    capturedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+  });
+  assert.ok(staleFix.body.includes("fix 180min old"));
+  assert.ok(staleFix.body.includes("±800m"));
+});
+
 test("separate API processes converge concurrent triggers on one incident", async () => {
   const first = await startApiProcess();
   const second = await startApiProcess();
