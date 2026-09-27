@@ -46,7 +46,11 @@ function Get-ToolRequirements {
         # Field order within the canonical shape is not contractual, and a
         # wholly absent field passes this guard to be caught by the
         # plausibility checks below (mirroring the harness's empty-extraction
-        # rejection).
+        # rejection). A duplicated key with exactly one occurrence in
+        # canonical form (a merge accident or careless hand-edit) also fails
+        # here — occurrences outnumber canonical matches — and the Bash
+        # harness mirrors this with an explicit duplicate-key count, so both
+        # sides fail closed on that class.
         $canonicalFields = @(
             @{ Key = 'minimumMajor';      Pattern = '(?m)^\s*"minimumMajor"\s*:\s*\d+\s*,?\s*$' }
             @{ Key = 'apiLevel';          Pattern = '(?m)^\s*"apiLevel"\s*:\s*\d+\s*,?\s*$' }

@@ -183,6 +183,12 @@ load_pinned_device_constants() {
     # parsed values, so both sides reject those declarations identically.
     # Field order within the canonical shape is not contractual: reordering
     # the lines still matches every extraction and is accepted by both sides.
+    # A duplicated key with exactly one occurrence in canonical form (a merge
+    # accident or careless hand-edit) reads as a single clean value to the
+    # sed extractions, so the duplicate-key count below mirrors the
+    # PowerShell parser's occurrence-vs-canonical guard and fails closed on
+    # the same class; a wholly absent field falls through to the empty-
+    # extraction rejections, exactly as the parser's plausibility checks do.
     [[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
         die "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON; restore the complete, unmodified test kit before running this harness."
     local declared_api declared_platform_api declared_jdk_major declared_build_tools
@@ -190,6 +196,15 @@ load_pinned_device_constants() {
     declared_platform_api="$(sed -nE 's/^[[:space:]]*"platform"[[:space:]]*:[[:space:]]*"android-([0-9]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
     declared_jdk_major="$(sed -nE 's/^[[:space:]]*"minimumMajor"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
     declared_build_tools="$(sed -nE 's/^[[:space:]]*"buildToolsMinimum"[[:space:]]*:[[:space:]]*"([^"]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    # grep exits 1 when a key is absent; keep the count at 0 so a wholly
+    # absent field falls through to the plausibility rejections below
+    # (mirroring the PowerShell parser), instead of dying on the grep itself.
+    local key key_occurrences
+    for key in minimumMajor apiLevel platform buildToolsMinimum; do
+        key_occurrences="$( { grep -oF "\"$key\"" "$TOOL_REQUIREMENTS_JSON" || true; } | wc -l)"
+        [[ "$key_occurrences" -le 1 ]] ||
+            die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (the \"$key\" field appears more than once); restore the complete, unmodified test kit before running this harness."
+    done
     [[ "$declared_jdk_major" =~ ^[0-9]+$ && "$declared_jdk_major" -ge 1 ]] ||
         die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (jdk.minimumMajor must be a positive integer); restore the complete, unmodified test kit before running this harness."
     [[ "$declared_api" =~ ^[0-9]+$ && "$declared_platform_api" =~ ^[0-9]+$ && "$declared_api" -ge 1 && "$declared_api" == "$declared_platform_api" ]] ||

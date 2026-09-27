@@ -35,9 +35,15 @@ set -euo pipefail
 # section-inline.json) or carrying numbers as quoted strings
 # (string-typed-numbers.json) — is invalid in a way BOTH validators are
 # expected to catch: accepting it on the Windows workstation while the field
-# harness rejects it is exactly the drift class this gate exists for. The
-# remaining "invalid" fixtures use the canonical shape and are invalid in
-# ways both validators are expected to catch.
+# harness rejects it is exactly the drift class this gate exists for.
+# duplicate-key.json is the reverse-direction drift class: a key appearing
+# twice with exactly one occurrence in canonical form reads as a single clean
+# value to the Bash harness's sed extraction (which would accept it) while the
+# PowerShell parser's occurrence-vs-canonical guard rejects it. The deliberate
+# verdict is fail-closed REJECT on both sides, so the Bash harness carries an
+# explicit duplicate-key count. The remaining "invalid" fixtures use the
+# canonical shape and are invalid in ways both validators are expected to
+# catch.
 #
 # Usage: scripts/check-tool-requirements-parity.sh [--kit-root DIR]
 # Prints: TOOLREQ_PARITY_OK fixtures=<n> kit=<dir>
@@ -84,6 +90,12 @@ readonly FIXTURES=(
     "compacted.json|reject"
     "section-inline.json|reject"
     "string-typed-numbers.json|reject"
+    # A duplicated key with exactly one occurrence in canonical form (a merge
+    # accident or careless hand-edit): the deliberate verdict is fail-closed
+    # REJECT on both sides. The PowerShell parser's occurrence-vs-canonical
+    # guard rejects it (2 occurrences, 1 canonical match); the Bash harness
+    # rejects it with an explicit duplicate-key count.
+    "duplicate-key.json|reject"
     "|reject"
 )
 readonly MISSING_FILE_PATH="$FIXTURE_DIR/no-such-declaration.json"
