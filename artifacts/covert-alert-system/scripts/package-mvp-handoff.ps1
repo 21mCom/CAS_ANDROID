@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
     [string]$OutputPath = '',
-    # Handoff iteration baked into the deliverable filename. Bump it when the
-    # operator-facing package intentionally changes; the CI freshness gate
-    # compares ZIP contents, not the name.
-    [string]$Version = '0.5.0',
+    # Handoff iteration baked into the deliverable filename. The packager
+    # refuses to overwrite an existing ZIP whose content differs from the
+    # fresh build, so two different kits can never ship under one name; bump
+    # this when the operator-facing package intentionally changes. Every ZIP
+    # also embeds PACKAGE-INFO.txt with a content fingerprint, so operators
+    # can tell packages apart without hashing the whole archive. The CI
+    # freshness gate compares ZIP contents, not the name.
+    [string]$Version = '0.5.1',
     [switch]$SkipApkBuild,
     # The entry-point gate needs Windows PowerShell (powershell.exe) and a CMD
     # wrapper, so it cannot run on a Linux packager. Only skip it there; the
@@ -32,6 +36,12 @@ $ProgressPreference = 'SilentlyContinue'
 # $ErrorActionPreference is Stop; the gates below are checked via
 # $LASTEXITCODE so their output stays visible in the failure message.
 $PSNativeCommandUseErrorActionPreference = $false
+
+function Get-Sha256Hex([byte[]]$Bytes) {
+    # BitConverter works on both Windows PowerShell 5.1 and pwsh 7;
+    # [Convert]::ToHexString does not exist on .NET Framework.
+    [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)).Replace('-', '').ToLowerInvariant()
+}
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $artifactRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..'))
@@ -134,18 +144,74 @@ try {
 
     Copy-Item -LiteralPath $guidePdf -Destination (Join-Path $stagedHandoff 'gate0a-run-guide.pdf') -Force
 
-    # Manifest over EVERY file that ships (including the guide), in sha256sum
-    # format with LF endings, so the operator can verify the extract with
+    # Manifest over every payload file (kit + guide), in sha256sum format with
+    # LF endings, so the operator can verify the extract with
     # `sha256sum -c SHA256SUMS.txt` and CI can diff manifests byte-for-byte.
-    $sumsLines = @(Get-ChildItem -LiteralPath $stagedHandoff -Recurse -File | ForEach-Object {
+    $payloadEntries = @(Get-ChildItem -LiteralPath $stagedHandoff -Recurse -File | ForEach-Object {
         $relative = $_.FullName.Substring($stagedHandoff.Length).TrimStart('\', '/') -replace '\\', '/'
         [pscustomobject]@{
             Relative = $relative
             Line     = '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $relative
         }
+    } | Sort-Object -Property Relative)
+    $payloadSumsText = (($payloadEntries | ForEach-Object { $_.Line }) -join "`n") + "`n"
+
+    # Embedded version marker: any kit content change flips the fingerprint,
+    # so two ZIPs with different content are distinguishable without hashing
+    # the whole archive. The fingerprint is derived from the payload manifest
+    # — never from the clock — so byte-exact CI freshness comparisons stay
+    # stable across rebuilds of unchanged content.
+    $fingerprint = Get-Sha256Hex ([System.Text.Encoding]::UTF8.GetBytes($payloadSumsText))
+    $packageInfoText = "package: CAS-Pixel11-MVP-Handoff`nversion: $Version`ncontent-fingerprint-sha256: $fingerprint`n"
+    $packageInfoPath = Join-Path $stagedHandoff 'PACKAGE-INFO.txt'
+    [System.IO.File]::WriteAllText($packageInfoPath, $packageInfoText, (New-Object System.Text.UTF8Encoding($false)))
+
+    # Final manifest covers the marker too, so `sha256sum -c` also proves the
+    # operator is reading an uncorrupted version stamp.
+    $sumsLines = @($payloadEntries + [pscustomobject]@{
+        Relative = 'PACKAGE-INFO.txt'
+        Line     = '{0}  PACKAGE-INFO.txt' -f (Get-FileHash -LiteralPath $packageInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
     } | Sort-Object -Property Relative | ForEach-Object { $_.Line })
     $sumsText = ($sumsLines -join "`n") + "`n"
-    [System.IO.File]::WriteAllText((Join-Path $stagedHandoff 'SHA256SUMS.txt'), $sumsText, (New-Object System.Text.UTF8Encoding($false)))
+    $sumsPath = Join-Path $stagedHandoff 'SHA256SUMS.txt'
+    [System.IO.File]::WriteAllText($sumsPath, $sumsText, (New-Object System.Text.UTF8Encoding($false)))
+
+    # Same-path overwrite guard: the 2026-09-27 repack shipped different
+    # content under the same v0.4.0 filename, leaving operators unable to tell
+    # the stale ZIP from the current one. The manifest covers every shipped
+    # file, so identical manifests mean identical packages and the overwrite
+    # is a harmless idempotent rebuild; any difference means the content
+    # changed and the version must change with it.
+    if (Test-Path -LiteralPath $OutputPath -PathType Leaf) {
+        $stagedSumsHash = (Get-FileHash -LiteralPath $sumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $existingSumsHash = $null
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $archive = [System.IO.Compression.ZipFile]::OpenRead($OutputPath)
+            try {
+                $sumsEntry = $archive.GetEntry('CAS-Pixel11-MVP/SHA256SUMS.txt')
+                if ($null -ne $sumsEntry) {
+                    $entryStream = $sumsEntry.Open()
+                    try {
+                        $entryBytes = New-Object System.IO.MemoryStream
+                        $entryStream.CopyTo($entryBytes)
+                        $existingSumsHash = Get-Sha256Hex $entryBytes.ToArray()
+                    } finally {
+                        $entryStream.Dispose()
+                    }
+                }
+            } finally {
+                $archive.Dispose()
+            }
+        } catch {
+            # Unreadable or not a ZIP: treat as different content and fail closed.
+            $existingSumsHash = $null
+        }
+        if ($existingSumsHash -ne $stagedSumsHash) {
+            throw ('Refusing to overwrite {0}: it contains a different package than this build, and two different kits must never share one filename. Bump -Version (currently ''{1}'') or pass a different -OutputPath.' -f $OutputPath, $Version)
+        }
+        Write-Host 'Existing ZIP at the output path holds identical content; replacing it with the fresh rebuild.'
+    }
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
     Remove-Item $OutputPath -Force -ErrorAction SilentlyContinue
