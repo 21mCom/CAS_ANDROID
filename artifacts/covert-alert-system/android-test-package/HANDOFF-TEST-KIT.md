@@ -23,10 +23,24 @@ Vocabulary:
 
 | Channel | Who delivers | What `SENT` means | Config |
 | --- | --- | --- | --- |
-| SMS | The Pixel itself, over its own SIM | Handset reported radio success per responder | Responder numbers on the phone; server runs `CAS_SMS_DELIVERY_MODE=device` |
-| WHATSAPP | The console's outbox worker → WhatsApp Business Cloud API messages endpoint | Provider accepted the message (HTTPS POST, idempotency-keyed) | `CAS_WHATSAPP_PROVIDER_URL` + `CAS_WHATSAPP_PROVIDER_TOKEN` + `CAS_WHATSAPP_RECIPIENTS` |
-| XMPP | The console's outbox worker → configured provider endpoint | Provider accepted the stanza (HTTPS POST, idempotency-keyed) | `CAS_XMPP_PROVIDER_URL` + `CAS_XMPP_RECIPIENTS` |
-| EMAIL | The console's outbox worker → configured provider endpoint | Provider accepted the message | `CAS_EMAIL_PROVIDER_URL` + `CAS_EMAIL_RECIPIENTS` |
+| SMS | The Pixel itself, over its own SIM | Handset reported radio success per responder | Console's Responders page (handed to the phone with every trigger and re-queue pickup); the phone's own list is only the offline/unseeded fallback. Server runs `CAS_SMS_DELIVERY_MODE=device` |
+| WHATSAPP | The console's outbox worker → WhatsApp Business Cloud API messages endpoint | Provider accepted the message (HTTPS POST, idempotency-keyed) | `CAS_WHATSAPP_PROVIDER_URL` + `CAS_WHATSAPP_PROVIDER_TOKEN`; recipients from the console's Responders page |
+| XMPP | The console's outbox worker → configured provider endpoint | Provider accepted the stanza (HTTPS POST, idempotency-keyed) | `CAS_XMPP_PROVIDER_URL`; recipients from the console's Responders page |
+| EMAIL | The console's outbox worker → configured provider endpoint | Provider accepted the message | `CAS_EMAIL_PROVIDER_URL`; recipients from the console's Responders page |
+
+**Who gets alerted and what it says are console settings, not secrets.** The
+console's **Responders** page holds the responder circle (per-person SMS /
+WhatsApp / email / XMPP channels, enable/disable) and the **Alert text** page
+holds the per-channel message templates with a live preview. On first run the
+server copies the `CAS_*_RECIPIENTS` environment lists into the circle
+(marked "env seed"); from then on the env lists are ignored unless the circle
+table is completely empty. Template wording refuses credential-shaped text
+and flags SMS bodies that would split into multiple segments. The circle and
+the rendered SMS template are handed to the handset with every trigger
+answer and re-queue pickup, so console edits apply to the phone's own SIM
+sends too — including "text nobody" when every SMS responder is disabled.
+Only a phone that cannot reach the console at all falls back to its locally
+stored list and offline wording.
 
 The handset never opens the WhatsApp app (or any other app) for alerting —
 that keeps the screen silent and keeps responder-provider credentials off

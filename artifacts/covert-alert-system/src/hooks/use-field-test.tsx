@@ -356,7 +356,9 @@ export type FieldRun = {
 
 export type ReadinessDecision = 'pending' | 'go' | 'no-go';
 
-async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+// Exported for the configuration pages (responders / alert text), which call
+// their own endpoints with the same credential flow.
+export async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = await ensureDeviceToken();
   if (!token) throw new Error('An enrolled device credential is required for this action.');
   const response = await fetch(input, {

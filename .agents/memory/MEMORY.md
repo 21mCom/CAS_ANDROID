@@ -28,4 +28,7 @@
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
-- [Kit gates first real CI run](kit-gates-first-ci-run.md) — run 35319853990 (branch ci-153) already executed the drift/API-floor/JDK-floor gates, validator parity, and guide freshness green; verify code identity before burning a duplicate run.
+- [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit's drift/API-floor/JDK-floor gates, validator parity, and guide freshness already ran green on real GitHub runners; verify code identity before burning a duplicate run.
+- [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — known issue: saving a new enrollment credential on the handset re-enables the shared-token fallback before verification, so a revoked phone resumes; fix = sticky provisioned flag.
+- [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means config-table writes in one suite change another suite's fan-out; keep new DB suites in the &&-chained invocation.
+- [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.

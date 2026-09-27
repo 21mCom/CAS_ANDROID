@@ -19,13 +19,16 @@ import {
 } from "../lib/cas-readiness-schema";
 import {
   CasProviderError,
-  configuredProviderTransports,
+  buildLocationClause,
   createCasDeliverySender,
   formatProviderError,
   loadConfiguredProviders,
+  type CasIncidentLocation,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
 import { deviceAccessToken, deviceChannels, maskRecipient, smsDeliveryMode, type DeviceChannel } from "../lib/cas-device-delivery";
+import { deliverableGatewayTransports, resolveDbRecipients, resolveTemplateBody } from "../lib/cas-delivery-config";
+import { renderTemplate } from "../lib/cas-message-template";
 import {
   casDeviceFrom,
   findDeviceCredentialByToken,
@@ -109,7 +112,6 @@ function deviceAttribution(res: Response): string {
   const device = casDeviceFrom(res);
   return `enrolled device "${device.label}" (${device.id})`;
 }
-
 
 export const DELIVERY_LEASE_MS = 30_000;
 // A delivery that keeps being rejected after this many attempts is abandoned
@@ -317,6 +319,7 @@ router.get("/cas/outbox/status", async (_req, res, next) => {
 
 /**
  * The handset endpoints (device-pending, device-receipt) enumerate and
+ * mutate delivery state, so they require the shared device token. In device
  * mutate delivery state. An enrolled handset presents its own revocable
  * device credential as `Authorization: Bearer` — strictly: when a Bearer
  * credential is presented it must be valid and non-revoked, so a revoked
@@ -390,6 +393,21 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
       )
       .orderBy(asc(casOutbox.createdAt))
       .limit(20);
+    // The console-managed SMS responder circle and message template, so a
+    // re-queued send goes to the current circle with the current wording.
+    // Null recipients mean the circle was never seeded (legacy: the
+    // handset's own list stays authoritative); an empty array means a
+    // managed circle with no enabled SMS numbers — the handset texts nobody
+    // and journals why, instead of falling back to stale local numbers.
+    const consoleRecipients = await resolveDbRecipients("SMS");
+    const smsTemplate = await resolveTemplateBody("SMS");
+    const incidentIds = [...new Set(items.map((item) => item.incidentId))];
+    const incidents = incidentIds.length > 0
+      ? await db.select().from(casIncidents).where(
+          sql`${casIncidents.id} IN (${sql.join(incidentIds.map((incidentId) => sql`${incidentId}`), sql`, `)})`,
+        )
+      : [];
+    const incidentById = new Map(incidents.map((incident) => [incident.id, incident]));
     return res.json({
       items: items.map((item) => ({
         id: item.id,
@@ -401,10 +419,37 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
         // the batch and echo it in the receipt. Null while the item is in
         // its initial cycle (never re-queued).
         cycleToken: item.deviceCycleToken,
+        recipients: item.transport === "SMS" ? consoleRecipients : undefined,
+        // The SMS template rendered for this incident (incident id, time,
+        // and the stored location fix), so console wording edits apply to
+        // device-direct sends too.
+        message: item.transport === "SMS"
+          ? renderTemplate(smsTemplate, {
+              incident_id: item.incidentId,
+              priority: item.priority,
+              time: `${item.createdAt.toISOString().replace("T", " ").slice(0, 16)}Z`,
+              location: buildLocationClause(incidentLocation(incidentById.get(item.incidentId))),
+            })
+          : undefined,
       })),
     });
   } catch (error) { return next(error); }
 });
+
+/** The incident's stored fix as a template location, when one was captured. */
+function incidentLocation(incident: typeof casIncidents.$inferSelect | undefined): CasIncidentLocation | null {
+  if (!incident) return null;
+  const { locationLatitude, locationLongitude, locationAccuracyM, locationCapturedAt } = incident;
+  if (locationLatitude == null || locationLongitude == null || locationAccuracyM == null || locationCapturedAt == null) {
+    return null;
+  }
+  return {
+    latitude: locationLatitude,
+    longitude: locationLongitude,
+    accuracyM: locationAccuracyM,
+    capturedAt: locationCapturedAt,
+  };
+}
 
 const deviceReceiptSchema = z.object({
   // WHATSAPP stays in the enum so APKs from the retired tap-to-send build
@@ -707,6 +752,18 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
     const deviceTransports: DeviceChannel[] = requested === undefined
       ? enabledDevice
       : enabledDevice.filter((channel) => requested.includes(channel));
+    // The console-managed responder circle also governs device-direct SMS:
+    // null while the responders table was never seeded (the handset's own
+    // list stays authoritative — the pre-console behavior); otherwise the
+    // definitive list, possibly empty. A managed circle with no enabled SMS
+    // numbers cannot deliver, so SMS is not queued (same no-dead-letter rule
+    // as gateway channels) and the handset is told below to text nobody.
+    const smsCircle = deviceTransports.includes("SMS") ? await resolveDbRecipients("SMS") : null;
+    const smsUndeliverable = smsCircle !== null && smsCircle.length === 0;
+    const deliverableDevice = smsUndeliverable
+      ? deviceTransports.filter((transport) => transport !== "SMS")
+      : deviceTransports;
+    const smsTemplate = deviceTransports.includes("SMS") ? await resolveTemplateBody("SMS") : null;
     const result = await db.transaction(async (tx) => {
       // Serialize the active-incident check with its insert/update. A regular
       // transaction does not prevent two READ COMMITTED transactions from
@@ -762,17 +819,22 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
       await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now, ...locationColumns });
       // Queue one outbox item per channel that can actually deliver this
       // alert: the handset's requested∩enabled device channels, plus every
-      // provider-configured gateway channel that is not device-delivered.
-      // A channel nobody can deliver must not create a row that can only
-      // dead-letter — that noise trains responders to ignore the alarm.
+      // deliverable gateway channel that is not device-delivered. Gateway
+      // deliverability comes from the console-managed responder circle
+      // (provider endpoint configured AND at least one enabled responder on
+      // the channel; the env recipient lists are the fallback when the
+      // responders table is empty). A channel nobody can deliver must not
+      // create a row that can only dead-letter — that noise trains responders
+      // to ignore the alarm.
+      const gatewayTransports = await deliverableGatewayTransports();
       const transports: string[] = [
-        ...deviceTransports,
-        ...configuredProviderTransports().filter(
+        ...deliverableDevice,
+        ...gatewayTransports.filter(
           (transport) => !(enabledDevice as string[]).includes(transport),
         ),
       ];
       await tx.insert(casIncidentEvents).values([
-        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: `Durable trigger received from ${deviceAttribution(res)}; incident identity committed.`, createdAt: now },
+        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: `Durable trigger received and incident identity committed. Triggered by ${deviceAttribution(res)}.`, createdAt: now },
         { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: transports.length > 0 ? `${transports.join(", ")} outbox items queued independently.` : "No outbox items queued: no deliverable channel was requested/enabled on the handset or provider-configured on the console.", createdAt: now },
       ]);
       if (transports.length > 0) {
@@ -787,7 +849,31 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
           })),
         );
       }
-      return { id, reused: false };
+      return {
+        id,
+        reused: false,
+        // Tells the handset exactly who to text and what to say for this
+        // alert: the console circle (null = unseeded, the handset's own list
+        // stays authoritative; empty = a managed circle with no enabled SMS
+        // numbers — text nobody) and the current SMS template rendered for
+        // this incident. Absent when the handset declared no SMS channel.
+        deviceSms: smsTemplate !== null
+          ? {
+              recipients: smsCircle,
+              message: renderTemplate(smsTemplate, {
+                incident_id: id,
+                priority: "P1",
+                time: `${now.toISOString().replace("T", " ").slice(0, 16)}Z`,
+                location: buildLocationClause(location ? {
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  accuracyM: location.accuracyM,
+                  capturedAt: new Date(location.capturedAt),
+                } : null, now),
+              }),
+            }
+          : undefined,
+      };
     });
     return res.status(result.reused ? 200 : 201).json(result);
   } catch (error) { return next(error); }

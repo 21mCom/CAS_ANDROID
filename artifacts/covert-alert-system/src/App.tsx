@@ -10,6 +10,8 @@ import Overview from '@/pages/overview';
 import Gates from '@/pages/gates';
 import Incidents from '@/pages/incidents';
 import Setup from '@/pages/setup';
+import Responders from '@/pages/responders';
+import Messages from '@/pages/messages';
 import {
   Route,
   Switch,
@@ -29,6 +31,8 @@ function RoutedApp() {
           <Route path="/gates" component={Gates} />
           <Route path="/incidents" component={Incidents} />
           <Route path="/setup" component={Setup} />
+          <Route path="/responders" component={Responders} />
+          <Route path="/messages" component={Messages} />
           <Route component={NotFound} />
         </Switch>
       </RoutedErrorBoundary>

@@ -102,13 +102,24 @@ object DeviceSmsSender {
     }
 
     /**
-     * Sends the alert SMS to every configured responder. Returns a short
-     * human-readable start outcome for the journal; per-recipient delivery
-     * results land in SMS_PART_RESULT / SMS_SEND_OUTCOME events.
+     * Sends the alert SMS to every configured responder. [respondersOverride]
+     * is the console-managed circle handed down with the trigger/device-
+     * pending answer: when non-null it is definitive (console edits and
+     * disables apply immediately); when null — offline send, or a console
+     * whose circle was never configured — the handset's own list is the
+     * explicit fallback. Returns a short human-readable start outcome for the
+     * journal; per-recipient delivery results land in SMS_PART_RESULT /
+     * SMS_SEND_OUTCOME events.
      */
-    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null): String {
-        val responders = TestStore.smsResponders(context)
-        if (responders.isEmpty()) return "no responder numbers configured"
+    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null, respondersOverride: List<String>? = null): String {
+        val responders = respondersOverride ?: TestStore.smsResponders(context)
+        if (responders.isEmpty()) {
+            return if (respondersOverride != null) {
+                "not sent: the console responder circle has no enabled SMS numbers"
+            } else {
+                "no responder numbers configured"
+            }
+        }
         if (context.checkSelfPermission(android.Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
             return "SEND_SMS permission not granted"
         }
@@ -236,11 +247,24 @@ object DeviceSmsSender {
                 deferred += 1
                 continue
             }
+            if (item.recipients != null && item.recipients.isEmpty()) {
+                // Managed circle with no enabled SMS numbers: text nobody.
+                // Falling back to the handset's local list would keep
+                // texting responders the operator disabled in the console.
+                TestStore.record(context, "REQUEUE_SEND_SKIPPED", mapOf(
+                    "incidentId" to item.incidentId,
+                    "reason" to "console responder circle has no enabled SMS numbers; not texting the handset's local list",
+                ))
+                continue
+            }
             pickedUp += 1
             // The cycle token is persisted with the batch and echoed in the
             // receipt, so the console can reject stale receipts of the
             // superseded batch instead of letting them mark the item SENT.
-            sendAlert(context, item.incidentId, alertBody(item.incidentId), item.cycleToken)
+            // Console circle and wording apply; both are null for older
+            // consoles or an unseeded circle, where the local list and
+            // wording stay authoritative.
+            sendAlert(context, item.incidentId, item.message ?: alertBody(item.incidentId), item.cycleToken, item.recipients)
         }
         TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf(
             "outcome" to "OK",
@@ -258,6 +282,15 @@ object DeviceSmsSender {
         val transport: String,
         /** Current delivery-cycle token; null while the item is in its initial cycle or on older consoles. */
         val cycleToken: String?,
+        /**
+         * Console-managed SMS circle: null when the field is absent (older
+         * console) or the circle was never configured — the handset's own
+         * list stays authoritative; otherwise the definitive list, possibly
+         * empty (text nobody).
+         */
+        val recipients: List<String>? = null,
+        /** Console SMS template rendered for this incident; null on older consoles. */
+        val message: String? = null,
     )
 
     /**
@@ -272,8 +305,22 @@ object DeviceSmsSender {
             TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf("outcome" to "SKIPPED", "reason" to "no alert server URL configured"))
             return null
         }
+        val enrolled = TestStore.enrolledDeviceToken(context)
+        if (enrolled.isBlank() && TestStore.deviceCredentialProvisioned(context)) {
+            // This handset enrolled once, and its enrolled credential was
+            // then rejected (revoked or unknown) and dropped. NEVER fall back
+            // to the shared device token here: a revoked phone must not
+            // resume mutating delivery state under the legacy credential.
+            // Regaining access is the trusted operator action of re-entering
+            // the enrollment credential.
+            TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf(
+                "outcome" to "FAILED",
+                "reason" to "device credential was rejected (revoked or unknown); re-enter the enrollment credential to re-enroll — the shared device token is never used as a fallback once enrolled",
+            ))
+            return null
+        }
         val token = TestStore.deviceToken(context)
-        if (token.isBlank()) {
+        if (enrolled.isBlank() && token.isBlank()) {
             TestStore.record(context, "REQUEUE_CHECK_OUTCOME", mapOf("outcome" to "FAILED", "reason" to "no device access token configured; the console refuses pickup without it"))
             return null
         }
@@ -282,13 +329,15 @@ object DeviceSmsSender {
             val connection = (URL("$trimmed/api/cas/outbox/device-pending").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 10_000
-                setRequestProperty("X-CAS-Device-Token", token)
-                // Once enrolled, the handset also presents its own revocable
-                // device credential; the console then binds this call to it
-                // (strictly — a revoked handset cannot fall back to the
-                // shared device token above).
-                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
-                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
+                if (enrolled.isNotBlank()) {
+                    // Provisioned handset: only its own revocable credential.
+                    // The console authenticates it strictly — a revoked token
+                    // gets a 401 even if a valid shared token rode along, so
+                    // sending both would add nothing.
+                    setRequestProperty("Authorization", "Bearer $enrolled")
+                } else {
+                    setRequestProperty("X-CAS-Device-Token", token)
+                }
             }
             try {
                 val code = connection.responseCode
@@ -313,10 +362,18 @@ object DeviceSmsSender {
             val item = items.optJSONObject(index) ?: continue
             val incidentId = item.optString("incidentId")
             if (incidentId.isBlank()) continue
+            val recipients = if (item.has("recipients") && !item.isNull("recipients")) {
+                val numbers = item.optJSONArray("recipients")
+                (0 until (numbers?.length() ?: 0)).mapNotNull { numbers?.optString(it)?.takeIf(String::isNotBlank) }
+            } else {
+                null
+            }
             pending.add(PendingItem(
                 incidentId = incidentId,
                 transport = item.optString("transport", "SMS"),
                 cycleToken = item.optString("cycleToken").takeIf { it.isNotBlank() },
+                recipients = recipients,
+                message = item.optString("message").takeIf { it.isNotBlank() },
             ))
         }
         return pending
@@ -501,8 +558,21 @@ object DeviceSmsSender {
             ))
             return false
         }
+        val enrolled = TestStore.enrolledDeviceToken(context)
+        if (enrolled.isBlank() && TestStore.deviceCredentialProvisioned(context)) {
+            // Same rule as pickup: a provisioned handset whose enrolled
+            // credential was rejected must not resume under the shared device
+            // token. The receipt stays queued; after the operator re-enrolls
+            // the next retry lands it.
+            TestStore.record(context, "${channel}_RECEIPT_OUTCOME", mapOf(
+                "incidentId" to receipt.incidentId,
+                "outcome" to "SKIPPED",
+                "reason" to "device credential was rejected (revoked or unknown); receipt kept for retry after re-enrollment — the shared device token is never used as a fallback once enrolled",
+            ))
+            return false
+        }
         val token = TestStore.deviceToken(context)
-        if (token.isBlank()) {
+        if (enrolled.isBlank() && token.isBlank()) {
             // The console refuses unauthenticated receipts; the item stays
             // QUEUED until a token is configured and a later retry lands.
             TestStore.record(context, "${channel}_RECEIPT_OUTCOME", mapOf(
@@ -520,13 +590,15 @@ object DeviceSmsSender {
                 readTimeout = 10_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("X-CAS-Device-Token", token)
-                // Same binding as device-pending: once enrolled, the receipt
-                // is attributable to (and revocable with) this handset's own
-                // device credential, and a revoked handset cannot fall back
-                // to the shared device token.
-                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
-                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
+                if (enrolled.isNotBlank()) {
+                    // Provisioned handset: only its own revocable credential —
+                    // the receipt is attributable to (and revocable with) this
+                    // device, and a revoked phone cannot degrade to the
+                    // shared token.
+                    setRequestProperty("Authorization", "Bearer $enrolled")
+                } else {
+                    setRequestProperty("X-CAS-Device-Token", token)
+                }
             }
             try {
                 connection.outputStream.use { it.write(receipt.toPayload().toString().toByteArray(Charsets.UTF_8)) }
