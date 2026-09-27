@@ -1,0 +1,7 @@
+{
+  "jdk": {
+    "minimumMajor": 17
+  },
+  "androidSdk": {
+    "apiLevel": 35,
+    "platform": "android-35",

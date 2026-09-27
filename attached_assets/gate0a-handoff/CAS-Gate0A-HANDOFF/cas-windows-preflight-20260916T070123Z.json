@@ -1,0 +1,213 @@
+﻿{
+    "schemaVersion":  "cas-windows-preflight-v1",
+    "generatedAtUtc":  "2026-09-16T07:01:23.2797805Z",
+    "overallStatus":  "PASS",
+    "targetMode":  "physical",
+    "host":  {
+                 "computerName":  "CORDINATOR",
+                 "operatingSystem":  "Windows_NT",
+                 "powershellVersion":  "5.1.26100.9444",
+                 "powershellEdition":  "Desktop"
+             },
+    "contract":  {
+                     "java":  "JDK 17 or newer",
+                     "androidSdk":  "Android SDK with API 35",
+                     "platformTools":  "Android platform-tools with adb",
+                     "buildTools":  "Android build-tools 35.0.0 or newer",
+                     "gradle":  "Gradle 8.9 or newer",
+                     "environment":  "JAVA_HOME plus ANDROID_SDK_ROOT or ANDROID_HOME; Java and platform-tools on PATH"
+                 },
+    "checks":  [
+                   {
+                       "id":  "environment.android-sdk",
+                       "name":  "Android SDK environment variables",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "Using C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk",
+                       "expected":  "ANDROID_SDK_ROOT or ANDROID_HOME points to the Android SDK folder.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "environment.java-home",
+                       "name":  "JAVA_HOME",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Programs\\Eclipse Adoptium\\jdk-25.0.4.101-hotspot",
+                       "expected":  "JAVA_HOME points to a JDK 17 or newer installation.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "java.command",
+                       "name":  "Java command",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "Java 25.0.4.1 (major 25) at C:\\Users\\CAS_DEV\\AppData\\Local\\Programs\\Eclipse Adoptium\\jdk-25.0.4.101-hotspot\\bin\\java.exe",
+                       "expected":  "JDK 17 or newer.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "path.java",
+                       "name":  "Java PATH entry",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Programs\\Eclipse Adoptium\\jdk-25.0.4.101-hotspot\\bin",
+                       "expected":  "JAVA_HOME\\bin is present in PATH.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.sdk-folder",
+                       "name":  "Android SDK folder",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk",
+                       "expected":  "An existing Android SDK folder.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.platform-tools",
+                       "name":  "Android platform-tools",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+                       "expected":  "platform-tools\\adb.exe exists in the selected SDK.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "path.platform-tools",
+                       "name":  "platform-tools PATH entry",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk\\platform-tools",
+                       "expected":  "The SDK platform-tools folder is present in PATH.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "adb.command",
+                       "name":  "ADB command",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "Android Debug Bridge version 1.0.41",
+                       "expected":  "ADB responds to adb version.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.build-tools",
+                       "name":  "Android build-tools",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "36.0.0",
+                       "expected":  "Build-tools 35.0.0 or newer.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.api-35",
+                       "name":  "Android API 35 platform",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk\\platforms\\android-35\\android.jar",
+                       "expected":  "platforms\\android-35\\android.jar exists.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "git-bash.command",
+                       "name":  "Git Bash command",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "C:\\Program Files\\Git\\bin\\bash.exe",
+                       "expected":  "Git Bash is available for the guarded Pixel 11 Gate 0A runner.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "gradle.command",
+                       "name":  "Gradle command",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "Gradle 9.7.0 at C:\\Gradle\\gradle-9.7.0\\bin\\gradle.bat",
+                       "expected":  "Gradle 8.9 or newer.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.command-line-tools",
+                       "name":  "Android command-line tools",
+                       "status":  "PASS",
+                       "required":  false,
+                       "observed":  "C:\\Users\\CAS_DEV\\AppData\\Local\\Android\\Sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat",
+                       "expected":  "sdkmanager.bat is available for optional, confirmed SDK preparation.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "device.physical",
+                       "name":  "Physical-device ADB status",
+                       "status":  "PASS",
+                       "required":  true,
+                       "observed":  "Authorized physical device detected: 67270DLKY00E9K         device product:cubs model:Pixel_11 device:cubs transport_id:9",
+                       "expected":  "An authorized physical device appears as device in adb devices -l.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "android.emulator",
+                       "name":  "Android Emulator tool",
+                       "status":  "SKIPPED",
+                       "required":  false,
+                       "observed":  "Skipped because target mode is physical.",
+                       "expected":  "Not evaluated.",
+                       "nextSteps":  [
+
+                                     ]
+                   },
+                   {
+                       "id":  "device.emulator",
+                       "name":  "Emulator ADB status",
+                       "status":  "SKIPPED",
+                       "required":  false,
+                       "observed":  "Skipped because target mode is physical.",
+                       "expected":  "Not evaluated.",
+                       "nextSteps":  [
+
+                                     ]
+                   }
+               ],
+    "actions":  [
+
+                ],
+    "safety":  {
+                   "deviceActionsPerformed":  false,
+                   "apkInstalled":  false,
+                   "deviceOwnerChanged":  false,
+                   "deviceRebooted":  false,
+                   "messagesSent":  false,
+                   "evidenceCaptured":  false
+               },
+    "attachments":  [
+                        "cas-windows-preflight-20260916T070123Z.json",
+                        "cas-windows-preflight-20260916T070123Z.md"
+                    ]
+}

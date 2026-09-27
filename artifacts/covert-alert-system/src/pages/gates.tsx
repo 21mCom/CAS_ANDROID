@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, CircleAlert, Download, FileJson, RotateCcw, Save } from 'lucide-react';
 import { Link } from 'wouter';
-import { useFieldTest, type GateStatus, type ObservationResult } from '@/hooks/use-field-test';
+import { Gate0AImportError, useFieldTest, type Gate0AImportIssue, type GateStatus, type ObservationResult } from '@/hooks/use-field-test';
 import { EvidenceLabel, SectionKicker, StatusPill } from '@/components/field-ui';
+import { assertGate0aReportSize } from '@/lib/gate0a-import';
 
 type GateFilter = 'all' | 'needs-work' | 'verified';
 
@@ -13,6 +14,7 @@ export default function Gates() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importIssues, setImportIssues] = useState<Gate0AImportIssue[]>([]);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const filtered = useMemo(() => gates.filter((gate) => filter === 'all' || (filter === 'verified' ? gate.status === 'verified' : gate.status === 'partial' || gate.status === 'blocked')), [filter, gates]);
 
@@ -31,9 +33,10 @@ export default function Gates() {
     if (!importFile) return;
     setImporting(true);
     setImportError(null);
+    setImportIssues([]);
     setImportMessage(null);
     try {
-      if (importFile.size > 200_000) throw new Error('The report is too large to import safely.');
+      assertGate0aReportSize(importFile.size);
       const summary = await importGate0AReport(await importFile.text());
       const evidenceLabel = summary.evidenceClass === 'physical-device-observation'
         ? 'physical Pixel evidence'
@@ -44,6 +47,7 @@ export default function Gates() {
       setImportFile(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Gate 0A report was rejected.');
+      setImportIssues(error instanceof Gate0AImportError ? error.issues : []);
     } finally {
       setImporting(false);
     }
@@ -71,10 +75,10 @@ export default function Gates() {
            <div className="border border-[#e8c880] bg-[#fff8e7] px-3 py-2 text-[11px] font-bold leading-4 text-[#765013]">Imported reports stay INCONCLUSIVE.<br />They never create a Pass or GO.</div>
          </div>
          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-           <label className="inline-flex cursor-pointer items-center justify-center gap-2 border border-[#236047] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#236047] hover:bg-[#e1efe5]"><FileJson size={14} />{importFile ? importFile.name : 'Choose JSON report'}<input type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { setImportFile(event.target.files?.[0] || null); setImportError(null); setImportMessage(null); }} data-testid="input-gate0a-report" /></label>
+           <label className="inline-flex cursor-pointer items-center justify-center gap-2 border border-[#236047] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#236047] hover:bg-[#e1efe5]"><FileJson size={14} />{importFile ? importFile.name : 'Choose JSON report'}<input type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { setImportFile(event.target.files?.[0] || null); setImportError(null); setImportIssues([]); setImportMessage(null); }} data-testid="input-gate0a-report" /></label>
            <button onClick={() => void handleGate0AImport()} disabled={!importFile || importing} className="inline-flex items-center justify-center gap-2 border border-[#203c49] bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-import-gate0a-report">{importing ? 'Validating report…' : 'Validate & import report'}<ArrowRight size={14} /></button>
          </div>
-         {importError && <p className="mt-3 border-l-2 border-[#b95042] bg-[#f8e0db] px-3 py-2 text-xs font-bold leading-5 text-[#914136]" role="alert" data-testid="text-gate0a-import-error">{importError}</p>}
+         {importError && <div className="mt-3 border-l-2 border-[#b95042] bg-[#f8e0db] px-3 py-2" role="alert" data-testid="text-gate0a-import-error"><p className="text-xs font-bold leading-5 text-[#914136]">{importError}</p>{importIssues.length > 0 && <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto border-t border-[#e4b6ac] pt-2" data-testid="list-gate0a-import-issues">{importIssues.map((issue, index) => <li key={`${issue.path || 'report'}-${index}`} className="flex items-start gap-2 text-[11px] font-bold leading-4 text-[#914136]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#b95042]" /><span className="font-mono-ui">{issue.path ? `${issue.path}: ` : ''}{issue.message ?? 'Invalid value'}</span></li>)}</ul>}</div>}
          {importMessage && <p className="mt-3 border-l-2 border-[#236047] bg-[#e1efe5] px-3 py-2 text-xs font-bold leading-5 text-[#236047]" role="status" data-testid="text-gate0a-import-success">{importMessage}</p>}
        </section>
       <section className="fade-up fade-up-1 flex flex-col gap-4 border-b border-[#d7d8d0] py-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(['all', 'needs-work', 'verified'] as GateFilter[]).map((item) => <button key={item} onClick={() => setFilter(item)} className={`border px-3 py-2 text-xs font-bold transition-colors ${filter === item ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] bg-[#fbfbf7] text-[#687271] hover:border-[#203c49] hover:text-[#203c49]'}`} data-testid={`button-filter-${item}`}>{item === 'all' ? 'All gates' : item === 'needs-work' ? 'Needs work' : 'Verified'}</button>)}</div><button onClick={resetDemo} className="inline-flex items-center gap-2 self-start text-xs font-bold text-[#687271] hover:text-[#203c49]" data-testid="button-reset-gates"><RotateCcw size={14} /> Reset sample statuses</button></section>

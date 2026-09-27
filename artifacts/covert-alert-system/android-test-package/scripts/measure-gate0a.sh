@@ -12,11 +12,18 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PACKAGE_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 readonly PACKAGE="com.covertalert.pixeltest"
 readonly PROXY_ACTION="$PACKAGE.action.PROXY_TRIGGER"
-readonly PINNED_AVD="CAS_Pixel_8a_API_35"
-readonly EMULATOR_API="35"
+readonly TOOL_REQUIREMENTS_JSON="$PACKAGE_ROOT/tool-requirements.json"
+# The pinned device contract (PINNED_AVD, EMULATOR_API, MIN_PHYSICAL_API) is
+# derived from tool-requirements.json by load_pinned_device_constants so these
+# checks move with the declared Android SDK platform instead of drifting from
+# it. PHYSICAL_MODEL is a deliberate separate pin: the approved observation
+# handset is a hardware choice, not an SDK platform declaration.
 readonly PHYSICAL_MODEL="Pixel 11"
-readonly MIN_PHYSICAL_API="35"
 readonly DEFAULT_REPEAT_COUNT="200"
+
+PINNED_AVD=""
+EMULATOR_API=""
+MIN_PHYSICAL_API=""
 
 TARGET="auto"
 SERIAL=""
@@ -62,6 +69,8 @@ Build/install options:
 Device options:
   --serial SERIAL                 Select one authorized adb device.
   --target auto|emulator|physical Require the pinned emulator or approved Pixel 11.
+                                  The pinned AVD name and API level derive from
+                                  tool-requirements.json (currently CAS_Pixel_8a_API_<apiLevel>).
   --confirm-device TEXT           Confirm the displayed serial, model/device, or pinned AVD identity.
   --non-interactive               Do not wait for lock-screen/observer prompts; record those checks inconclusive.
 
@@ -76,9 +85,10 @@ Run options:
   --help                          Show this help.
 
 Examples:
-  # Safe emulator rehearsal after the target has been confirmed:
+  # Safe emulator rehearsal after the target has been confirmed. The pinned AVD
+  # name tracks the API level declared in tool-requirements.json:
   scripts/measure-gate0a.sh --target emulator --serial emulator-5554 \
-    --confirm-device CAS_Pixel_8a_API_35 --confirm-destructive
+    --confirm-device CAS_Pixel_8a_API_<apiLevel> --confirm-destructive
 
   # Build, install, and run on a confirmed test Pixel. Installation is explicit:
   scripts/measure-gate0a.sh --build --install --serial SERIAL \
@@ -143,6 +153,44 @@ write_env() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Required command is missing: $1"
+}
+
+load_pinned_device_constants() {
+    # Derive the pinned device contract from tool-requirements.json (the same
+    # declaration the PowerShell entry points, the Gradle build, and CI read) so
+    # the pinned-device checks move with the declared Android SDK platform
+    # instead of drifting from it. A missing or inconsistent declaration blocks
+    # the harness explicitly (exit 2) rather than silently defaulting.
+    #
+    # Parse with sed, not python3: CI deliberately shadows python3 with a broken
+    # shim to prove a failed report write cannot look successful, and the
+    # pinned-device derivation must not depend on the interpreter that test
+    # breaks. The declaration file is small and kit-controlled, so strict
+    # single-line extraction plus a consistency check is sufficient.
+    #
+    # The validation rules below mirror Get-ToolRequirements in
+    # cas-tool-requirements.ps1 (the shared parser every Windows entry point
+    # dot-sources): both sides must accept and reject the same declarations,
+    # or a kit could pass on the packaging workstation and fail in the field.
+    # scripts/check-tool-requirements-parity.sh proves the two validators agree
+    # on a shared fixture set; keep this block and that parser in lockstep.
+    [[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
+        die "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON; restore the complete, unmodified test kit before running this harness."
+    local declared_api declared_platform_api declared_jdk_major declared_build_tools
+    declared_api="$(sed -nE 's/^[[:space:]]*"apiLevel"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    declared_platform_api="$(sed -nE 's/^[[:space:]]*"platform"[[:space:]]*:[[:space:]]*"android-([0-9]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    declared_jdk_major="$(sed -nE 's/^[[:space:]]*"minimumMajor"[[:space:]]*:[[:space:]]*([0-9]+)[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    declared_build_tools="$(sed -nE 's/^[[:space:]]*"buildToolsMinimum"[[:space:]]*:[[:space:]]*"([^"]+)"[[:space:]]*,?[[:space:]]*$/\1/p' "$TOOL_REQUIREMENTS_JSON")"
+    [[ "$declared_jdk_major" =~ ^[0-9]+$ && "$declared_jdk_major" -ge 1 ]] ||
+        die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (jdk.minimumMajor must be a positive integer); restore the complete, unmodified test kit before running this harness."
+    [[ "$declared_api" =~ ^[0-9]+$ && "$declared_platform_api" =~ ^[0-9]+$ && "$declared_api" -ge 1 && "$declared_api" == "$declared_platform_api" ]] ||
+        die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (androidSdk.apiLevel and androidSdk.platform must be consistent); restore the complete, unmodified test kit before running this harness."
+    [[ "$declared_build_tools" =~ ^[0-9]+(\.[0-9]+)*$ ]] ||
+        die "tool-requirements.json is invalid at $TOOL_REQUIREMENTS_JSON (androidSdk.buildToolsMinimum must be a dotted version); restore the complete, unmodified test kit before running this harness."
+    PINNED_AVD="CAS_Pixel_8a_API_${declared_api}"
+    EMULATOR_API="$declared_api"
+    MIN_PHYSICAL_API="$declared_api"
+    readonly PINNED_AVD EMULATOR_API MIN_PHYSICAL_API
 }
 
 adb_cmd() {
@@ -419,6 +467,13 @@ install_or_identify_package() {
     printf '%s\n' "$package_path" > "$RUN_DIR/package-path.txt"
     write_env "package" "$PACKAGE"
     write_env "packagePath" "$package_path"
+    # Report the actual INTERNET grant state from the installed package instead of
+    # assuming it: MVP builds declare INTERNET for the operator-triggered alert POST.
+    if grep -q 'android.permission.INTERNET: granted=true' "$RUN_DIR/package-dump.txt"; then
+        write_env "internetGranted" "true"
+    else
+        write_env "internetGranted" "false"
+    fi
     record_event "package-identification" "pass" "Disposable test package identified" \
         "package=$PACKAGE" "packagePath=$package_path" "packageDump=$RUN_DIR/package-dump.txt"
 }
@@ -618,13 +673,14 @@ write_report() {
     to_native() {
         if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
     }
-    python3 - "$(to_native "$report")" "$(to_native "$EVENTS_FILE")" "$(to_native "$ENV_FILE")" "$(to_native "$RUN_DIR")" "$STARTED_AT_UTC" "$STARTED_AT_MS" "$FINAL_STATUS" <<'PY'
+    python3 - "$(to_native "$report")" "$(to_native "$EVENTS_FILE")" "$(to_native "$ENV_FILE")" "$(to_native "$RUN_DIR")" "$STARTED_AT_UTC" "$STARTED_AT_MS" "$FINAL_STATUS" "$PINNED_AVD" "$EMULATOR_API" "$MIN_PHYSICAL_API" <<'PY'
 import json
 import pathlib
 import sys
 from datetime import datetime, timezone
 
-report_path, events_path, env_path, run_dir, started_utc, started_ms, final_status = sys.argv[1:]
+report_path, events_path, env_path, run_dir, started_utc, started_ms, final_status, pinned_avd, emulator_api, min_physical_api = sys.argv[1:]
+min_physical_api_int = int(min_physical_api)
 env = {}
 for line in pathlib.Path(env_path).read_text(encoding="utf-8").splitlines():
     if "\t" in line:
@@ -728,14 +784,14 @@ preflight_checks = [
         "Approved device identity",
         "PASS" if env.get("serial") and env.get("model") and env.get("device") else "BLOCKED",
         f"serial={env.get('serial', 'unknown')}; model={env.get('model', 'unknown')}; device={env.get('device', 'unknown')}",
-        "The operator-confirmed target is the approved Pixel 11, or the pinned Pixel 8a/API 35 emulator.",
+        f"The operator-confirmed target is the approved Pixel 11, or the pinned {pinned_avd} emulator.",
     ),
     check(
         "target.android",
         "Android version and build",
-        "PASS" if env.get("apiLevel") and int(env.get("apiLevel", "0")) >= 35 and env.get("androidRelease") and env.get("buildId") else "BLOCKED",
+        "PASS" if env.get("apiLevel") and int(env.get("apiLevel", "0")) >= min_physical_api_int and env.get("androidRelease") and env.get("buildId") else "BLOCKED",
         f"API {env.get('apiLevel', 'unknown')}; Android {env.get('androidRelease', 'unknown')}; build {env.get('buildId', 'unknown')}",
-        "Pinned emulator API 35, or approved physical Pixel 11 on API 35 or newer, with a readable release and build identifier.",
+        f"Pinned emulator API {emulator_api}, or approved physical Pixel 11 on API {min_physical_api} or newer, with a readable release and build identifier.",
     ),
     check(
         "package.identity",
@@ -817,7 +873,9 @@ report = {
         "android.permission.ACCESS_FINE_LOCATION": False,
         "android.permission.RECORD_AUDIO": False,
         "android.permission.CAMERA": False,
-        "android.permission.INTERNET": False,
+        # Probed from the installed package dump by the run (MVP builds declare
+        # INTERNET); defaults to False for device-free report self-tests.
+        "android.permission.INTERNET": env.get("internetGranted", "false") == "true",
     },
     "shortcut": {
         "pinSupported": False,
@@ -911,7 +969,7 @@ seed_report_self_test() {
     write_env "device" "self-test"
     write_env "product" "self-test"
     write_env "avdName" ""
-    write_env "apiLevel" "35"
+    write_env "apiLevel" "$EMULATOR_API"
     write_env "abiList" "x86_64"
     write_env "androidRelease" "15"
     write_env "buildId" "SELFTEST"
@@ -965,6 +1023,7 @@ finalize() {
 main() {
     parse_args "$@"
     require_command python3
+    load_pinned_device_constants
     initialize_run
     trap finalize EXIT
     if [[ "$REPORT_SELF_TEST" == true ]]; then

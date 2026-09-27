@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // tsx compiles JSX itself; the automatic runtime keeps `React` out of
+    // scope for component render tests (the app build uses Vite's plugin).
+    "jsx": "react-jsx"
+  }
+}

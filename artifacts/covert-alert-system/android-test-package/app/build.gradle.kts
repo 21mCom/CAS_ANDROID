@@ -1,18 +1,29 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
+// tool-requirements.json at the package root is the single source of truth for
+// the Android SDK platform a workstation and CI must provide; compile against
+// exactly that declared platform.
+val toolRequirements = JsonSlurper()
+    .parseText(rootProject.projectDir.resolve("tool-requirements.json").readText()) as Map<*, *>
+val declaredApiLevel = ((toolRequirements["androidSdk"] as Map<*, *>)["apiLevel"] as Number).toInt()
+
 android {
     namespace = "com.covertalert.pixeltest"
-    compileSdk = 35
+    compileSdk = declaredApiLevel
 
     defaultConfig {
         applicationId = "com.covertalert.pixeltest"
+        // minSdk/targetSdk pin the approved-device baseline (Pixel 11, API 35+);
+        // they are a product contract, not a workstation prerequisite.
         minSdk = 35
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-gate0a"
+        versionCode = 3
+        versionName = "0.4.0-mvp"
     }
 
     buildTypes {

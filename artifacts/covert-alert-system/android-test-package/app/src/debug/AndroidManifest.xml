@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest additions.
+
+  SmsFlowActivity drives the device-direct SMS flow headlessly for the
+  emulator CI job. It accepts caller-controlled responder numbers and its
+  requeue mode reuses the stored device credential, so it must never be
+  reachable from another app: android:exported="false" confines it to
+  `adb shell am start -n` as root (on API 35 the plain shell user is denied
+  by the exported check; `adb root` first — the google_apis emulator image
+  is rootable), and living in the debug source set keeps it out of release
+  builds entirely.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".SmsFlowActivity"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false"
+            android:theme="@style/Theme.CasPixelTest.Proxy" />
+    </application>
+</manifest>

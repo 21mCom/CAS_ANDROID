@@ -40,7 +40,9 @@ paths:
     post:
       operationId: recordCasTestIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201":
           description: Test incident recorded
           content:
@@ -51,12 +53,14 @@ paths:
       operationId: importCasGate0aReport
       tags: [cas]
       summary: Validate and import a native Gate 0A report
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Gate0aReport" }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200":
           description: Report accepted as an inconclusive physical observation
           content:
@@ -67,18 +71,22 @@ paths:
     post:
       operationId: bootstrapCasReadiness
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
             schema: { type: object, required: [gates, setup], properties: { gates: { type: array, items: { type: object, additionalProperties: true } }, setup: { type: array, items: { type: object, additionalProperties: true } } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201": { description: Readiness seeded }
   /cas/incidents/trigger:
     post:
       operationId: triggerCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "201":
           description: Incident created
           content:
@@ -108,24 +116,63 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /cas/outbox/{id}/requeue:
+    post:
+      operationId: requeueCasOutboxItem
+      tags: [cas]
+      summary: Re-queue an abandoned (DEAD_LETTER) delivery
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
+        "200": { description: Delivery re-queued }
+        "400": { description: Invalid or unsafe re-queue note }
+        "404": { description: Outbox item not found }
+        "409": { description: Only a DEAD_LETTER delivery can be re-queued }
+  /cas/outbox/status:
+    get:
+      operationId: getCasOutboxStatus
+      tags: [cas]
+      summary: Read outbox pipeline health
+      description: Outbox counts by state plus the delivery worker heartbeat (interval, batch size, last tick, last error) so responders can spot a stalled or dead-lettering pipeline without server logs.
+      responses:
+        "200":
+          description: Pipeline counts and worker heartbeat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CasOutboxStatus"
   /cas/incidents/{id}/ack:
     post:
       operationId: acknowledgeCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Acknowledged }
   /cas/incidents/{id}/resolve:
     post:
       operationId: resolveCasIncident
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Resolved }
   /cas/setup/{id}:
     patch:
       operationId: updateCasSetup
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         required: true
@@ -133,11 +180,13 @@ paths:
           application/json:
             schema: { type: object, required: [complete], properties: { complete: { type: boolean } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Updated }
   /cas/gates/{id}:
     patch:
       operationId: updateCasGate
       tags: [cas]
+      security: [{ bearerAuth: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         required: true
@@ -145,8 +194,14 @@ paths:
           application/json:
             schema: { type: object, required: [status], properties: { status: { type: string } } }
       responses:
+        "401": { description: "Missing or invalid alert credential (Authorization: Bearer)" }
         "200": { description: Updated }
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Enrolled-device alert credential (server secret CAS_ALERT_TOKEN). Required on every CAS mutation — alert trigger, incident/outbox mutations, readiness bootstrap, test incidents, setup/gate edits, and the Gate 0A import; rejections return 401.
   schemas:
     HealthStatus:
       type: object
@@ -170,6 +225,17 @@ components:
         setup: { type: array, items: { type: object, additionalProperties: true } }
         gates: { type: array, items: { type: object, additionalProperties: true } }
       required: [incidents, activeIncident, setup, gates]
+    CasOutboxStatus:
+      type: object
+      properties:
+        counts:
+          type: object
+          description: Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+          additionalProperties: { type: number }
+        oldestPendingAt: { type: string, format: date-time, nullable: true }
+        lastDeliveryError: { type: object, nullable: true, additionalProperties: true }
+        worker: { type: object, nullable: true, additionalProperties: true }
+      required: [counts, oldestPendingAt, lastDeliveryError, worker]
     Gate0aReport:
       type: object
       additionalProperties: false

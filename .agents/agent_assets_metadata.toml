@@ -98,3 +98,31 @@ mtime_ms = 1789399840005
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/4e27c933-7db9-45eb-8989-df71b7da6859/43bc3375-df49-489f-a99b-6f30e38857d7"
 storage_version_token = "1789399890362711"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "re4NjTnv58EfKwaw6YGao"
+uri = "file://deliverables/CAS-Pixel11-MVP-Handoff.zip"
+type = "unspecified"
+title = "CAS Pixel 11 — MVP Handoff ZIP"
+description = "Hand-off packet for the Windows machine with the Pixel 11 attached: builds and installs the MVP app (real alert trigger to the CAS server), plus step-by-step instructions in MVP-HANDOFF-WINDOWS.md. SHA-256: c773b20fb6c9eacf425c810670d7bc7decc0fa348a3561921d32e02599819e5f"
+logical_id = "72e954c0-e926-4e80-92cc-d3990774c2a0"
+content_hash = "sha256:c773b20fb6c9eacf425c810670d7bc7decc0fa348a3561921d32e02599819e5f"
+size = 155458
+mtime_ms = 1789542866965
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/72e954c0-e926-4e80-92cc-d3990774c2a0/d964b594-078d-4cf6-a5ef-80753b732be5"
+storage_version_token = "1789542888217679"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "wCIgkD-yjg47MSL3Rom-I"
+uri = "file://deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip"
+type = "unspecified"
+title = "CAS Pixel 11 — v0.4.0-mvp Handoff Kit (rebuilt from HEAD)"
+description = "Rebuilt from current source: now includes the debug SMS-flow activity, network security config, and latest AlertSender/manifest. SHA-256: b85f7970054c9cdb45f3cae535628f5ead4235a939fafa71a12100e0578cb6f4 — internal checksums verified after fresh extract."
+logical_id = "faf1dd79-407c-4569-ad3e-aac2b6ed5afc"
+content_hash = "sha256:b85f7970054c9cdb45f3cae535628f5ead4235a939fafa71a12100e0578cb6f4"
+size = 189178
+mtime_ms = 1789621433238
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/faf1dd79-407c-4569-ad3e-aac2b6ed5afc/9d4f61f9-4d8a-4706-8336-c9677f44058c"
+storage_version_token = "1789621465857690"
+content_type = "application/octet-stream"

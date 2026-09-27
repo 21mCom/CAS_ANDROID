@@ -5,7 +5,13 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const artifactRoot = resolve(here, '..');
-const outputPath = resolve(artifactRoot, 'public/gate0a-run-guide.pdf');
+// Optional first argument: alternate output path. The freshness gate
+// (scripts/check-gate0a-guide-freshness.sh) uses it to regenerate to a
+// scratch file and compare rendered content without touching the committed
+// PDF; with no argument the committed guide is regenerated in place.
+const outputPath = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(artifactRoot, 'public/gate0a-run-guide.pdf');
 const htmlPath = resolve('/tmp', 'cas-gate0a-run-guide-readable.html');
 
 const html = `<!doctype html>

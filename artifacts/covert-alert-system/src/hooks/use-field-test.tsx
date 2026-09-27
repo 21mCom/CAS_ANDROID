@@ -49,6 +49,18 @@ export type Gate0AImportSummary = {
   warningCount: number;
 };
 
+export type Gate0AImportIssue = { path?: string; message?: string };
+
+/** Import rejection that carries the server's structured per-field issue list. */
+export class Gate0AImportError extends Error {
+  issues: Gate0AImportIssue[];
+  constructor(message: string, issues: Gate0AImportIssue[]) {
+    super(message);
+    this.name = 'Gate0AImportError';
+    this.issues = issues;
+  }
+}
+
 export type KernelStatus = 'INACTIVE' | 'ACTIVE_UNACKED' | 'ACTIVE_ACKED' | 'RESOLVED';
 
 export type KernelEvent = {
@@ -61,9 +73,12 @@ export type KernelEvent = {
 
 export type OutboxItem = {
   id: string;
-  transport: 'SMS' | 'XMPP';
-  state: 'QUEUED' | 'DISPATCHING' | 'SENT' | 'WAITING';
+  transport: 'SMS' | 'XMPP' | 'WHATSAPP' | 'EMAIL';
+  state: 'QUEUED' | 'PROCESSING' | 'FAILED' | 'SENT' | 'DEAD_LETTER';
   priority: 'P1' | 'P2';
+  attempts: number;
+  lastError: string | null;
+  terminal: boolean;
 };
 
 export type ActiveIncident = {
@@ -94,6 +109,7 @@ type FieldTestContextValue = FieldTestState & {
   triggerKernel: () => void;
   acknowledgeKernel: () => void;
   resolveKernel: () => void;
+  requeueOutboxItem: (id: string, reason?: string) => Promise<void>;
   resetDemo: () => void;
 };
 const initialGates: Gate[] = [
@@ -190,6 +206,7 @@ const initialState: FieldTestState = {
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 
+const ALERT_TOKEN_KEY = 'cas-alert-token';
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
 
@@ -201,7 +218,10 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         if (!response.ok) throw new Error('Unable to load durable state');
         let remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
         if (remote.gates.length === 0 && remote.setup.length === 0) {
-          await fetch('/api/cas/bootstrap', {
+          // Seeding is a credentialed mutation: on a fresh server the
+          // operator is asked for the alert credential before anything is
+          // written, exactly like the incident actions.
+          await casAuthedFetch('/api/cas/bootstrap', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gates: initialGates, setup: initialSetup }),
@@ -227,7 +247,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<FieldTestContextValue>(() => ({
     ...state,
-    updateGateStatus: (id, nextStatus) => { void fetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload); },
+    updateGateStatus: (id, nextStatus) => { void casAuthedFetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload).catch(reportAuthError); },
     recordObservation: (id, observation) => setState((current) => ({
       ...current,
       fieldRun: { ...current.fieldRun, observations: { ...current.fieldRun.observations, [id]: observation }, decision: 'pending' },
@@ -246,17 +266,24 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       if (!report || typeof report !== 'object' || Array.isArray(report)) {
         throw new Error('The selected file must contain a Gate 0A JSON report.');
       }
-      const response = await fetch('/api/cas/gate0a/import', {
+      const response = await casAuthedFetch('/api/cas/gate0a/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(report),
       });
       const body = await response.json() as {
         error?: string;
+        issues?: { path?: string; message?: string }[];
         observation?: GateObservation;
         summary?: Gate0AImportSummary;
       };
-      if (!response.ok) throw new Error(body.error || 'Gate 0A report was rejected.');
+      if (!response.ok) {
+        const issues = body.issues ?? [];
+        const reason = body.error || 'Gate 0A report was rejected.';
+        // The server error embeds only the top issues; the structured list
+        // carries every reported failing field for the gates panel to render.
+        throw new Gate0AImportError(reason, issues);
+      }
       const observation = body.observation;
       if (!observation) throw new Error('Gate 0A report was accepted without an observation.');
       setState((current) => ({
@@ -278,11 +305,21 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       ...current,
       fieldRun: { ...current.fieldRun, decision, startedAt: current.fieldRun.startedAt || new Date().toISOString() },
     })),
-    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void fetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload); },
-    runTestIncident: () => { void fetch('/api/cas/incidents/test', { method: 'POST' }).then(reload); },
-    triggerKernel: () => { void fetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload); },
-    acknowledgeKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload); },
-    resolveKernel: () => { if (state.activeIncident) void fetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload); },
+    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void casAuthedFetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload).catch(reportAuthError); },
+    runTestIncident: () => { void casAuthedFetch('/api/cas/incidents/test', { method: 'POST' }).then(reload).catch(reportAuthError); },
+    triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(reportAuthError); },
+    acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(reportAuthError); },
+    resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(reportAuthError); },
+    requeueOutboxItem: async (id, reason) => {
+      const response = await casAuthedFetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
+      if (!response.ok) {
+        // Surface the server's rejection (e.g. a note that looks like a
+        // credential) so the responder can rephrase instead of retrying blind.
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `Re-queue was rejected (${response.status}).`);
+      }
+      await reload();
+    },
     resetDemo: () => { void reload(); },
   }), [state]);
 
@@ -306,3 +343,32 @@ export type FieldRun = {
 };
 
 export type ReadinessDecision = 'pending' | 'go' | 'no-go';
+
+async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = ensureAlertToken();
+  if (!token) throw new Error('The alert credential is required for this action.');
+  const response = await fetch(input, {
+    ...init,
+    headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+  });
+  if (response.status === 401) {
+    sessionStorage.removeItem(ALERT_TOKEN_KEY);
+    throw new Error('The alert credential was rejected by the server. The next action will ask for it again.');
+  }
+  return response;
+}
+
+function ensureAlertToken(): string {
+  let token = sessionStorage.getItem(ALERT_TOKEN_KEY) ?? '';
+  if (!token) {
+    token = window.prompt(
+      'Enter the CAS alert credential (the same token configured on the enrolled phone) to authorize this action.',
+    )?.trim() ?? '';
+    if (token) sessionStorage.setItem(ALERT_TOKEN_KEY, token);
+  }
+  return token;
+}
+
+function reportAuthError(error: unknown) {
+  if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
+}
