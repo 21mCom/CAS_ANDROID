@@ -3,6 +3,8 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  casCaptureRequests,
+  casEvidence,
   casGateEvidence,
   casIncidentEvents,
   casIncidents,
@@ -189,10 +191,46 @@ router.post("/cas/gate0a/import", requireCasCredential, async (req, res, next) =
   } catch (error) { return next(error); }
 });
 
-function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeof casIncidentEvents.$inferSelect[], outbox: typeof casOutbox.$inferSelect[]) {
+type EvidenceMeta = {
+  id: string;
+  kind: string;
+  contentType: string;
+  sizeBytes: number;
+  sequence: number;
+  capturedAt: Date | null;
+  requestId: string | null;
+  createdAt: Date;
+};
+function shapeIncident(
+  incident: typeof casIncidents.$inferSelect,
+  events: typeof casIncidentEvents.$inferSelect[],
+  outbox: typeof casOutbox.$inferSelect[],
+  evidence: EvidenceMeta[] = [],
+  captureRequests: typeof casCaptureRequests.$inferSelect[] = [],
+) {
   return {
     id: incident.id, status: incident.status, priority: incident.priority,
     triggerCount: incident.triggerCount, createdAt: incident.createdAt.toISOString(),
+    // Evidence metadata only (never the bytes): the console lists clips here
+    // and downloads them through the credentialed download endpoint.
+    evidence: evidence.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      contentType: item.contentType,
+      sizeBytes: item.sizeBytes,
+      sequence: item.sequence,
+      capturedAt: item.capturedAt ? item.capturedAt.toISOString() : null,
+      uploadedAt: item.createdAt.toISOString(),
+      requestId: item.requestId,
+    })),
+    captureRequests: captureRequests.map((request) => ({
+      id: request.id,
+      kind: request.kind,
+      state: request.state,
+      detail: request.detail,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+    })),
     // Null when the alert went out with no fix; otherwise the fix exactly as
     // the handset reported it, accuracy radius and capture time included, so
     // the console can show its age instead of presenting it as current.
@@ -220,12 +258,24 @@ function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeo
 
 router.get("/cas/state", async (_req, res, next) => {
   try {
-    const [incidents, events, outbox, setup, gates] = await Promise.all([
+    const [incidents, events, outbox, setup, gates, evidenceRows, captureRequests] = await Promise.all([
       db.select().from(casIncidents).orderBy(desc(casIncidents.createdAt)),
       db.select().from(casIncidentEvents).orderBy(asc(casIncidentEvents.createdAt)),
       db.select().from(casOutbox).orderBy(asc(casOutbox.createdAt)),
       db.select().from(casSetupReadiness).orderBy(asc(casSetupReadiness.id)),
       db.select().from(casGateEvidence).orderBy(asc(casGateEvidence.index)),
+      db.select({
+        id: casEvidence.id,
+        incidentId: casEvidence.incidentId,
+        kind: casEvidence.kind,
+        contentType: casEvidence.contentType,
+        sizeBytes: casEvidence.sizeBytes,
+        sequence: casEvidence.sequence,
+        capturedAt: casEvidence.capturedAt,
+        requestId: casEvidence.requestId,
+        createdAt: casEvidence.createdAt,
+      }).from(casEvidence).orderBy(asc(casEvidence.createdAt)),
+      db.select().from(casCaptureRequests).orderBy(asc(casCaptureRequests.createdAt)),
     ]);
     // Keep the most recent incident selected even after resolution so responders
     // can inspect the complete append-only journal after a reload.
@@ -238,7 +288,13 @@ router.get("/cas/state", async (_req, res, next) => {
     }));
     return res.json({
       incidents: incidentRows,
-      activeIncident: active ? shapeIncident(active, events.filter((event) => event.incidentId === active.id), outbox.filter((item) => item.incidentId === active.id)) : null,
+      activeIncident: active ? shapeIncident(
+        active,
+        events.filter((event) => event.incidentId === active.id),
+        outbox.filter((item) => item.incidentId === active.id),
+        evidenceRows.filter((item) => item.incidentId === active.id),
+        captureRequests.filter((request) => request.incidentId === active.id),
+      ) : null,
       setup: setup.map(({ id, label, detail, group, complete, mode }) => ({ id, label, detail, group, complete, mode })),
       gates: gates.map(({ id, index, name, short, status, criterion, evidence, nextAction, owner }) => ({ id, index, name, short, status, criterion, evidence, nextAction, owner })),
     });

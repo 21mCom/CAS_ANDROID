@@ -1,17 +1,55 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowRight, Check, CircleStop, LockKeyhole, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Activity, ArrowRight, Camera, Check, CircleStop, Download, LockKeyhole, Mic, RotateCcw, ShieldAlert, Video } from 'lucide-react';
 import { Link } from 'wouter';
-import { useFieldTest, type Priority } from '@/hooks/use-field-test';
+import { casAuthedFetch, useFieldTest, type EvidenceItem, type Priority } from '@/hooks/use-field-test';
+import { formatEvidenceSize, useCapturePolicy } from '@/hooks/use-capture-policy';
 import { EvidenceLabel, EmptyState, PriorityPill, SectionKicker } from '@/components/field-ui';
 import { OutboxStatusPanel } from '@/components/outbox-status';
 
+const EVIDENCE_KIND_ICONS = { audio: Mic, photo: Camera, video: Video } as const;
+
 export default function Incidents() {
-  const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, resetDemo } = useFieldTest();
+  const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, requestCapture, resetDemo } = useFieldTest();
+  const { policy } = useCapturePolicy();
   const [filter, setFilter] = useState<'all' | Priority>('all');
   const [requeueTarget, setRequeueTarget] = useState<string | null>(null);
   const [requeueNote, setRequeueNote] = useState('');
   const [requeueError, setRequeueError] = useState<string | null>(null);
   const [requeueBusy, setRequeueBusy] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [captureBusy, setCaptureBusy] = useState<string | null>(null);
+
+  const submitCaptureRequest = async (kind: 'audio' | 'photo' | 'video') => {
+    if (captureBusy) return;
+    setCaptureBusy(kind);
+    setCaptureError(null);
+    try {
+      await requestCapture(kind);
+    } catch (error) {
+      setCaptureError(error instanceof Error ? error.message : 'Capture request was rejected.');
+    } finally {
+      setCaptureBusy(null);
+    }
+  };
+
+  const downloadEvidence = async (item: EvidenceItem) => {
+    setCaptureError(null);
+    try {
+      // Downloads are credentialed: fetch the bytes with the Bearer credential
+      // and hand the operator a file, since a bare <a href> cannot send it.
+      const response = await casAuthedFetch(`/api/cas/evidence/${item.id}/download`);
+      if (!response.ok) throw new Error(`Download was rejected (${response.status}).`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `cas-${activeIncident?.id}-${item.kind}-${item.sequence}.${item.kind === 'photo' ? 'jpg' : item.kind === 'video' ? 'mp4' : 'm4a'}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setCaptureError(error instanceof Error ? error.message : 'Download failed.');
+    }
+  };
 
   const openRequeueNote = (id: string) => {
     setRequeueTarget(id);
@@ -135,6 +173,84 @@ export default function Incidents() {
                     </p>
                   ) : (
                     <p className="mt-1 text-xs leading-5 text-[#687271]">No position fix captured for this alert (no permission, no provider, or the bounded wait expired). The alert still went out on time.</p>
+                  )}
+                </div>
+                <div className="sm:col-span-2" data-testid="panel-incident-evidence">
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Evidence captured on handset</p>
+                  {activeIncident.evidence.length === 0 ? (
+                    <p className="mt-1 text-xs leading-5 text-[#687271]">
+                      No evidence clips yet. Enable capture types on the{' '}
+                      <Link href="/capture" className="font-bold text-[#a06712]" data-testid="link-incident-capture-settings">Evidence capture</Link>
+                      {' '}page, or request one below when its toggle is set to "only when a responder asks".
+                    </p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {activeIncident.evidence.map((item) => {
+                        const KindIcon = EVIDENCE_KIND_ICONS[item.kind];
+                        const capturedAge = item.capturedAt
+                          ? (() => {
+                              const ageSeconds = Math.max(0, Math.round((Date.now() - Date.parse(item.capturedAt)) / 1000));
+                              return ageSeconds < 90 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
+                            })()
+                          : null;
+                        return (
+                          <li key={item.id} className="flex flex-wrap items-center gap-2 border border-[#e0e1da] bg-[#f7f7f1] px-3 py-2" data-testid={`row-evidence-${item.id}`}>
+                            <KindIcon size={14} className="text-[#203c49]" />
+                            <span className="text-xs font-bold text-[#203c49]">
+                              {item.kind}{item.sequence > 1 ? ` · clip ${item.sequence}` : ''}
+                            </span>
+                            <span className="font-mono-ui text-[10px] text-[#687271]">
+                              {formatEvidenceSize(item.sizeBytes)}
+                              {capturedAge ? ` · captured ${capturedAge} ago` : ''}
+                              {item.requestId ? ' · responder-requested' : ''}
+                            </span>
+                            <button
+                              onClick={() => { void downloadEvidence(item); }}
+                              className="ml-auto inline-flex items-center gap-1 border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#203c49] transition-colors hover:border-[#203c49]"
+                              data-testid={`button-download-evidence-${item.id}`}
+                            >
+                              <Download size={12} /> Download
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {(['audio', 'photo', 'video'] as const).filter((kind) => policy[kind] === 'responder').map((kind) => {
+                      const latest = [...activeIncident.captureRequests].reverse().find((request) => request.kind === kind);
+                      return (
+                        <span key={kind} className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => { void submitCaptureRequest(kind); }}
+                            disabled={captureBusy !== null}
+                            className="inline-flex items-center gap-1.5 border border-[#203c49] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#203c49] transition-colors hover:bg-[#e1efe5] disabled:opacity-40"
+                            title="The handset picks the request up on its next server contact and reports the outcome to the journal"
+                            data-testid={`button-request-capture-${kind}`}
+                          >
+                            Request {kind} capture
+                          </button>
+                          {latest && (
+                            <span
+                              className={`border px-1.5 py-0.5 font-mono-ui text-[9px] uppercase ${latest.state === 'FAILED' ? 'border-[#914136] text-[#914136]' : latest.state === 'COMPLETED' ? 'border-[#b9d8c5] text-[#236047]' : 'border-[#c6cbc3] text-[#687271]'}`}
+                              title={latest.detail ?? undefined}
+                              data-testid={`status-capture-request-${kind}`}
+                            >
+                              {latest.state}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                    {(['audio', 'photo', 'video'] as const).every((kind) => policy[kind] !== 'responder') && (
+                      <p className="text-[11px] text-[#687271]">
+                        Responder-requested capture is available once a capture type is set to{' '}
+                        <strong>only when a responder asks</strong> on the Evidence capture page.
+                      </p>
+                    )}
+                  </div>
+                  {captureError && (
+                    <p role="alert" className="mt-2 border border-[#914136] bg-[#914136]/10 px-2 py-1.5 text-[11px] font-bold leading-4 text-[#914136]" data-testid="text-capture-error">{captureError}</p>
                   )}
                 </div>
               </div>

@@ -1,7 +1,7 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep registry and worker instrumentation in lockstep.
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
-- [CAS alert API credential gate](cas-auth.md) — mutations need per-device enrolled tokens (CAS_ALERT_TOKEN is enrollment-only); provisioned devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
+- [CAS alert API credential gate](cas-auth.md) — mutations need enrolled per-device tokens; devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
@@ -14,7 +14,7 @@
 - [Local PowerShell verification](pwsh-local-verification.md) — pwsh via nix profile, multi-minute startup, wiped on restart; AST-extract functions to test Windows-only scripts.
 - [Windows PowerShell 5.1 native traps](windows-powershell-51-native-traps.md) — 5.1 mangles quoted native args; native stderr aborts 2>&1 captures under EAP=Stop; pwsh 7 reproduces neither.
 - [pwsh CI step exit codes](pwsh-lastexitcode-step-exit.md) — a pwsh step exits with the last NATIVE command's $LASTEXITCODE; negative-test steps must end with explicit exit 0.
-- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — connector is scope-less/read-only; pushes and Actions logs use the GITHUB_PAT secret; a repo watchdog workflow warns before the PAT lapses.
+- [GitHub CI access for CAS_ANDROID](github-ci-access.md) — connector is read-only; pushes and Actions logs use the GITHUB_PAT secret; a watchdog workflow warns before the PAT lapses.
 - [Gate 0A report schema lockstep](gate0a-report-schema-lockstep.md) — harness and app import validation share one schema module; change both together or CI fails.
 - [Subagent name scope](subagent-name-scope.md) — a live subagent from a prior environment can't be re-created by name; mint a fresh name per review round.
 - [CAS tool-requirements gates](cas-api-floor-gates.md) — drift gate catches disagreeing literals; apifloor/jdkfloor gates catch scripted comparisons; fixtures may need all three markers.
@@ -28,7 +28,8 @@
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
-- [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit's drift/API-floor/JDK-floor gates, validator parity, and guide freshness already ran green on real GitHub runners; verify code identity before burning a duplicate run.
+- [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.
+- [CAS console read posture](cas-console-read-posture.md) — console GETs stay anonymous like /cas/state; gating a read 401s the page (only visible in browser logs).
 - [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — known issue: saving a new enrollment credential on the handset re-enables the shared-token fallback before verification, so a revoked phone resumes; fix = sticky provisioned flag.
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means config-table writes in one suite change another suite's fan-out; keep new DB suites in the &&-chained invocation.
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.

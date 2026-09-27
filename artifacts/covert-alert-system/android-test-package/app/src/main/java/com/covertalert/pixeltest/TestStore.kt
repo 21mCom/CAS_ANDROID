@@ -16,6 +16,15 @@ object TestStore {
     private const val ALERT_TOKEN = "alert_token"
     private const val ENROLLED_DEVICE_TOKEN = "enrolled_device_token"
     private const val DEVICE_CREDENTIAL_PROVISIONED = "device_credential_provisioned"
+    private const val CAPTURE_POLICY_JSON = "capture_policy_json"
+
+    // Only a successfully fetched policy replaces the last known policy;
+    // an offline trigger must never silently enable a new capture mode.
+    fun setCapturePolicyJson(context: Context, value: String) =
+        storage(context).edit().putString(CAPTURE_POLICY_JSON, value).apply()
+
+    fun capturePolicyJson(context: Context): String? =
+        storage(context).getString(CAPTURE_POLICY_JSON, null)
 
     /**
      * Shared handset credential (X-CAS-Device-Token) for the console's

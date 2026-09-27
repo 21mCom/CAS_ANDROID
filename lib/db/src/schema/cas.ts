@@ -1,6 +1,8 @@
-import { boolean, doublePrecision, integer, jsonb, pgTable, real, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, customType, doublePrecision, integer, jsonb, pgTable, real, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 
+// Drizzle has no built-in bytea column; the evidence blob rides the pg driver
+// as a Buffer.
 export const casIncidents = pgTable("cas_incidents", {
   id: text("id").primaryKey(),
   priority: text("priority").notNull(),
@@ -20,7 +22,10 @@ export const casIncidents = pgTable("cas_incidents", {
 
 export const casIncidentEvents = pgTable("cas_incident_events", {
   id: text("id").primaryKey(),
-  incidentId: text("incident_id").notNull().references(() => casIncidents.id),
+  // Cascade: app code never deletes incidents (the journal is append-only),
+  // but test suites and disposable review databases do — the journal must
+  // not make an incident undeletable.
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
   priority: text("priority").notNull(),
   detail: text("detail").notNull(),
@@ -29,7 +34,8 @@ export const casIncidentEvents = pgTable("cas_incident_events", {
 
 export const casOutbox = pgTable("cas_outbox", {
   id: text("id").primaryKey(),
-  incidentId: text("incident_id").notNull().references(() => casIncidents.id),
+  // Cascade: same test-cleanup rationale as cas_incident_events.
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
   transport: text("transport").notNull(),
   state: text("state").notNull(),
   priority: text("priority").notNull(),
@@ -61,7 +67,8 @@ export const casProviderDeliveries = pgTable("cas_provider_deliveries", {
   // worker crash after partial acceptance cannot duplicate those messages.
   keyHash: text("key_hash").primaryKey(),
   transport: text("transport").notNull(),
-  incidentId: text("incident_id").notNull().references(() => casIncidents.id),
+  // Cascade: same test-cleanup rationale as cas_incident_events.
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
   recipientMasked: text("recipient_masked").notNull(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -133,6 +140,24 @@ export const casGateEvidence = pgTable("cas_gate_evidence", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Evidence-capture policy, set from the console and fetched by the handset on
+ * every trigger and server contact so toggles take effect with no app
+ * reinstall. Exactly one row (id "current"). Each capture type is independent:
+ * "off" | "trigger" (start when the alert triggers) | "responder" (only when
+ * a responder asks from the console). timing is "immediate" (capture begins
+ * at trigger, catching the first-~60-seconds window) or "screen-off"
+ * (capture begins when the screen next turns off after the trigger — the
+ * stealth-first option) and applies to every enabled type.
+ */
+export const casCapturePolicy = pgTable("cas_capture_policy", {
+  id: text("id").primaryKey(),
+  audio: text("audio").notNull().default("off"),
+  photo: text("photo").notNull().default("off"),
+  video: text("video").notNull().default("off"),
+  timing: text("timing").notNull().default("immediate"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 export const insertCasIncidentSchema = createInsertSchema(casIncidents);
 export const insertCasIncidentEventSchema = createInsertSchema(casIncidentEvents);
 export const insertCasOutboxSchema = createInsertSchema(casOutbox);
@@ -147,6 +172,12 @@ export type CasDeviceCredential = typeof casDeviceCredentials.$inferSelect;
 export type CasSetupReadiness = typeof casSetupReadiness.$inferSelect;
 export type CasGateEvidence = typeof casGateEvidence.$inferSelect;
 
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
 export const casMessageTemplates = pgTable("cas_message_templates", {
   // Per-channel alert wording, editable from the console. Channels without a
   // row fall back to the built-in default body, so a fresh deployment (or a
@@ -157,3 +188,45 @@ export const casMessageTemplates = pgTable("cas_message_templates", {
 });
 
 export type CasMessageTemplate = typeof casMessageTemplates.$inferSelect;
+
+/**
+ * A responder's request for on-demand capture on the alerting handset,
+ * created from the console incident view. Stays PENDING until the handset
+ * picks it up on its next server contact and acks it (STARTED, or FAILED
+ * with the measured reason — e.g. Android's background mic/camera start
+ * restriction), then COMPLETED when the resulting evidence lands.
+ */
+export const casCaptureRequests = pgTable("cas_capture_requests", {
+  id: text("id").primaryKey(),
+  // Same cascade rationale as cas_evidence: cleanup deletes incidents.
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  state: text("state").notNull().default("PENDING"),
+  detail: text("detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One bounded evidence artifact (audio clip, still photo, or video clip)
+ * captured on the handset and uploaded with the device credential, attached
+ * to its incident with the device-reported capture time. Bytes live in the
+ * row: clips are short and bounded by design, and database storage keeps the
+ * evidence journal inspectable in one place with no extra file service.
+ * Metadata is always selected with explicit columns so listing never drags
+ * the blob along.
+ */
+export const casEvidence = pgTable("cas_evidence", {
+  id: text("id").primaryKey(),
+  // Cascade: app code never deletes incidents, but test suites and disposable
+  // review databases do — evidence must not make an incident undeletable.
+  incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true }),
+  requestId: text("request_id"),
+  sequence: integer("sequence").notNull().default(1),
+  data: bytea("data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

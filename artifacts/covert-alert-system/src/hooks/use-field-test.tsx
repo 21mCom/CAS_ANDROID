@@ -89,6 +89,17 @@ export type IncidentLocation = {
   capturedAt: string;
 };
 
+export type EvidenceItem = {
+  id: string;
+  kind: 'audio' | 'photo' | 'video';
+  contentType: string;
+  sizeBytes: number;
+  sequence: number;
+  /** Device-reported capture start; null when the handset did not supply one. */
+  capturedAt: string | null;
+  uploadedAt: string;
+  requestId: string | null;
+};
 export type ActiveIncident = {
   id: string;
   status: KernelStatus;
@@ -100,6 +111,10 @@ export type ActiveIncident = {
   location: IncidentLocation | null;
   events: KernelEvent[];
   outbox: OutboxItem[];
+  /** Bounded clips captured on the handset for this incident (metadata only). */
+  evidence: EvidenceItem[];
+  /** Responder-requested captures and their measured outcomes. */
+  captureRequests: CaptureRequestItem[];
 };
 
 type FieldTestState = {
@@ -122,6 +137,7 @@ type FieldTestContextValue = FieldTestState & {
   acknowledgeKernel: () => void;
   resolveKernel: () => void;
   requeueOutboxItem: (id: string, reason?: string) => Promise<void>;
+  requestCapture: (kind: 'audio' | 'photo' | 'video') => Promise<void>;
   resetDemo: () => void;
 };
 const initialGates: Gate[] = [
@@ -332,6 +348,17 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       }
       await reload();
     },
+    requestCapture: async (kind) => {
+      if (!state.activeIncident) throw new Error('No active incident to capture evidence for.');
+      const response = await casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/capture-requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) });
+      if (!response.ok) {
+        // Surface the server's rejection (e.g. the policy toggle for this
+        // kind is off or already start-on-trigger) instead of failing silent.
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `Capture request was rejected (${response.status}).`);
+      }
+      await reload();
+    },
     resetDemo: () => { void reload(); },
   }), [state]);
 
@@ -356,8 +383,10 @@ export type FieldRun = {
 
 export type ReadinessDecision = 'pending' | 'go' | 'no-go';
 
-// Exported for the configuration pages (responders / alert text), which call
-// their own endpoints with the same credential flow.
+// Exported for the configuration pages (responders / alert text) and the
+// incident view's evidence downloads, which call their own endpoints with
+// the same enrolled-credential flow.
+
 export async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = await ensureDeviceToken();
   if (!token) throw new Error('An enrolled device credential is required for this action.');
@@ -406,6 +435,15 @@ function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
 }
 
+export type CaptureRequestItem = {
+  id: string;
+  kind: 'audio' | 'photo' | 'video';
+  state: 'PENDING' | 'STARTED' | 'COMPLETED' | 'FAILED';
+  /** Measured reason a request failed (e.g. Android's background-start restriction). */
+  detail: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 export type CasDevice = {
   id: string;
   label: string;

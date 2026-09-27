@@ -104,3 +104,29 @@ left unexplained): adb-root flake (rerun), pickup 401 from the app's
 enrolled-credential wipe (fixed in SmsFlowActivity), NO_FIX geo race (fixed
 by boot-time injection; dumpsys location does not report injected
 coordinates on this image, so liveness is timed, not polled).
+
+## Final confirmation on the rebased tree (run 36335559989)
+
+The completion rebase onto current main replayed the cas.ts rebuild textually
+and mangled it; the file was reconstructed with a proper three-way merge
+(`git merge-file`, keeping main's console responder-circle and deviceSms work
+alongside the location/attribution repair) and one test was aligned with the
+retired shared-token gate (the pickup must present the enrolled credential
+via Bearer). Local gates on the rebased tree: typecheck clean, suites 114/114
+and 21/21 green.
+
+The exact rebased tree was then re-confirmed on real GitHub Actions:
+
+- Branch `ci-163-alert-location` head 8f29021 (= workspace main 2808a41 tree,
+  content-synced). Workflow run **36335559989** — all five jobs green:
+  - `Alert location harness (JVM, no emulator)` — job 108665617713 success.
+  - `Drive the handset SMS send/receipt/re-queue flow against a dev API` —
+    job 108665815276 success, with the geo-fix location assertion:
+    `Location phase passed: incident carries fix {"latitude":52.5163,
+    "longitude":13.3777,"accuracyM":5,...}`; alert phase DEAD_LETTER on the
+    broken number; re-queue phase SENT after handset pickup; preflight proves
+    the retired shared device token is refused (401) and the enrolled
+    credential accepted (200).
+  - Compile Gate 0A APK, receipt durability, and boot-smoke jobs all success.
+- Raw final sms-flow log replaced: `task-163-sms-flow-final-joblog.txt` now
+  holds run 36335559989's log.

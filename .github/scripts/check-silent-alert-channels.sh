@@ -8,6 +8,10 @@
 # cover app, and no alert code may reference a third-party messaging app.
 # Device-side delivery is SMS (invisible to the user, no UI) plus the data
 # POST; every other channel fans out server-side through the outbox worker.
+# The same rule covers evidence capture: bounded audio/photo/video clips are
+# recorded by a preview-free foreground service — never by launching the
+# camera app or showing a preview — so the only on-screen trace is the
+# owner-accepted OS recording indicator.
 #
 # This script fails the build if any of that creeps back in. It is a static
 # scan of the app sources — deterministic, no emulator needed.
@@ -65,4 +69,12 @@ while IFS= read -r manifest; do
   fi
 done < <(find "$APP_SRC" -name AndroidManifest.xml)
 
-echo "silent-channel check passed: no alert path can surface a third-party UI."
+# 5. Evidence capture never surfaces camera UI: no MediaStore capture intents
+#    (which open the stock camera app in the attacker's hands) and no preview
+#    surfaces — bounded capture runs preview-free in the foreground service,
+#    and the only on-screen trace is the owner-accepted OS indicator.
+if grep -rnE 'ACTION_IMAGE_CAPTURE|ACTION_VIDEO_CAPTURE|ACTION_VIDEO_CAMERA|MediaStore\.ACTION|SurfaceView|TextureView|PreviewView' "$APP_SRC" --include='*.kt' --include='*.java' --include='*.xml'; then
+  fail "on-screen camera primitive found — evidence capture must run in the preview-free foreground service, never the camera app UI or a preview surface."
+fi
+
+echo "silent-channel check passed: no alert path can surface a third-party UI, and evidence capture stays preview-free."

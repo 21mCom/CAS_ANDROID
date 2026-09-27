@@ -16,3 +16,9 @@ Multiple project tasks run concurrently against this repo and merge into `main` 
 **Why:** A green local run only proves the exact working tree that was tested; a task commit assembled from a stale snapshot, or a review merge that resolves conflicts toward the stale side, silently reintroduces the old code.
 
 **How to apply:** When typecheck or tests fail on files you did not touch, suspect a clobber before diagnosing the code itself: diff the broken file against its parent commit to separate the latest task's legitimate changes from reverted hunks, and if another task already landed a canonical repair of the same clobber, restore that version instead of writing a competing one. Signature symptom: contract tests suddenly 400 on previously-working routes, plus tsc errors naming identifiers that belong to a different route's handler.
+
+**Main's head can itself land corrupted, and a rebase can re-corrupt a file you already repaired** (each replay of your commit re-runs the same lossy auto-merge). Recovery: `git log --all --oneline --follow -- <file>` finds the same change's pre-rebase twin commits (they share the commit message); restore the intact twin and re-apply only your changes, then re-verify after every rebase round, not just the first.
+
+**Why:** During the evidence-capture task, main's head had several cas.ts routes mangled by a bad merge and the typecheck/tests were red on main itself; the intact-twin restore repaired it, and a later rebase reintroduced the same corruption silently.
+
+**How to apply:** After every rebase/merge round, re-run typecheck and the route tests against the final tree and grep the routes you repaired (schema names, route endings). Also regenerate lib/db declarations (`pnpm --filter @workspace/db exec tsc -p tsconfig.json`) before trusting typecheck output after a schema-affecting rebase — stale .d.ts masks the real errors.
