@@ -56,20 +56,43 @@ later; nothing else changes.
 
 ## T1 — Build and install the app
 
-`scripts\run-mvp-install.cmd` → installs version `0.4.0-mvp` (versionCode 3).
+`scripts\run-mvp-install.cmd` → installs version `0.5.0-mvp` (versionCode 4).
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
-prints `0.4.0-mvp`.
+prints `0.5.0-mvp`.
 
-## T2 — Real SMS alert (phone required)
+## T2 — Real SMS alert with location (phone required)
 
 1. On the phone: enter the alert server URL and the **device access token**
    (same value as the server's `CAS_DEVICE_TOKEN` secret), then responder
-   number(s), **Save responder numbers**, **Grant SMS permission**.
+   number(s), **Save responder numbers**, **Grant SMS permission**, **Grant
+   location permission**.
 2. **Send MVP alert now**. Pass: the responder's phone receives the SMS from
    the Pixel's own number; the on-screen report shows `MVP_ALERT_OUTCOME`
    SENT then `SMS_SEND_OUTCOME` delivered=1; the console incident's SMS item
    turns `SENT` within seconds (journal shows `DELIVERY_REPORTED`).
-3. Resolve the incident in the console.
+3. The SMS ends with a location sentence: a `maps.google.com` link plus
+   `(±Nm, fix Xs old)`. The console incident view shows the same fix with a
+   map link, accuracy radius, and fix age. If the phone could not get a fix
+   in time, the message says `no fix captured for this alert.` instead —
+   never bare coordinates and never a silent omission.
+4. Resolve the incident in the console.
+
+## T2b — Location accuracy proof (phone required, outdoors + indoors)
+
+Proves the fix responders receive is trustworthy, not just present.
+
+1. **Outdoors** (sky visible): grant location, send an MVP alert. Compare the
+   SMS map link against the phone's true position (e.g. drop a pin in a maps
+   app). Pass: the link lands within the stated accuracy radius (`±Nm`) of
+   the true position, and the fix age is small (`fix Xs old`, not minutes).
+2. **Indoors** (deep inside a building): repeat. Pass: the alert still
+   leaves within the bounded wait (~8 s worst case) and either carries a
+   coarser fix honestly labeled with a larger `±Nm` radius / a
+   `+last-known` age, or says `no fix captured for this alert.` — it must
+   not present a stale fix as current and must not wait indefinitely.
+3. **Airplane-mode toggle** (optional): with location off at the OS level,
+   send once more. Pass: the alert leaves immediately and both the SMS and
+   the console say no fix was captured.
 
 ## T3 — SMS dead-letter drill (phone required)
 
@@ -164,7 +187,7 @@ Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
 
 ```text
 CAS handoff test run — <date> <operator>
-Server URL: <...>   App version: <0.4.0-mvp?>
+Server URL: <...>   App version: <0.5.0-mvp?>
 T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
 T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>

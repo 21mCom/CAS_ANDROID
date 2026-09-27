@@ -20,9 +20,10 @@ param(
   # Shared handset credential (the server's CAS_DEVICE_TOKEN secret). The
   # device pickup/receipt endpoints refuse calls without it (401).
   [string]$DeviceToken,
-  # Alert credential (the server's CAS_ALERT_TOKEN secret), sent as
-  # Authorization: Bearer. The trigger, ack/resolve, and re-queue endpoints
-  # refuse calls without it (401).
+  # Enrollment credential (the server's CAS_ALERT_TOKEN secret). The script
+  # exchanges it once for this session's own revocable device credential and
+  # presents that as Authorization: Bearer; the trigger, ack/resolve, and
+  # re-queue endpoints reject the enrollment credential itself (401).
   [string]$AlertToken
 )
 
@@ -30,7 +31,8 @@ param(
 # inside the param block (Windows PowerShell evaluates defaults too early).
 $script:CasBase = $BaseUrl.TrimEnd('/') + '/api'
 $script:DeviceToken = $DeviceToken
-$script:AlertToken = $AlertToken
+$script:EnrollmentCredential = $AlertToken
+$script:DeviceCredential = $null
 
 function Invoke-CasApi {
   param(
@@ -45,7 +47,22 @@ function Invoke-CasApi {
   }
   $headers = @{}
   if ($script:DeviceToken) { $headers['X-CAS-Device-Token'] = $script:DeviceToken }
-  if ($script:AlertToken) { $headers['Authorization'] = "Bearer $script:AlertToken" }
+  if (-not $script:DeviceCredential -and $script:EnrollmentCredential) {
+    # Enroll this drill session as its own device: the mutation endpoints no
+    # longer accept the shared enrollment credential, only per-device tokens.
+    try {
+      $enrolled = Invoke-RestMethod -Method POST -Uri ($script:CasBase + '/cas/devices/enroll') `
+        -ContentType 'application/json' `
+        -Headers @{ Authorization = "Bearer $script:EnrollmentCredential" } `
+        -Body (@{ label = 'cas-api-drills' } | ConvertTo-Json)
+      $script:DeviceCredential = $enrolled.token
+      Write-Host "Enrolled device credential $($enrolled.device.id) for this drill session."
+    } catch {
+      Write-Warning "Device enrollment failed; the CAS mutations below will 401. Check -AlertToken (the server's CAS_ALERT_TOKEN secret): $($_.Exception.Message)"
+      throw
+    }
+  }
+  if ($script:DeviceCredential) { $headers['Authorization'] = "Bearer $script:DeviceCredential" }
   if ($headers.Count -gt 0) { $args.Headers = $headers }
   if ($null -ne $Body) { $args.Body = ($Body | ConvertTo-Json -Depth 8) }
   try {

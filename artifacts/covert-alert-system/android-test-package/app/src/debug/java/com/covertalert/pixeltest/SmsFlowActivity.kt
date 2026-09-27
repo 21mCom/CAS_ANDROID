@@ -16,7 +16,7 @@ import android.os.Bundle
  *     --es mode alert|requeue \
  *     --es serverUrl http://127.0.0.1:<port> \
  *     --es deviceToken <shared CAS_DEVICE_TOKEN> \
- *     --es alertToken <shared CAS_ALERT_TOKEN> \
+ *     --es alertToken <enrollment credential (CAS_ALERT_TOKEN); exchanged for a per-device token> \
  *     --es responders "+15551234567"
  *
  * (the harness tunnels the runner's dev API into the device with
@@ -44,7 +44,12 @@ class SmsFlowActivity : Activity() {
         val extras = intent.extras
         extras?.getString("serverUrl")?.let { TestStore.setAlertServerUrl(this, it) }
         extras?.getString("deviceToken")?.let { TestStore.setDeviceToken(this, it) }
-        extras?.getString("alertToken")?.let { TestStore.setAlertToken(this, it) }
+        extras?.getString("alertToken")?.let {
+            // A new enrollment credential invalidates the device credential
+            // enrolled under the old one; the next trigger re-enrolls.
+            if (it.trim() != TestStore.alertToken(this)) TestStore.setEnrolledDeviceToken(this, "")
+            TestStore.setAlertToken(this, it)
+        }
         extras?.getString("responders")?.let { TestStore.setSmsResponders(this, it) }
         val mode = extras?.getString("mode").orEmpty()
         TestStore.record(this, "SMS_FLOW_INVOKED", mapOf(
@@ -106,7 +111,19 @@ class SmsFlowActivity : Activity() {
                 ))
                 sendSms(null)
             } else {
-                val result = AlertSender.trigger(this, baseUrl, alertToken)
+                // Same bounded capture as the MVP button; in the emulator the
+                // flow script injects a fix via `adb emu geo fix` and asserts
+                // the console stores it. Without the location permission this
+                // returns instantly so the alert is never delayed.
+                val fix = LocationCapture.capture(this)
+                TestStore.record(this, "SMS_FLOW_LOCATION", mapOf(
+                    "outcome" to when {
+                        fix == null -> "NO_FIX"
+                        fix.lastKnown -> "LAST_KNOWN"
+                        else -> "FRESH"
+                    },
+                ))
+                val result = AlertSender.trigger(this, baseUrl, alertToken, fix)
                 TestStore.record(this, "SMS_FLOW_TRIGGER_OUTCOME", mapOf(
                     "outcome" to if (result.ok) "SENT" else "FAILED",
                     "detail" to result.detail,
@@ -118,7 +135,7 @@ class SmsFlowActivity : Activity() {
                     // re-send physical messages either.
                     TestStore.record(this, "SMS_FLOW_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE"))
                 } else {
-                    sendSms(if (result.ok) result.incidentId else null)
+                    sendSms(if (result.ok) result.incidentId else null, fix)
                 }
             }
         }.start()
@@ -132,8 +149,8 @@ class SmsFlowActivity : Activity() {
         }.start()
     }
 
-    private fun sendSms(incidentId: String?) {
-        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId))
+    private fun sendSms(incidentId: String?, fix: AlertLocation.Fix? = null) {
+        val outcome = DeviceSmsSender.sendAlert(this, incidentId, DeviceSmsSender.alertBody(incidentId, fix))
         TestStore.record(this, "SMS_FLOW_SMS_START", mapOf(
             "incidentId" to (incidentId ?: "offline"),
             "detail" to outcome,

@@ -46,9 +46,10 @@
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #                          (must run with CAS_SMS_DELIVERY_MODE=device)
 #   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
-#   CAS_FLOW_ALERT_TOKEN   alert credential (matches CAS_ALERT_TOKEN); the
-#                          handset's trigger and the host's incident/outbox
-#                          mutations are rejected 401 without it
+#   CAS_FLOW_ALERT_TOKEN   enrollment credential (matches CAS_ALERT_TOKEN);
+#                          exchanged once below for a per-device token that
+#                          authorizes the host's incident/outbox mutations (the
+#                          handset performs the same exchange itself)
 # Optional env:
 #   CAS_FLOW_TIMEOUT_S     per-phase wait budget (default: 240; the result
 #                          watchdog alone needs 45s plus TCG-emulator slack)
@@ -67,6 +68,18 @@ for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_T
     exit 1
   fi
 done
+
+# The alert credential is now only the enrollment credential: mutation
+# endpoints reject it directly. Exchange it once for a per-device token that
+# authorizes this run's host-side incident/outbox mutations (the handset app
+# performs the same exchange itself inside AlertSender).
+CAS_FLOW_ENROLLED_TOKEN="$(curl -sf -X POST "$CAS_FLOW_API_HOST/api/cas/devices/enroll" \
+  -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"label":"ci-receipt-durability"}' | jq -r '.token // empty')"
+if [ -z "$CAS_FLOW_ENROLLED_TOKEN" ]; then
+  echo "::error::device enrollment failed; the API did not issue a device credential for CAS_FLOW_ALERT_TOKEN."
+  exit 1
+fi
 
 API_PORT_FROM_URL="${CAS_FLOW_API_HOST##*:}"
 API_PORT_FROM_URL="${API_PORT_FROM_URL%%/*}"
@@ -213,8 +226,8 @@ resolve_active() {
   local id
   id="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r '.activeIncident.id // empty')"
   if [ -n "$id" ]; then
-    curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/ack" > /dev/null || true
-    curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/resolve" > /dev/null || true
+    curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/ack" > /dev/null || true
+    curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/resolve" > /dev/null || true
     echo "resolved prior active incident $id"
   fi
 }
@@ -456,7 +469,7 @@ echo "SCENARIO A PASSED: $incident_a — force-stop with the receipt POST in fli
 
 echo "== Scenario B: unfinished batch at kill -> recovery + watchdog =="
 resolve_active
-incident_b="$(curl -s -X POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger" -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' --data '{"deviceChannels":["SMS"]}' | jq -r '.id // empty')"
+incident_b="$(curl -s -X POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger" -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" -H 'Content-Type: application/json' --data '{"deviceChannels":["SMS"]}' | jq -r '.id // empty')"
 [ -n "$incident_b" ] || fail "host-side trigger returned no incident id."
 [ "$(sms_item_state "$incident_b")" = "QUEUED" ] || fail "SMS item not QUEUED after trigger: $(sms_item_state "$incident_b")"
 adb shell am force-stop "$PKG"
@@ -484,7 +497,7 @@ echo "SCENARIO B PASSED: $incident_b — SMS_BATCH_RECOVERY + watchdog finalize,
 
 echo "== Scenario C (supplementary): seeded success receipt -> retry lands SENT =="
 resolve_active
-incident_c="$(curl -s -X POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger" -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' --data '{"deviceChannels":["SMS"]}' | jq -r '.id // empty')"
+incident_c="$(curl -s -X POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger" -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" -H 'Content-Type: application/json' --data '{"deviceChannels":["SMS"]}' | jq -r '.id // empty')"
 [ -n "$incident_c" ] || fail "host-side trigger returned no incident id."
 adb shell am force-stop "$PKG"
 now_ms=$(($(date +%s%N) / 1000000))

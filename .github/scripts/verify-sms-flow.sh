@@ -19,8 +19,9 @@
 #   CAS_FLOW_APK           path to the built app-debug.apk
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
-#   CAS_FLOW_ALERT_TOKEN   alert credential (matches CAS_ALERT_TOKEN); the
-#                          trigger and console re-queue endpoints 401 without it
+#   CAS_FLOW_ALERT_TOKEN   enrollment credential (matches CAS_ALERT_TOKEN); the
+#                          script exchanges it once for a per-device token below,
+#                          and the app does the same exchange on the handset
 # Optional env:
 #   CAS_FLOW_API_DEVICE    API base URL as the device sees it. Default: the
 #                          harness runs `adb reverse tcp:<port> tcp:<port>` and
@@ -48,6 +49,18 @@ for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_T
     exit 1
   fi
 done
+
+# The alert credential is now only the enrollment credential: mutation
+# endpoints reject it directly. Exchange it once for a per-device token that
+# authorizes this run's console mutation calls (the handset app performs the
+# same exchange itself inside AlertSender).
+CAS_FLOW_ENROLLED_TOKEN="$(curl -sf -X POST "$CAS_FLOW_API_HOST/api/cas/devices/enroll" \
+  -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"label":"ci-sms-flow"}' | jq -r '.token // empty')"
+if [ -z "$CAS_FLOW_ENROLLED_TOKEN" ]; then
+  echo "::error::device enrollment failed; the API did not issue a device credential for CAS_FLOW_ALERT_TOKEN."
+  exit 1
+fi
 
 # Tunnel the host's API port into the device over adb (USB/emulator agnostic).
 API_PORT_FROM_URL="${CAS_FLOW_API_HOST##*:}"
@@ -189,6 +202,29 @@ for attempt in 1 2 3; do
 done
 [ "$grant_ok" = 1 ] || fail "SEND_SMS is not granted after 3 pm grant attempts — the flow cannot run."
 
+# Location: the alert path captures one bounded position fix and the console
+# must store it with accuracy and capture time. Grant fine location and
+# inject a known fix into the emulator's GPS, then the alert-phase assertion
+# below proves the fix reached the incident record. Without the grant the app
+# returns instantly with no fix (by design — the alert never waits on GPS).
+loc_grant_ok=0
+for attempt in 1 2 3; do
+  adb shell pm grant "$PKG" android.permission.ACCESS_FINE_LOCATION > /dev/null 2>&1 || true
+  if adb shell dumpsys package "$PKG" 2>/dev/null | grep -q 'android.permission.ACCESS_FINE_LOCATION: granted=true'; then
+    loc_grant_ok=1
+    break
+  fi
+  echo "ACCESS_FINE_LOCATION grant attempt $attempt did not stick (system may be restarting) — retrying in 10s"
+  sleep 10
+done
+[ "$loc_grant_ok" = 1 ] || fail "ACCESS_FINE_LOCATION is not granted after 3 pm grant attempts — the location assertion cannot run."
+# Fix on the Brandenburg Gate; the alert-phase assertion matches these
+# coordinates. `adb emu geo fix` takes longitude first.
+GEO_LON="13.37770"
+GEO_LAT="52.51630"
+adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
+  || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
+
 # Package scanning lags behind install on a freshly booted emulator (observed
 # >60s under TCG with a busy post-boot system), and a launch before the
 # component registers fails with "Activity class does not exist". Retry that
@@ -272,10 +308,25 @@ final_state="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r --arg id "$out
 [ "$final_state" = "DEAD_LETTER" ] || fail "outbox item $outbox_id never reached DEAD_LETTER (state: ${final_state:-missing}) within ${TIMEOUT_S}s — the receipt contract or the app's failure reporting drifted."
 echo "Alert phase passed: incident $incident_id, outbox item $outbox_id -> DEAD_LETTER (broken number '$BAD_NUMBER')."
 
+# The trigger POST carried the injected fix; the console must store it with
+# its accuracy radius and capture time (age is derived at render time, so a
+# stale fix can never masquerade as current).
+loc_json="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -c '.activeIncident.location // empty')"
+[ -n "$loc_json" ] || fail "active incident has no stored location — the alert's position fix did not reach the incident record."
+# The API renders capturedAt with Date.toISOString(), which always carries
+# milliseconds; jq's fromdateiso8601 rejects those, so strip them first.
+echo "$loc_json" | jq -e '
+  (.latitude  - ('"$GEO_LAT"' | tonumber) | . as $d | ($d * $d) < 0.0001) and
+  (.longitude - ('"$GEO_LON"' | tonumber) | . as $d | ($d * $d) < 0.0001) and
+  (.accuracyM | type == "number" and . > 0) and
+  (.capturedAt | type == "string" and ((sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) < now))
+' > /dev/null || fail "stored location drifted from the injected fix ($GEO_LAT,$GEO_LON): $loc_json"
+echo "Location phase passed: incident carries fix $loc_json"
+
 # --- Step 3: console re-queue, then handset pickup with a fixed number -------
 
 echo "== Re-queue phase: console re-queue, handset pickup with fixed number '$GOOD_NUMBER' =="
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ALERT_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "console re-queue of the dead-lettered item" 200 "$status"
 jq -e --arg id "$outbox_id" '.id == $id and .state == "QUEUED"' /tmp/sms-flow-response.json > /dev/null \
   || fail "re-queue response drifted (expected {id, state: \"QUEUED\"}): $(cat /tmp/sms-flow-response.json | head -c 300)"

@@ -84,13 +84,20 @@ object DeviceSmsSender {
     private val batches = mutableMapOf<String, Batch>()
     private val handler = Handler(Looper.getMainLooper())
 
-    /** Alert text mirrors the console's buildCasAlertMessage wording. */
-    fun alertBody(incidentId: String?): String {
-        val timestamp = java.time.Instant.now().toString().replace("T", " ").take(16)
+    /**
+     * Alert text mirrors the console's buildCasAlertMessage wording. The fix
+     * (when one was captured for this alert) is stated with its accuracy
+     * radius and age via AlertLocation.smsLocationClause — never as bare
+     * coordinates that could be misread as current truth.
+     */
+    fun alertBody(incidentId: String?, fix: AlertLocation.Fix? = null): String {
+        val nowMs = System.currentTimeMillis()
+        val timestamp = java.time.Instant.ofEpochMilli(nowMs).toString().replace("T", " ").take(16)
+        val locationClause = AlertLocation.smsLocationClause(fix, nowMs)
         return if (incidentId != null) {
-            "CAS P1 alert $incidentId at ${timestamp}Z. Begin response protocol. Do not call handset. Location follows."
+            "CAS P1 alert $incidentId at ${timestamp}Z. Begin response protocol. Do not call handset. $locationClause"
         } else {
-            "CAS P1 alert from this handset at ${timestamp}Z (console unreachable; no incident logged). Begin response protocol."
+            "CAS P1 alert from this handset at ${timestamp}Z (console unreachable; no incident logged). Begin response protocol. $locationClause"
         }
     }
 
@@ -276,6 +283,12 @@ object DeviceSmsSender {
                 connectTimeout = 10_000
                 readTimeout = 10_000
                 setRequestProperty("X-CAS-Device-Token", token)
+                // Once enrolled, the handset also presents its own revocable
+                // device credential; the console then binds this call to it
+                // (strictly — a revoked handset cannot fall back to the
+                // shared device token above).
+                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
             try {
                 val code = connection.responseCode
@@ -508,6 +521,12 @@ object DeviceSmsSender {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("X-CAS-Device-Token", token)
+                // Same binding as device-pending: once enrolled, the receipt
+                // is attributable to (and revocable with) this handset's own
+                // device credential, and a revoked handset cannot fall back
+                // to the shared device token.
+                TestStore.enrolledDeviceToken(context).takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Authorization", "Bearer $it") }
             }
             try {
                 connection.outputStream.use { it.write(receipt.toPayload().toString().toByteArray(Charsets.UTF_8)) }

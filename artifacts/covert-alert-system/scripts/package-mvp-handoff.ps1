@@ -4,7 +4,7 @@ param(
     # Handoff iteration baked into the deliverable filename. Bump it when the
     # operator-facing package intentionally changes; the CI freshness gate
     # compares ZIP contents, not the name.
-    [string]$Version = '0.4.0',
+    [string]$Version = '0.5.0',
     [switch]$SkipApkBuild,
     # The entry-point gate needs Windows PowerShell (powershell.exe) and a CMD
     # wrapper, so it cannot run on a Linux packager. Only skip it there; the
