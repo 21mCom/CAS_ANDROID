@@ -49,6 +49,14 @@ for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_T
   fi
 done
 
+# APK preflight lives here (not in the workflow's `script:` block): the
+# emulator action runs that block via /usr/bin/sh, which is dash on
+# ubuntu-latest and cannot do multi-line strict-mode safely.
+if [ ! -f "$CAS_FLOW_APK" ]; then
+  echo "::error::Downloaded APK missing at $CAS_FLOW_APK"
+  exit 1
+fi
+
 # Tunnel the host's API port into the device over adb (USB/emulator agnostic).
 API_PORT_FROM_URL="${CAS_FLOW_API_HOST##*:}"
 API_PORT_FROM_URL="${API_PORT_FROM_URL%%/*}"

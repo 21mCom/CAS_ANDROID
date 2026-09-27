@@ -402,16 +402,10 @@ jobs:
           force-avd-creation: false
           disable-animations: true
           emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          script: |
-            set -euo pipefail
-            apk="apk/app-debug.apk"
-            if [ ! -f "$apk" ]; then
-              echo "::error::Downloaded APK missing at $apk"
-              exit 1
-            fi
-            # The harness owns the whole flow: adb reverse tunnel, contract
-            # preflight, bad-number DEAD_LETTER, console re-queue,
-            # device-pending pickup, fixed-number SENT, plus on-device journal
-            # evidence. Any drift in the sms-receipt or device-pending
-            # contract fails this step loudly.
-            CAS_FLOW_APK="$apk" bash .github/scripts/verify-sms-flow.sh
+          # android-emulator-runner executes `script:` via /usr/bin/sh, which
+          # is dash on ubuntu-latest — `set -o pipefail` dies there with
+          # "Illegal option -o pipefail" (proven red on run 36328467873).
+          # Same single-line pattern as the boot-smoke job: the harness
+          # script runs under bash and owns its own strict mode plus the
+          # APK-missing preflight.
+          script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-sms-flow.sh
