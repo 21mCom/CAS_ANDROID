@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { StateResponseError } from '@/components/state-response-error';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
@@ -23,7 +24,11 @@ import Capture from '@/pages/capture';
 const queryClient = new QueryClient();
 
 function RoutedApp() {
-  const { runTestIncident } = useFieldTest();
+  const { runTestIncident, stateIssue, retryStateLoad } = useFieldTest();
+  // A state response this console cannot parse replaces every screen:
+  // rendering the console anyway would present unrecognized (or demo) data
+  // as real durable state.
+  if (stateIssue) return <StateResponseError message={stateIssue} onRetry={retryStateLoad} />;
   return (
     <AppShell onRunTest={runTestIncident}>
       <RoutedErrorBoundary>

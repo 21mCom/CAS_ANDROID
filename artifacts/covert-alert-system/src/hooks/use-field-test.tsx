@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
 
 export type GateStatus = 'verified' | 'partial' | 'blocked' | 'not-started';
 export type Priority = 'P1' | 'P2' | 'P3';
@@ -139,6 +140,14 @@ type FieldTestContextValue = FieldTestState & {
   requeueOutboxItem: (id: string, reason?: string) => Promise<void>;
   requestCapture: (kind: 'audio' | 'photo' | 'video') => Promise<void>;
   resetDemo: () => void;
+  /**
+   * Set when the server's state response did not match this console's
+   * contract: the app replaces every screen with the mismatch surface
+   * instead of rendering partial/garbage (or demo) data.
+   */
+  stateIssue: string | null;
+  /** Retries the state load after a stateIssue; clears it on success. */
+  retryStateLoad: () => void;
 };
 const initialGates: Gate[] = [
   {
@@ -237,6 +246,7 @@ const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 const DEVICE_TOKEN_KEY = 'cas-device-token';
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
+  const [stateIssue, setStateIssue] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,7 +257,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         // enrolls its own revocable device credential before anything is read.
         let response = await casAuthedFetch('/api/cas/state');
         if (!response.ok) throw new Error('Unable to load durable state');
-        let remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+        // The response is validated against the console's mirror of the
+        // server contract before any of it is applied: a drifted server
+        // (stale deployment, mixed environments) raises the mismatch
+        // surface instead of rendering partial/garbage data.
+        let remote = parseCasStateResponse(await response.json());
         if (remote.gates.length === 0 && remote.setup.length === 0) {
           // Seeding is a credentialed mutation: on a fresh server the
           // operator is asked for the alert credential before anything is
@@ -258,11 +272,14 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({ gates: initialGates, setup: initialSetup }),
           });
           response = await casAuthedFetch('/api/cas/state');
-          remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+          remote = parseCasStateResponse(await response.json());
         }
-        if (!cancelled) setState({ ...remote, fieldRun: initialState.fieldRun });
-      } catch {
-        if (!cancelled) setState(initialState);
+        if (!cancelled) {
+          setState({ ...remote, fieldRun: initialState.fieldRun });
+          setStateIssue(null);
+        }
+      } catch (error) {
+        if (!cancelled) applyLoadFailure(error, setStateIssue, () => setState(initialState));
       }
     };
     void load();
@@ -272,13 +289,21 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
   const reload = async () => {
     const response = await casAuthedFetch('/api/cas/state');
     if (!response.ok) throw new Error('Unable to reload durable state');
-    const remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
+    const remote = parseCasStateResponse(await response.json());
     setState((current) => ({ ...remote, fieldRun: current.fieldRun }));
+    setStateIssue(null);
+  };
+
+  // Any action whose reload hits a drifted server raises the same mismatch
+  // surface as the initial load; credential problems keep their alert.
+  const handleActionError = (error: unknown) => {
+    if (error instanceof CasStateShapeError) setStateIssue(error.message);
+    else reportAuthError(error);
   };
 
   const value = useMemo<FieldTestContextValue>(() => ({
     ...state,
-    updateGateStatus: (id, nextStatus) => { void casAuthedFetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload).catch(reportAuthError); },
+    updateGateStatus: (id, nextStatus) => { void casAuthedFetch(`/api/cas/gates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: nextStatus }) }).then(reload).catch(handleActionError); },
     recordObservation: (id, observation) => setState((current) => ({
       ...current,
       fieldRun: { ...current.fieldRun, observations: { ...current.fieldRun.observations, [id]: observation }, decision: 'pending' },
@@ -336,11 +361,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       ...current,
       fieldRun: { ...current.fieldRun, decision, startedAt: current.fieldRun.startedAt || new Date().toISOString() },
     })),
-    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void casAuthedFetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload).catch(reportAuthError); },
-    runTestIncident: () => { void casAuthedFetch('/api/cas/incidents/test', { method: 'POST' }).then(reload).catch(reportAuthError); },
-    triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(reportAuthError); },
-    acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(reportAuthError); },
-    resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(reportAuthError); },
+    toggleSetupItem: (id) => { const item = state.setup.find((entry) => entry.id === id); if (item) void casAuthedFetch(`/api/cas/setup/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ complete: !item.complete }) }).then(reload).catch(handleActionError); },
+    runTestIncident: () => { void casAuthedFetch('/api/cas/incidents/test', { method: 'POST' }).then(reload).catch(handleActionError); },
+    triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(handleActionError); },
+    acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(handleActionError); },
+    resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(handleActionError); },
     requeueOutboxItem: async (id, reason) => {
       const response = await casAuthedFetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
       if (!response.ok) {
@@ -362,8 +387,10 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       }
       await reload();
     },
-    resetDemo: () => { void reload(); },
-  }), [state]);
+    resetDemo: () => { void reload().catch(handleActionError); },
+    stateIssue,
+    retryStateLoad: () => { void reload().catch(handleActionError); },
+  }), [state, stateIssue]);
 
   return <FieldTestContext.Provider value={value}>{children}</FieldTestContext.Provider>;
 }
@@ -436,6 +463,23 @@ async function ensureDeviceToken(): Promise<string> {
 
 function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
+}
+
+/**
+ * Decides what the console shows when the initial state load fails. A
+ * response the console cannot parse is a server/console version mismatch
+ * and must raise the visible mismatch surface — falling back to the demo
+ * seed data would let an operator mistake it for real durable state. Only
+ * other failures (offline server, cancelled credential prompt) keep the
+ * demo fallback.
+ */
+export function applyLoadFailure(
+  error: unknown,
+  raiseMismatch: (message: string) => void,
+  fallBackToDemo: () => void,
+): void {
+  if (error instanceof CasStateShapeError) raiseMismatch(error.message);
+  else fallBackToDemo();
 }
 
 /**
