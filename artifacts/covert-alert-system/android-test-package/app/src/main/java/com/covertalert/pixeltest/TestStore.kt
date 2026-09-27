@@ -82,8 +82,10 @@ object TestStore {
      * is rejected (revoked or unknown), pickup and receipt calls stop until
      * the operator re-enters the enrollment credential — a legacy-token
      * fallback would let a revoked phone keep mutating delivery state. Reset
-     * only when the operator saves a different enrollment credential (a
-     * deliberate re-enrollment).
+     * only ever set, never cleared, by a successful enrollment in
+     * AlertSender.ensureDeviceToken — sticky until authenticated
+     * re-enrollment succeeds, so an unverified credential typed into the
+     * setup screen can never re-enable the shared-token fallback.
      */
     fun setDeviceCredentialProvisioned(context: Context, value: Boolean) =
         storage(context).edit().putBoolean(DEVICE_CREDENTIAL_PROVISIONED, value).apply()

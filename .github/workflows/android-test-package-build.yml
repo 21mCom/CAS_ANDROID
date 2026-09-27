@@ -6,6 +6,7 @@ on:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - ".github/scripts/check-silent-alert-channels.sh"
+      - ".github/scripts/check-revocation-boundary.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -22,6 +23,7 @@ on:
       - ".github/workflows/android-test-package-build.yml"
       - ".github/scripts/check-apk-manifest.py"
       - ".github/scripts/check-silent-alert-channels.sh"
+      - ".github/scripts/check-revocation-boundary.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -90,6 +92,13 @@ jobs:
       # start a visible activity besides the configured cover app.
       - name: Silent-channel invariant (no on-screen handoff)
         run: bash .github/scripts/check-silent-alert-channels.sh
+
+      # The revocation boundary is also cheaper to check statically: the
+      # provisioned flag must stay sticky until authenticated re-enrollment
+      # succeeds, or a revoked handset can type any enrollment credential and
+      # resume pickup/receipts under the legacy shared device token.
+      - name: Revocation-boundary invariant (sticky provisioned flag)
+        run: bash .github/scripts/check-revocation-boundary.sh
 
       - name: Read tool requirements
         id: tool-requirements

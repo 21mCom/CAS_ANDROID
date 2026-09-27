@@ -13,8 +13,14 @@ only applies while cas_responders is completely empty).
 **Why:** `tsx --test a.test.ts b.test.ts` runs files concurrently by default;
 shared mutable config tables make fan-out behavior depend on cross-file timing.
 
-**How to apply:** package.json `test:direct` keeps cas-config.test.ts in a
-second `&&`-chained `tsx --test` invocation so it never overlaps cas.test.ts.
-Any future DB-touching suite must join the sequential chain, not the
+**How to apply:** package.json `test:direct` runs every DB-mutating suite
+(cas.test.ts, cas-evidence.test.ts, cas-outbox-worker.test.ts,
+cas-readiness-schema.test.ts, cas-config.test.ts) in its own `&&`-chained
+`tsx --test` invocation — never two DB suites in one invocation. Only the
+non-DB suites (validate-gate0a-report, audit-journal-secrets) may share one.
+Any future DB-touching suite must join the sequential chain, not a
 concurrent file list, and must leave cas_responders/cas_message_templates
 empty in beforeEach/after (the env-fallback state the older suite expects).
+A completion review caught cas-evidence.test.ts running concurrently with
+cas.test.ts (both delete incident/outbox rows in beforeEach) — that pairing
+must not return.

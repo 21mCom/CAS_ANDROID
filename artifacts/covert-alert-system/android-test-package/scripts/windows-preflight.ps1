@@ -369,8 +369,23 @@ if ($ParserRegressionCheck) {
     New-Item -ItemType Directory -Path $driftDirectory | Out-Null
     try {
         $driftFile = Join-Path $driftDirectory 'tool-requirements.json'
-        '{"jdk":{"minimumMajor":21},"androidSdk":{"apiLevel":36,"platform":"android-36","buildToolsMinimum":"36.0.0"}}' |
-            Set-Content -Path $driftFile -Encoding Ascii
+        # Canonical shape (one field per line, unquoted numeric literals):
+        # the parser shares the declaration contract with the Bash harness,
+        # and compacted declarations are rejected by both validators — a
+        # compacted fixture here would be refused before its altered values
+        # could prove the thresholds are derived, not hardcoded.
+        @'
+{
+  "jdk": {
+    "minimumMajor": 21
+  },
+  "androidSdk": {
+    "apiLevel": 36,
+    "platform": "android-36",
+    "buildToolsMinimum": "36.0.0"
+  }
+}
+'@ | Set-Content -Path $driftFile -Encoding Ascii
         $driftedRequirements = Get-ToolRequirements $driftFile
         if ($null -eq $driftedRequirements -or $driftedRequirements.jdkMinimumMajor -ne 21 -or
             $driftedRequirements.apiLevel -ne 36 -or $driftedRequirements.sdkPlatform -ne 'android-36' -or

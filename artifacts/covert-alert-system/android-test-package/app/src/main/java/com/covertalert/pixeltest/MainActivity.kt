@@ -118,16 +118,19 @@ class MainActivity : Activity() {
         root.addView(alertTokenInput, LinearLayout.LayoutParams(-1, -2))
         root.addView(button("Save alert credential") {
             val value = alertTokenInput.text.toString().trim()
-            if (value != TestStore.alertToken(this)) {
-                // A different enrollment credential invalidates the device
-                // credential enrolled under the old one; re-enroll lazily.
-                // The provisioned flag resets too: only while it stays set
-                // does the handset refuse to fall back to the shared device
-                // token, and saving a new enrollment credential IS the
-                // deliberate re-enrollment action that lifts that refusal.
-                TestStore.setEnrolledDeviceToken(this, "")
-                TestStore.setDeviceCredentialProvisioned(this, value.isBlank())
-            }
+            // Saving a credential NEVER touches the enrolled device token or
+            // the provisioned flag. The flag stays sticky from the moment a
+            // first enrollment succeeds until a later enrollment succeeds
+            // again (AlertSender.ensureDeviceToken), and the enrolled token
+            // is only dropped when the server itself rejects it (401). If
+            // saving an unverified string cleared either one, a revoked
+            // handset could type anything and immediately resume
+            // pickup/receipts under the legacy shared device token — the
+            // provisioned guard in DeviceSmsSender would no longer fire.
+            // Deliberate re-enrollment still works: revoke the old
+            // credential in the console, the handset's next request gets a
+            // 401 that drops the dead token, and the credential saved here
+            // enrolls its replacement on the next trigger.
             TestStore.setAlertToken(this, value)
             // Record only whether a credential exists, never the credential.
             TestStore.record(this, "ALERT_CREDENTIAL_CONFIGURED", mapOf("configured" to value.isNotBlank()))
