@@ -126,3 +126,59 @@ mtime_ms = 1789621433238
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/faf1dd79-407c-4569-ad3e-aac2b6ed5afc/9d4f61f9-4d8a-4706-8336-c9677f44058c"
 storage_version_token = "1789621465857690"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "iya85GGEm6l9g5T2vQMAz"
+uri = "file://screenshots/console-overview.jpg"
+type = "image"
+title = "Console — Overview"
+description = "Server console home: pipeline warning banner, open incident with location/map link and evidence section, API + delivery worker status, recent incidents table."
+logical_id = "4acab408-6bc9-4c2d-a9a0-f1482e698179"
+content_hash = "sha256:a4e4b1e638b0b41c474ddadb4bda009a9052700dbba409b50b49c314c52dd72a"
+size = 119201
+mtime_ms = 1790549097149
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/4acab408-6bc9-4c2d-a9a0-f1482e698179/8296f8d9-1693-4143-a61b-37699a3411aa"
+storage_version_token = "1790549122664700"
+content_type = "image/jpeg"
+
+[[outputs]]
+id = "JHmBi2sWM-nMrrYjSsCh-"
+uri = "file://screenshots/console-responders.jpg"
+type = "image"
+title = "Console — Responders"
+description = "Responder management: add/edit/disable responders, per-person channels (SMS/WhatsApp/email) and delivery preferences."
+logical_id = "c5e0afde-fdad-42a9-a2ca-73b8cfba555d"
+content_hash = "sha256:a04272ab5a947ad3ecd9cf74147edf7c76729a2d370165bcb17127e606e5035d"
+size = 91869
+mtime_ms = 1790549097152
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/c5e0afde-fdad-42a9-a2ca-73b8cfba555d/eecdd06d-4dff-4afb-9328-c45c33e35466"
+storage_version_token = "1790549123234888"
+content_type = "image/jpeg"
+
+[[outputs]]
+id = "t9QsxUpkm_uJBIpVkknU3"
+uri = "file://screenshots/console-messages.jpg"
+type = "image"
+title = "Console — Messages"
+description = "Alert message template editor: per-channel wording with placeholders (name, time, location link) and a preview of what each responder receives."
+logical_id = "d4f0b516-c0ce-431e-9bc5-626ecd88929e"
+content_hash = "sha256:8e75f1e883b5479e532f3b7a79dc225b60c5ce49b6597ef369cdb5114627944e"
+size = 94405
+mtime_ms = 1790549097155
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/d4f0b516-c0ce-431e-9bc5-626ecd88929e/2d36a1f8-5f05-44b6-849c-aa9f7ddc9bad"
+storage_version_token = "1790549123762263"
+content_type = "image/jpeg"
+
+[[outputs]]
+id = "cpFhAS6AObgkdSuGk6ZnQ"
+uri = "file://screenshots/console-capture.jpg"
+type = "image"
+title = "Console — Capture settings"
+description = "Evidence capture playground: independent audio/photo/video toggles (off / on trigger / on responder request) plus the immediate vs screen-off start-timing switch."
+logical_id = "e2cf5792-b48c-4418-a52a-bfecd4c20827"
+content_hash = "sha256:0ae67fd8389e6d6e869d390e9180d4f20dbf550b930414c4b220eb5e982e737d"
+size = 101798
+mtime_ms = 1790549097158
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/e2cf5792-b48c-4418-a52a-bfecd4c20827/e9d8ef58-1077-47e3-9cee-8c73d911b403"
+storage_version_token = "1790549124303846"
+content_type = "image/jpeg"
