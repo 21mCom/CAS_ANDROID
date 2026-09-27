@@ -23,4 +23,6 @@ concurrent file list, and must leave cas_responders/cas_message_templates
 empty in beforeEach/after (the env-fallback state the older suite expects).
 A completion review caught cas-evidence.test.ts running concurrently with
 cas.test.ts (both delete incident/outbox rows in beforeEach) — that pairing
-must not return.
+must not return. Two DB suites in one invocation also flaked in practice
+(cas-config + cas-evidence wiped each other's rows mid-test, with failures
+shifting between suites run to run).

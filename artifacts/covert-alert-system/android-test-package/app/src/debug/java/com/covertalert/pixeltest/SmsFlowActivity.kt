@@ -46,8 +46,15 @@ class SmsFlowActivity : Activity() {
         extras?.getString("deviceToken")?.let { TestStore.setDeviceToken(this, it) }
         extras?.getString("alertToken")?.let {
             // A new enrollment credential invalidates the device credential
-            // enrolled under the old one; the next trigger re-enrolls.
-            if (it.trim() != TestStore.alertToken(this)) TestStore.setEnrolledDeviceToken(this, "")
+            // enrolled under the old one; the next trigger re-enrolls. But
+            // once enrollment has consumed the credential (stored value is
+            // blank), a launch that passes the same credential again — the
+            // harness does on every phase — must NOT wipe the enrolled
+            // device credential: pickup/receipt authenticate with it, and
+            // the console refuses the retired shared token once any device
+            // is enrolled.
+            val stored = TestStore.alertToken(this)
+            if (stored.isNotBlank() && it.trim() != stored) TestStore.setEnrolledDeviceToken(this, "")
             TestStore.setAlertToken(this, it)
         }
         extras?.getString("responders")?.let { TestStore.setSmsResponders(this, it) }

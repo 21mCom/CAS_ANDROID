@@ -2419,7 +2419,14 @@ test("outbox status surfaces the worker heartbeat once ticks are recorded", asyn
 // Handset endpoints require the shared device token; device-mode tests
 // authenticate with this header.
 const DEVICE_TOKEN = "contract-test-device-token";
-const deviceAuth = { "X-CAS-Device-Token": DEVICE_TOKEN };
+// Post-enrollment the handset authenticates with its own revocable device
+// credential; the shared X-CAS-Device-Token is retired once any credential
+// exists (the suite enrolls at startup), so functional pickup/receipt calls
+// authenticate as this suite handset. legacyDeviceAuth exercises the retired
+// fallback path explicitly.
+const suiteHandset = await issueDeviceCredential("test-suite-handset");
+const deviceAuth = { authorization: `Bearer ${suiteHandset.token}` };
+const legacyDeviceAuth = { "X-CAS-Device-Token": DEVICE_TOKEN };
 
 async function withSmsDeliveryMode<T>(mode: "device" | "gateway", fn: () => Promise<T>): Promise<T> {
   const previous = process.env.CAS_SMS_DELIVERY_MODE;
@@ -3127,15 +3134,20 @@ test("handset endpoints require the device token and stay closed when none is co
     const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
     assert.equal(row.state, "QUEUED");
 
-    // The real handset's token works.
+    // The enrolled handset's credential works.
     const authed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
     assert.equal(authed.status, 200);
+
+    // The retired shared device token no longer opens pickup on its own:
+    // enrollment is in use, so only an enrolled Bearer credential passes.
+    const retired = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
+    assert.equal(retired.status, 401);
   });
 
   // Fail closed: device mode without CAS_DEVICE_TOKEN configured refuses
-  // every handset call rather than running unauthenticated.
+  // legacy-header handset calls rather than running unauthenticated.
   await withEnv({ CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_TOKEN: undefined }, async () => {
-    const closed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth });
+    const closed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
     assert.equal(closed.status, 503);
   });
 });
@@ -3806,14 +3818,18 @@ test("handset receipts accept an enrolled device credential and a revoked device
         .where(sql`${casOutbox.incidentId} = ${secondId} AND ${casOutbox.transport} = 'SMS'`))[0];
       assert.equal(queued.state, "QUEUED");
 
-      // A legacy handset without an enrolled credential still receipts via
-      // the shared device token alone.
+      // Omitting the Bearer credential is not a way back in: once enrollment
+      // is in use the shared device token alone is retired, so the revoked
+      // phone — which still holds that token — can neither post receipts nor
+      // read the pickup list.
       const legacy = await fetch(`${baseUrl}/cas/incidents/${secondId}/device-receipt`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...deviceAuth },
+        headers: { "Content-Type": "application/json", ...legacyDeviceAuth },
         body: JSON.stringify({ channel: "SMS", results: [{ recipient: "+1555000111", ok: true }] }),
       });
-      assert.equal(legacy.status, 200);
+      assert.equal(legacy.status, 401);
+      const legacyPickup = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
+      assert.equal(legacyPickup.status, 401);
     },
   );
 });

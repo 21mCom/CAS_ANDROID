@@ -424,7 +424,12 @@ const DEVICE_ENV = {
   CAS_SMS_DELIVERY_MODE: "device",
   CAS_DEVICE_TOKEN: "cas-config-test-device-token",
 } as const;
-const DEVICE_HEADERS = { "x-cas-device-token": DEVICE_ENV.CAS_DEVICE_TOKEN };
+// The pickup presents the suite's enrolled credential the way the handset
+// does (Bearer): once any device credential exists the shared
+// CAS_DEVICE_TOKEN on x-cas-device-token is retired (otherwise a revoked
+// handset could resume with it), so the env token alone no longer
+// authorizes device-pending.
+const DEVICE_HEADERS = { authorization: `Bearer ${suiteCredential.token}` };
 
 test("device-mode trigger hands the handset the console circle and template", async () => {
   await withEnv(DEVICE_ENV, async () => {

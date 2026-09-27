@@ -62,6 +62,14 @@ if [ -z "$CAS_FLOW_ENROLLED_TOKEN" ]; then
   exit 1
 fi
 
+# APK preflight lives here (not in the workflow's `script:` block): the
+# emulator action runs that block via /usr/bin/sh, which is dash on
+# ubuntu-latest and cannot do multi-line strict-mode safely.
+if [ ! -f "$CAS_FLOW_APK" ]; then
+  echo "::error::Downloaded APK missing at $CAS_FLOW_APK"
+  exit 1
+fi
+
 # Tunnel the host's API port into the device over adb (USB/emulator agnostic).
 API_PORT_FROM_URL="${CAS_FLOW_API_HOST##*:}"
 API_PORT_FROM_URL="${API_PORT_FROM_URL%%/*}"
@@ -131,14 +139,17 @@ status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending")"
 expect_status "device-pending refuses a missing device token" 401 "$status"
 
 status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending" "" "$CAS_FLOW_DEVICE_TOKEN")"
-expect_status "device-pending accepts the device token" 200 "$status"
+expect_status "device-pending refuses the retired shared device token once enrollment is in use" 401 "$status"
+
+status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending" "" "" "$CAS_FLOW_ENROLLED_TOKEN")"
+expect_status "device-pending accepts the enrolled device credential" 200 "$status"
 if ! jq -e '.items | type == "array"' /tmp/sms-flow-response.json > /dev/null; then
   fail "device-pending 200 response has no items array — the pickup contract drifted: $(cat /tmp/sms-flow-response.json | head -c 300)"
 fi
 echo "contract OK: device-pending returns an items array"
 
 probe='{}'
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" "$probe" "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "device-receipt rejects a malformed body" 400 "$status"
 
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"SMS","results":[{"recipient":"+15550100","ok":true}]}')"
@@ -147,13 +158,13 @@ expect_status "device-receipt refuses a missing device token" 401 "$status"
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" '{"results":[{"recipient":"+15550100","ok":true}]}')"
 expect_status "sms-receipt refuses a missing device token" 401 "$status"
 
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "sms-receipt rejects a malformed body" 400 "$status"
 
 # The on-screen WhatsApp handoff was removed (no-screen-flash rule): WhatsApp
 # is a server-side gateway channel now, so a device receipt naming it must be
 # refused loudly instead of steering a handset flow that no longer exists.
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"WHATSAPP","results":[{"recipient":"+15550100","ok":true}]}' "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"WHATSAPP","results":[{"recipient":"+15550100","ok":true}]}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "device-receipt refuses the retired WHATSAPP device channel" 409 "$status"
 
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger")"
@@ -177,6 +188,20 @@ for i in $(seq 1 36); do
   sleep 5
 done
 [ "$pm_ready" = 1 ] || fail "package service never came up after boot."
+# Inject the emulator GPS fix as early as possible: the app's bounded
+# getCurrentLocation wait (AlertLocation.MAX_WAIT_MS) can expire before the
+# location pipeline picks up a fix injected seconds earlier on a slow TCG
+# boot (observed as SMS_FLOW_LOCATION NO_FIX — the alert then goes out
+# unfixed and the location assertion fails). Early injection here plus the
+# re-injection before the alert phase below give the pipeline the whole
+# install/grant phase to settle. dumpsys location does NOT report the
+# injected coordinates on this image, so liveness cannot be polled — only
+# timed. Fix on the Brandenburg Gate; the alert-phase assertion matches
+# these coordinates. `adb emu geo fix` takes longitude first.
+GEO_LON="13.37770"
+GEO_LAT="52.51630"
+adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
+  || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
 install_ok=0
 install_out=""
 for attempt in 1 2 3; do
@@ -218,12 +243,12 @@ for attempt in 1 2 3; do
   sleep 10
 done
 [ "$loc_grant_ok" = 1 ] || fail "ACCESS_FINE_LOCATION is not granted after 3 pm grant attempts — the location assertion cannot run."
-# Fix on the Brandenburg Gate; the alert-phase assertion matches these
-# coordinates. `adb emu geo fix` takes longitude first.
-GEO_LON="13.37770"
-GEO_LAT="52.51630"
+# Re-inject the fix just before the alert phase and give the location
+# pipeline a settle window, so the app's bounded capture sees a live fix
+# even on a slow TCG boot.
 adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
   || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
+sleep 10
 
 # Package scanning lags behind install on a freshly booted emulator (observed
 # >60s under TCG with a busy post-boot system), and a launch before the

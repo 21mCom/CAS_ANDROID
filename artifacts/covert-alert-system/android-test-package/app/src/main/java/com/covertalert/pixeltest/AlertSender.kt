@@ -158,6 +158,9 @@ object AlertSender {
     private fun ensureDeviceToken(context: Context, baseUrl: String, enrollmentCredential: String): Enrollment {
         val cached = TestStore.enrolledDeviceToken(context)
         if (cached.isNotBlank()) return Enrollment(cached, null)
+        if (enrollmentCredential.isBlank()) {
+            return Enrollment(null, "Not enrolled and no enrollment credential saved - save the credential before sending")
+        }
         return runCatching {
             val connection = (URL("$baseUrl/api/cas/devices/enroll").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"

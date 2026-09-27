@@ -30,3 +30,7 @@
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.
 - [CAS console read posture](cas-console-read-posture.md) — console GETs are credentialed like mutations; anonymous reads were retired for self-hosting (healthz stays open).
+- [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — closed server-side: the shared device token is retired once any credential row exists, so a revoked handset cannot resume with it.
+- [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.
+- [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
+- [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.

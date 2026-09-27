@@ -171,6 +171,17 @@ export async function listDeviceCredentials() {
   }));
 }
 
+/**
+ * True once any device credential row exists, active or revoked (revocation
+ * keeps the row). Used to retire the legacy shared-device-token fallback on
+ * the handset endpoints: after the first enrollment, only enrolled Bearer
+ * credentials authorize pickup and receipts.
+ */
+export async function anyDeviceCredentialExists(): Promise<boolean> {
+  const rows = await db.select({ id: casDeviceCredentials.id }).from(casDeviceCredentials).limit(1);
+  return rows.length > 0;
+}
+
 /** Reads the authenticated device identity the gate attached. */
 export function casDeviceFrom(res: Response): CasAuthenticatedDevice {
   return res.locals.casDevice as CasAuthenticatedDevice;
