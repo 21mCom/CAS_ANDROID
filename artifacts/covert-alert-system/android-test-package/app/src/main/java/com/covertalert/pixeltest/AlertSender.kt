@@ -49,7 +49,10 @@ object AlertSender {
             return Result(false, "Server URL must start with https:// (plain HTTP is only accepted for loopback dev endpoints that cannot leave the machine: 127.0.0.1 via adb reverse, or the emulator's 10.0.2.2 host alias)")
         }
         val enrollment = enrollmentCredential.trim()
-        if (enrollment.isEmpty()) {
+        // An already-provisioned handset holds only its enrolled device
+        // credential (the enrollment credential was discarded on purpose), so
+        // a blank field is fine as long as the cached credential remains.
+        if (enrollment.isEmpty() && TestStore.enrolledDeviceToken(context).isBlank()) {
             return Result(false, "Enrollment credential required - save the credential before sending")
         }
         val enrolled = ensureDeviceToken(context, trimmed, enrollment)

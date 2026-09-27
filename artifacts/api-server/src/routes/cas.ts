@@ -61,7 +61,7 @@ const enrollSchema = z.object({
  */
 router.post("/cas/devices/enroll", requireCasEnrollmentCredential, async (req, res, next) => {
   try {
-    const parsed = setupPatchSchema.safeParse(req.body);
+    const parsed = enrollSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid enrollment request", issues: parsed.error.issues });
     }
@@ -289,6 +289,31 @@ router.get("/cas/outbox/status", async (_req, res, next) => {
     }
 
     const lastError = lastErrorRows[0];
+    return res.json({
+      counts,
+      oldestPendingAt: oldestPending[0]?.createdAt.toISOString() ?? null,
+      lastDeliveryError: lastError
+        ? {
+            transport: lastError.transport,
+            state: lastError.state,
+            attempts: lastError.attempts,
+            message: lastError.lastError,
+          }
+        : null,
+      // Tells the console who delivers SMS: the worker ("gateway") or the
+      // alerting handset ("device"), so a QUEUED SMS item in device mode is
+      // read as "waiting for the handset's receipt", not a stalled worker.
+      // deviceChannels lists which transports the handset delivers itself in
+      // device mode (CAS_DEVICE_CHANNELS).
+      smsDeliveryMode: smsDeliveryMode(),
+      deviceChannels: deviceChannels(),
+      // False means the handset endpoints are closed (503): receipts cannot
+      // arrive until CAS_DEVICE_TOKEN is set and entered on the handset.
+      deviceAuthConfigured: deviceAccessToken() !== undefined,
+      worker: getCasOutboxWorkerHeartbeat(),
+    });
+  } catch (error) { return next(error); }
+});
 
 /**
  * The handset endpoints (device-pending, device-receipt) enumerate and
@@ -327,6 +352,17 @@ async function requireDeviceAccess(req: Request, res: Response): Promise<{ devic
   }
   return {};
 }
+
+/**
+ * Device-direct pickup list for the alerting handset. In device mode the
+ * worker never claims the handset-delivered channels (CAS_DEVICE_CHANNELS),
+ * so after an operator re-queues an abandoned delivery the handset learns
+ * about it here, re-sends it itself, and reports the outcome to the receipt
+ * endpoint. Read-only: the receipt call is the state transition, so polling
+ * can never claim or mutate anything.
+ */
+router.get("/cas/outbox/device-pending", async (req, res, next) => {
+  try {
     const channels = deviceChannels();
     if (channels.length === 0) {
       return res.status(409).json({
@@ -582,7 +618,7 @@ router.post("/cas/incidents/:id/device-receipt", (req, res, next) =>
 
 router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
   try {
-    const parsed = setupPatchSchema.safeParse(req.body);
+    const parsed = bootstrapSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid bootstrap payload", issues: parsed.error.issues });
     }
@@ -609,7 +645,7 @@ router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
 router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) => {
   try {
     const now = new Date();
-    const id = req.params.id;
+    const id = `test-${now.getTime()}-${randomUUID()}`;
     await db.insert(casIncidents).values({ id, priority: "P3", status: "RESOLVED", triggerCount: 1, createdAt: now, updatedAt: now });
     await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: `Local test action completed by ${deviceAttribution(res)}. No message was sent and no device action was triggered.`, createdAt: now });
     return res.status(201).json({ id });
@@ -649,7 +685,7 @@ const triggerSchema = z.object({
 // rejected with 401 and recorded.
 router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, next) => {
   try {
-    const parsed = setupPatchSchema.safeParse(req.body);
+    const parsed = triggerSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid trigger request", issues: parsed.error.issues });
     }
@@ -672,36 +708,86 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
       ? enabledDevice
       : enabledDevice.filter((channel) => requested.includes(channel));
     const result = await db.transaction(async (tx) => {
-      // Lock the row before checking its state so a concurrent worker cannot
-      // complete or re-claim the item between the check and the update.
-      await tx.execute(sql`SELECT id FROM cas_outbox WHERE id = ${id} FOR UPDATE`);
-      const rows = await tx.select().from(casOutbox).where(eq(casOutbox.id, id)).limit(1);
-      const item = rows[0];
-      if (!item) return "missing" as const;
-      if (item.state !== "DEAD_LETTER") return "conflict" as const;
-      await tx.update(casOutbox).set({
-        state: "QUEUED",
-        attempts: 0,
-        claimedBy: null,
-        claimedAt: null,
-        nextAttemptAt: now,
-        // Starts a new delivery cycle for device channels: the receipt
-        // endpoint only accepts receipts echoing this token afterwards, so a
-        // stale retried receipt from the superseded batch (rejected 410, and
-        // dropped by the handset) can never mark the re-queued item SENT
-        // before the replacement send goes out. Server-generated, not a
-        // timestamp: handset and console clocks are not guaranteed to agree.
-        deviceCycleToken: randomUUID(),
-      }).where(eq(casOutbox.id, id));
-      await tx.insert(casIncidentEvents).values({
-        id: `${id}-requeued-${now.getTime()}`,
-        incidentId: item.incidentId,
-        type: "DELIVERY_REQUEUED",
-        priority: item.priority,
-        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again. Re-queued by ${deviceAttribution(res)}.${body.data.reason ? ` Responder note: ${body.data.reason}` : ""}`,
-        createdAt: now,
-      });
-      return "requeued" as const;
+      // Serialize the active-incident check with its insert/update. A regular
+      // transaction does not prevent two READ COMMITTED transactions from
+      // both observing no active incident before either one inserts.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('cas:active-incident', 0))`);
+      const active = await tx.select().from(casIncidents)
+        .where(sql`${casIncidents.status} <> 'RESOLVED'`)
+        .orderBy(desc(casIncidents.createdAt))
+        .limit(1);
+      const now = new Date();
+
+      const location = parsed.data.location;
+      const locationColumns = location
+        ? {
+            locationLatitude: location.latitude,
+            locationLongitude: location.longitude,
+            locationAccuracyM: location.accuracyM,
+            locationCapturedAt: new Date(location.capturedAt),
+          }
+        : undefined;
+
+      if (active[0]) {
+        const incident = active[0];
+        // A repeat trigger can carry a fresher fix than the one stored (the
+        // first alert may have gone out before the handset got a lock).
+        // Replace the stored fix only when the incoming one is newer — never
+        // let an older re-send move the incident backwards in time.
+        const incomingCapturedAt = location ? new Date(location.capturedAt) : null;
+        const storedCapturedAt = incident.locationCapturedAt;
+        const storeNewerFix = incomingCapturedAt !== null
+          && (storedCapturedAt === null || incomingCapturedAt > storedCapturedAt);
+        await tx.update(casIncidents).set({
+          triggerCount: incident.triggerCount + 1,
+          updatedAt: now,
+          ...(storeNewerFix ? locationColumns : {}),
+        }).where(eq(casIncidents.id, incident.id));
+        const events = [{ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: `Repeat trigger from ${deviceAttribution(res)} folded into the existing active incident; timers and outbox were not reset.`, createdAt: now }];
+        if (storeNewerFix && location) {
+          events.push({
+            id: `${incident.id}-location-${randomUUID()}`,
+            incidentId: incident.id,
+            type: "LOCATION_UPDATED",
+            priority: "P2",
+            detail: `Fresher position fix stored from a repeat trigger: ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)} (±${Math.round(location.accuracyM)} m, captured ${location.capturedAt}).`,
+            createdAt: now,
+          });
+        }
+        await tx.insert(casIncidentEvents).values(events);
+        return { id: incident.id, reused: true };
+      }
+
+      const id = `sim-${now.getTime()}-${randomUUID()}`;
+      await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now, ...locationColumns });
+      // Queue one outbox item per channel that can actually deliver this
+      // alert: the handset's requested∩enabled device channels, plus every
+      // provider-configured gateway channel that is not device-delivered.
+      // A channel nobody can deliver must not create a row that can only
+      // dead-letter — that noise trains responders to ignore the alarm.
+      const transports: string[] = [
+        ...deviceTransports,
+        ...configuredProviderTransports().filter(
+          (transport) => !(enabledDevice as string[]).includes(transport),
+        ),
+      ];
+      await tx.insert(casIncidentEvents).values([
+        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: `Durable trigger received from ${deviceAttribution(res)}; incident identity committed.`, createdAt: now },
+        { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: transports.length > 0 ? `${transports.join(", ")} outbox items queued independently.` : "No outbox items queued: no deliverable channel was requested/enabled on the handset or provider-configured on the console.", createdAt: now },
+      ]);
+      if (transports.length > 0) {
+        await tx.insert(casOutbox).values(
+          transports.map((transport) => ({
+            id: `${id}-${transport.toLowerCase()}`,
+            incidentId: id,
+            transport,
+            state: "QUEUED",
+            priority: "P1",
+            createdAt: now,
+          })),
+        );
+      }
+      return { id, reused: false };
     });
     return res.status(result.reused ? 200 : 201).json(result);
   } catch (error) { return next(error); }
@@ -745,7 +831,9 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
     // Optional responder note recording what was fixed before re-queuing, so
     // the incident journal shows the manual recovery was deliberate. A bare
     // POST with no body still re-queues exactly as before.
-    const body = gatePatchSchema.parse(req.body);
+    const body = z
+      .object({ reason: z.string().trim().min(1).max(500).optional() })
+      .safeParse(req.body ?? {});
     if (!body.success) {
       return res.status(400).json({ error: "Invalid re-queue note", issues: body.error.issues });
     }
@@ -809,7 +897,7 @@ router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: s
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid setup update", issues: parsed.error.issues });
     }
-    const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
+    const [row] = await db.update(casSetupReadiness).set({ complete: parsed.data.complete, updatedAt: new Date() }).where(eq(casSetupReadiness.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Setup item not found" });
     logger.info({ casDevice: casDeviceFrom(res), setupId: row.id, complete: row.complete }, "CAS setup readiness toggled");
     return res.json(row);

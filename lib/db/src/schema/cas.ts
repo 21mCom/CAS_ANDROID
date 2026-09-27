@@ -91,6 +91,7 @@ export const casDeviceCredentials = pgTable("cas_device_credentials", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
+
 export const casSetupReadiness = pgTable("cas_setup_readiness", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -123,7 +124,6 @@ export const insertCasGateEvidenceSchema = createInsertSchema(casGateEvidence);
 export type CasIncident = typeof casIncidents.$inferSelect;
 export type CasIncidentEvent = typeof casIncidentEvents.$inferSelect;
 export type CasOutbox = typeof casOutbox.$inferSelect;
-
 export type CasDeviceCredential = typeof casDeviceCredentials.$inferSelect;
 export type CasSetupReadiness = typeof casSetupReadiness.$inferSelect;
 export type CasGateEvidence = typeof casGateEvidence.$inferSelect;

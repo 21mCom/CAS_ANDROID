@@ -369,6 +369,13 @@ async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Re
   return response;
 }
 
+// Each console browser enrolls its own revocable device credential: the
+// operator enters the shared enrollment credential (the server's
+// CAS_ALERT_TOKEN secret) once, the browser exchanges it at the enrollment
+// endpoint for a per-device token, and only that token is kept (in
+// sessionStorage) and presented on mutations. A lost laptop or shared
+// session is then containable by revoking that one credential, and every
+// journaled mutation names the console that sent it.
 async function ensureDeviceToken(): Promise<string> {
   const stored = sessionStorage.getItem(DEVICE_TOKEN_KEY) ?? '';
   if (stored) return stored;
@@ -390,6 +397,7 @@ async function ensureDeviceToken(): Promise<string> {
   sessionStorage.setItem(DEVICE_TOKEN_KEY, token);
   return token;
 }
+
 function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
 }

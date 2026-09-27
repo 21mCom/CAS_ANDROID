@@ -281,10 +281,15 @@ class MainActivity : Activity() {
                 "fixAgeS" to fix?.let { (System.currentTimeMillis() - it.capturedAtMs) / 1000 },
                 "provider" to fix?.provider,
             ))
-            if (baseUrl.isBlank() || token.isBlank()) {
-                // Without a server URL — or without the alert credential the
-                // trigger endpoint requires (401 otherwise) — no incident can
-                // be committed; the alert still leaves this handset directly.
+            // A provisioned handset no longer holds the enrollment credential
+            // (it was discarded after the exchange), so a blank field must not
+            // stop later alerts: the cached enrolled credential authorizes the
+            // trigger and the incident is still created server-side.
+            val hasEnrolledCredential = TestStore.enrolledDeviceToken(this).isNotBlank()
+            if (baseUrl.isBlank() || (token.isBlank() && !hasEnrolledCredential)) {
+                // Without a server URL — or without any credential the trigger
+                // endpoint accepts (401 otherwise) — no incident can be
+                // committed; the alert still leaves this handset directly.
                 val reason = if (baseUrl.isBlank()) {
                     "no server URL configured; texting responders directly without an incident"
                 } else {
