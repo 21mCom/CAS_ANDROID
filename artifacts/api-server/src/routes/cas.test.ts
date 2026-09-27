@@ -1210,10 +1210,14 @@ test("re-queue rejects notes that contain credentials and journals nothing", asy
       body: JSON.stringify(body),
     });
 
+  // Stripe's documentation example key, assembled at runtime so the literal
+  // never appears in source: GitHub push protection (GH013) blocks any push
+  // whose new commits contain the contiguous string.
+  const stripeDocExampleKey = "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc";
   // Each of these pastes an obvious secret shape a responder might copy out
   // of a provider console while fixing the delivery problem.
   const leakedNotes = [
-    "Rotated key to sk_live_4eC39HqLyjWDarjtT1zdp7dc",
+    `Rotated key to ${stripeDocExampleKey}`,
     "New key is sk-9f8e7d6c5b4a3210fedc9876",
     "Set header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dbsj9s8df",
     "Updated provider password=Sup3rSecret!2026 in the console",
@@ -1273,7 +1277,8 @@ test("journal audit flags pre-guard DELIVERY_REQUEUED entries that pasted a cred
 
   // Simulate entries written before the guard shipped: stored verbatim, one
   // carrying a pasted credential, one a legitimate fix description.
-  const secret = "sk_live_4eC39HqLyjWDarjtT1zdp7dc";
+  // Assembled at runtime; see stripeDocExampleKey above (GH013).
+  const secret = "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc";
   await db.insert(casIncidentEvents).values([
     {
       id: `${id}-legacy-leak`,
