@@ -23,6 +23,8 @@ Two CI-only traps for CAS_ANDROID emulator jobs (neither reproduces locally):
    block that works on macOS (where sh is bash in POSIX mode) fails
    instantly on ubuntu.
 
-Known flake: a post-reboot `adb root` re-acquire can return
-`adb: unable to connect for root: closed` — transient adbd disconnect; a
-rerun passes. No retry is built into the scripts.
+Known flake: any `adb root` in an emulator job (initial acquire or
+post-reboot re-acquire) can fail on a transient adbd disconnect — observed
+both as `adb: unable to connect for root: closed` and as a fast non-zero
+exit ~1 s after a successful APK install; a rerun of the same tree passes.
+No retry is built into the scripts.
