@@ -1,0 +1,10 @@
+{
+  "androidSdk": {
+    "buildToolsMinimum": "35.0.0",
+    "platform": "android-35",
+    "apiLevel": 35
+  },
+  "jdk": {
+    "minimumMajor": 17
+  }
+}

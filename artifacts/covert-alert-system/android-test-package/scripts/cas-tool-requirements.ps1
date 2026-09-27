@@ -33,7 +33,33 @@ function Get-ToolRequirements {
         return $null
     }
     try {
-        $parsed = Get-Content -Path $Path -Raw | ConvertFrom-Json
+        $raw = Get-Content -Path $Path -Raw
+        $parsed = $raw | ConvertFrom-Json
+        # Canonical-shape guard: the Gate 0A Bash harness validates this same
+        # file with single-line sed extractions, so the declaration contract is
+        # one field per line with unquoted numeric literals. A reformatted
+        # declaration — compacted onto shared lines, or carrying numbers as
+        # quoted strings — parses fine here but is rejected there, which is
+        # exactly the workstation-passes/field-fails drift the parity gate
+        # exists to catch. Reject any field that appears in a non-canonical
+        # form so both validators accept and reject identical declarations.
+        # Field order within the canonical shape is not contractual, and a
+        # wholly absent field passes this guard to be caught by the
+        # plausibility checks below (mirroring the harness's empty-extraction
+        # rejection).
+        $canonicalFields = @(
+            @{ Key = 'minimumMajor';      Pattern = '(?m)^\s*"minimumMajor"\s*:\s*\d+\s*,?\s*$' }
+            @{ Key = 'apiLevel';          Pattern = '(?m)^\s*"apiLevel"\s*:\s*\d+\s*,?\s*$' }
+            @{ Key = 'platform';          Pattern = '(?m)^\s*"platform"\s*:\s*"android-\d+"\s*,?\s*$' }
+            @{ Key = 'buildToolsMinimum'; Pattern = '(?m)^\s*"buildToolsMinimum"\s*:\s*"[^"]+"\s*,?\s*$' }
+        )
+        foreach ($field in $canonicalFields) {
+            $occurrences = [regex]::Matches($raw, '"' + $field.Key + '"').Count
+            $canonical = [regex]::Matches($raw, $field.Pattern).Count
+            if ($occurrences -ne $canonical) {
+                return $null
+            }
+        }
         $jdkMinimumMajor = [int]$parsed.jdk.minimumMajor
         $apiLevel = [int]$parsed.androidSdk.apiLevel
         $sdkPlatform = [string]$parsed.androidSdk.platform
