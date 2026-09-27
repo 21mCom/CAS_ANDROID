@@ -1,4 +1,10 @@
 import { casAuthedFetch } from '@/hooks/use-field-test';
+import {
+  parseCasRespondersResponse,
+  parseCasTemplateInfo,
+  parseCasTemplatePreviewResult,
+  parseCasTemplatesResponse,
+} from '@/lib/cas-config-schema';
 
 /**
  * Client for the console-managed delivery configuration (responders and
@@ -57,7 +63,10 @@ async function expectOk(response: Response, fallback: string): Promise<void> {
 export async function fetchResponders(): Promise<{ seeded: boolean; responders: Responder[] }> {
   const response = await casAuthedFetch('/api/cas/config/responders');
   await expectOk(response, 'Unable to load responders');
-  return (await response.json()) as { seeded: boolean; responders: Responder[] };
+  // Validated against the console's mirror of the server contract: a
+  // drifted server throws CasStateShapeError instead of letting the page
+  // render wrong responder/channel configuration.
+  return parseCasRespondersResponse(await response.json());
 }
 
 export async function createResponder(payload: ResponderPayload): Promise<void> {
@@ -81,7 +90,9 @@ export async function updateResponder(id: string, payload: ResponderPayload): Pr
 export async function fetchTemplates(): Promise<TemplateInfo[]> {
   const response = await casAuthedFetch('/api/cas/config/templates');
   await expectOk(response, 'Unable to load message templates');
-  return ((await response.json()) as { templates: TemplateInfo[] }).templates;
+  // Same drift guard as the responders read: a mismatched server build
+  // throws instead of rendering wrong template configuration.
+  return parseCasTemplatesResponse(await response.json()).templates;
 }
 
 export async function saveTemplate(channel: string, body: string): Promise<TemplateInfo> {
@@ -91,13 +102,13 @@ export async function saveTemplate(channel: string, body: string): Promise<Templ
     body: JSON.stringify({ body }),
   });
   await expectOk(response, 'Unable to save the template');
-  return (await response.json()) as TemplateInfo;
+  return parseCasTemplateInfo(await response.json());
 }
 
 export async function resetTemplate(channel: string): Promise<TemplateInfo> {
   const response = await casAuthedFetch(`/api/cas/config/templates/${channel}`, { method: 'DELETE' });
   await expectOk(response, 'Unable to reset the template');
-  return (await response.json()) as TemplateInfo;
+  return parseCasTemplateInfo(await response.json());
 }
 
 export async function previewTemplate(channel: string, body: string): Promise<TemplatePreviewResult> {
@@ -107,5 +118,5 @@ export async function previewTemplate(channel: string, body: string): Promise<Te
     body: JSON.stringify({ channel, body }),
   });
   await expectOk(response, 'Unable to render the preview');
-  return (await response.json()) as TemplatePreviewResult;
+  return parseCasTemplatePreviewResult(await response.json());
 }

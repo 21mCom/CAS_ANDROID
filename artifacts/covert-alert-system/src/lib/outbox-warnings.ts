@@ -18,11 +18,18 @@ export function outboxAgeLabel(iso: string, nowMs: number): string {
  * both the full status panel on /incidents and the compact overview banner so
  * the two surfaces can never disagree about what counts as a stalled pipeline.
  */
-export function deriveOutboxWarnings({ status, unreachable, nowMs }: {
+export function deriveOutboxWarnings({ status, unreachable, mismatch, nowMs }: {
   status: OutboxStatus | null;
   unreachable: boolean;
+  mismatch: string | null;
   nowMs: number;
 }): OutboxWarning[] {
+  // A drifted status response outranks every other signal: any counts or
+  // heartbeat the console might still hold predate a contract the server
+  // no longer speaks, so the only honest message is the mismatch itself.
+  if (mismatch) {
+    return [{ severity: 'danger', message: mismatch }];
+  }
   if (unreachable) {
     return [{ severity: 'caution', message: 'The console cannot reach the delivery status endpoint — pipeline health is unknown.' }];
   }

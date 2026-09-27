@@ -131,6 +131,21 @@ export const casStateResponseSchema = z.object({
 export type CasRemoteState = z.infer<typeof casStateResponseSchema>;
 
 /**
+ * Builds the drift error every server-response parser throws, naming the
+ * endpoint family and the first offending path, so a stale or mismatched
+ * server build always produces the same clear, actionable message — whether
+ * the drifted payload was the state mirror, the outbox status, or config.
+ */
+export function casResponseShapeError(label: string, error: z.ZodError): CasStateShapeError {
+  const issue = error.issues[0];
+  const path = issue && issue.path.length > 0 ? issue.path.join('.') : '(top level)';
+  const detail = issue ? `${path}: ${issue.message}` : 'unknown validation failure';
+  return new CasStateShapeError(
+    `The server's ${label} response does not match what this console expects (${detail}). The server may be running a different version than this console; refresh once, and if it persists redeploy the matching server build.`,
+  );
+}
+
+/**
  * Parses a GET /api/cas/state JSON body. Throws CasStateShapeError — with
  * the first offending path — when the server speaks a shape this console
  * was not built against, so the caller can show the mismatch surface
@@ -138,14 +153,7 @@ export type CasRemoteState = z.infer<typeof casStateResponseSchema>;
  */
 export function parseCasStateResponse(body: unknown): CasRemoteState {
   const result = casStateResponseSchema.safeParse(body);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    const path = issue && issue.path.length > 0 ? issue.path.join('.') : '(top level)';
-    const detail = issue ? `${path}: ${issue.message}` : 'unknown validation failure';
-    throw new CasStateShapeError(
-      `The server's state response does not match what this console expects (${detail}). The server may be running a different version than this console; refresh once, and if it persists redeploy the matching server build.`,
-    );
-  }
+  if (!result.success) throw casResponseShapeError('state', result.error);
   return result.data;
 }
 

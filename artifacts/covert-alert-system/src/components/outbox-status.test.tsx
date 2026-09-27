@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { OutboxStatusView } from '@/components/outbox-status';
+import { deriveOutboxWarnings } from '@/lib/outbox-warnings';
 import type { OutboxStatus } from '@/hooks/use-outbox-status';
 
 const NOW = new Date('2026-09-15T12:00:00.000Z').getTime();
@@ -12,6 +13,9 @@ function statusWith(overrides: Partial<OutboxStatus>): OutboxStatus {
     counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 0 },
     oldestPendingAt: null,
     lastDeliveryError: null,
+    smsDeliveryMode: 'gateway',
+    deviceChannels: [],
+    deviceAuthConfigured: false,
     worker: {
       workerId: 'test-worker',
       intervalMs: 10_000,
@@ -28,9 +32,9 @@ function statusWith(overrides: Partial<OutboxStatus>): OutboxStatus {
   };
 }
 
-function renderPanel(status: OutboxStatus | null, unreachable = false): string {
+function renderPanel(status: OutboxStatus | null, unreachable = false, mismatch: string | null = null): string {
   return renderToStaticMarkup(
-    createElement(OutboxStatusView, { status, unreachable, nowMs: NOW }),
+    createElement(OutboxStatusView, { status, unreachable, mismatch, nowMs: NOW }),
   );
 }
 
@@ -79,4 +83,31 @@ test('a draining pipeline with no dead letters shows the healthy state instead',
   assert.doesNotMatch(html, /outbox-status-warning-danger/);
   assert.doesNotMatch(html, /abandoned \(dead letter\)/);
   assert.match(html, /data-testid="outbox-count-dead-letter">0</);
+});
+
+test('a drifted status response raises the red mismatch warning and withholds pipeline data', () => {
+  const drift = "The server's outbox status response does not match what this console expects (counts.QUEUED: Expected number, received string). The server may be running a different version than this console; refresh once, and if it persists redeploy the matching server build.";
+  // The hook drops the last snapshot on mismatch, so the panel gets no status.
+  const html = renderPanel(null, false, drift);
+
+  // The mismatch surfaces as the red alarm a responder must never miss.
+  assert.match(html, /data-testid="outbox-status-warning-danger"/);
+  assert.match(html, /does not match what this console expects/);
+  assert.match(html, /counts\.QUEUED/);
+  assert.match(html, /Delivery status response not understood by this console/);
+  // No counts, no healthy chip, no stale heartbeat: nothing from a contract
+  // this console does not understand may be mistaken for pipeline health.
+  assert.doesNotMatch(html, /outbox-status-counts/);
+  assert.doesNotMatch(html, /outbox-status-healthy/);
+  assert.doesNotMatch(html, /No worker heartbeat recorded/);
+});
+
+test('a drifted status response outranks every other pipeline signal', () => {
+  const warnings = deriveOutboxWarnings({
+    status: statusWith({ counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 2 } }),
+    unreachable: true,
+    mismatch: 'drifted',
+    nowMs: NOW,
+  });
+  assert.deepEqual(warnings, [{ severity: 'danger', message: 'drifted' }]);
 });

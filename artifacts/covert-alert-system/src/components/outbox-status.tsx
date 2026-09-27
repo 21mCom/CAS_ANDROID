@@ -13,9 +13,9 @@ type StatusSnapshot = ReturnType<typeof useOutboxStatus>['status'];
  * landing anywhere sees it and can jump straight to the incidents panel.
  */
 export function OutboxStatusBanner() {
-  const { status, unreachable } = useOutboxStatus();
+  const { status, unreachable, mismatch } = useOutboxStatus();
   const nowMs = Date.now();
-  const warnings = deriveOutboxWarnings({ status, unreachable, nowMs });
+  const warnings = deriveOutboxWarnings({ status, unreachable, mismatch, nowMs });
 
   if (warnings.length === 0) return null;
 
@@ -62,8 +62,8 @@ export function OutboxStatusBanner() {
  * a stalled worker shows up as a warning banner instead of a silent queue.
  */
 export function OutboxStatusPanel() {
-  const { status, unreachable } = useOutboxStatus();
-  return <OutboxStatusView status={status} unreachable={unreachable} nowMs={Date.now()} />;
+  const { status, unreachable, mismatch } = useOutboxStatus();
+  return <OutboxStatusView status={status} unreachable={unreachable} mismatch={mismatch} nowMs={Date.now()} />;
 }
 
 /**
@@ -71,14 +71,15 @@ export function OutboxStatusPanel() {
  * (especially the red dead-letter alarm) can be render-tested without the
  * polling hook.
  */
-export function OutboxStatusView({ status, unreachable, nowMs }: {
+export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
   status: StatusSnapshot;
   unreachable: boolean;
+  mismatch: string | null;
   nowMs: number;
 }) {
-  const warnings = deriveOutboxWarnings({ status, unreachable, nowMs });
+  const warnings = deriveOutboxWarnings({ status, unreachable, mismatch, nowMs });
 
-  if (!status && !unreachable) return null;
+  if (!status && !unreachable && !mismatch) return null;
 
   const counts = status?.counts;
   const worker = status?.worker;
@@ -110,9 +111,11 @@ export function OutboxStatusView({ status, unreachable, nowMs }: {
           <p className="mt-3 text-xs leading-5 text-[#687271]">
             {worker
               ? `Worker ${worker.workerId.slice(0, 18)}… drains every ${Math.round(worker.intervalMs / 1000)}s, up to ${worker.batchSize} per tick · ${worker.ticksCompleted} tick${worker.ticksCompleted === 1 ? '' : 's'} completed${worker.lastTickAt ? ` · last tick ${ageLabel(worker.lastTickAt, nowMs)}` : ' · no tick yet'}`
-              : unreachable
-                ? 'Delivery status endpoint unreachable.'
-                : 'No worker heartbeat recorded by this server yet.'}
+              : mismatch
+                ? 'Delivery status response not understood by this console — pipeline health withheld.'
+                : unreachable
+                  ? 'Delivery status endpoint unreachable.'
+                  : 'No worker heartbeat recorded by this server yet.'}
           </p>
         </div>
         <div className="w-full max-w-xl space-y-2" data-testid="outbox-status-warnings">

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { CasStateShapeError } from '@/lib/cas-state-schema';
+import { parseCasOutboxStatusResponse } from '@/lib/cas-outbox-status-schema';
 import { casStoredDeviceToken } from './use-field-test';
 
 export type OutboxStateCounts = {
@@ -26,17 +28,52 @@ export type OutboxStatus = {
   counts: OutboxStateCounts;
   oldestPendingAt: string | null;
   lastDeliveryError: { transport: string; state: string; attempts: number; message: string } | null;
+  /** Who delivers SMS: the worker ("gateway") or the alerting handset ("device"). */
+  smsDeliveryMode: 'gateway' | 'device';
+  /** Transports the handset delivers itself in device mode. */
+  deviceChannels: Array<'SMS'>;
+  /** False while the handset endpoints are closed (CAS_DEVICE_TOKEN unset). */
+  deviceAuthConfigured: boolean;
   worker: OutboxWorkerHeartbeat | null;
 };
+
+/**
+ * One poll of the status endpoint, validated against the console's mirror
+ * of the server contract before any of it is applied: a drifted server
+ * (stale deployment, mixed environments) throws CasStateShapeError instead
+ * of letting the console render partial/garbage pipeline health.
+ */
+export async function requestOutboxStatus(fetchImpl: typeof fetch, token: string): Promise<OutboxStatus> {
+  const response = await fetchImpl('/api/cas/outbox/status', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error('Unable to load outbox status');
+  // A 200 whose body is not even JSON is drift, not an outage.
+  const body: unknown = await response.json().catch(() => {
+    throw new CasStateShapeError("The server's outbox status response is not valid JSON. The server may be running a different version than this console; refresh once, and if it persists redeploy the matching server build.");
+  });
+  return parseCasOutboxStatusResponse(body);
+}
+
+/**
+ * Routes a failed poll: a drifted response is a version mismatch (the
+ * server answered, but in a shape this console was not built against);
+ * anything else means the console lost sight of the pipeline entirely.
+ */
+export function outboxPollFailure(error: unknown): { unreachable: boolean; mismatch: string | null } {
+  if (error instanceof CasStateShapeError) return { unreachable: false, mismatch: error.message };
+  return { unreachable: true, mismatch: null };
+}
 
 /**
  * Polls the outbox pipeline health endpoint so responders can see whether
  * queued alerts are actually draining, without opening server logs.
  * Polls slightly slower than the worker's default 10s drain interval.
  */
-export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null; unreachable: boolean } {
+export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null; unreachable: boolean; mismatch: string | null } {
   const [status, setStatus] = useState<OutboxStatus | null>(null);
   const [unreachable, setUnreachable] = useState(false);
+  const [mismatch, setMismatch] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,19 +85,25 @@ export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null;
         // outage; the next poll picks the credential up from sessionStorage.
         const token = casStoredDeviceToken();
         if (!token) return;
-        const response = await fetch('/api/cas/outbox/status', {
-          headers: { authorization: `Bearer ${token}` },
-        });
-        if (!response.ok) throw new Error('Unable to load outbox status');
-        const body = (await response.json()) as OutboxStatus;
+        const parsed = await requestOutboxStatus(fetch, token);
         if (!cancelled) {
-          setStatus(body);
+          setStatus(parsed);
           setUnreachable(false);
+          setMismatch(null);
         }
-      } catch {
-        // Keep the last good snapshot but flag that the console lost sight of
-        // the pipeline — that itself is a delivery-visibility problem.
-        if (!cancelled) setUnreachable(true);
+      } catch (error) {
+        if (cancelled) return;
+        const failure = outboxPollFailure(error);
+        setUnreachable(failure.unreachable);
+        setMismatch(failure.mismatch);
+        if (failure.mismatch) {
+          // Never render pipeline health from a drifted contract — drop the
+          // last snapshot so only the mismatch warning is shown. For a plain
+          // outage, keep the last good snapshot but flag that the console
+          // lost sight of the pipeline — that itself is a
+          // delivery-visibility problem.
+          setStatus(null);
+        }
       }
     };
     void load();
@@ -71,5 +114,5 @@ export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null;
     };
   }, [pollMs]);
 
-  return { status, unreachable };
+  return { status, unreachable, mismatch };
 }
