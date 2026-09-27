@@ -403,3 +403,40 @@ async function ensureDeviceToken(): Promise<string> {
 function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
 }
+
+export type CasDevice = {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+};
+
+async function enrollmentFetch(enrollmentCredential: string, input: string, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(input, {
+    ...init,
+    headers: { authorization: `Bearer ${enrollmentCredential}`, ...(init.headers ?? {}) },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || `The server rejected the request (${response.status}).`);
+  }
+  return response;
+}
+
+/**
+ * Revokes one device credential by id. Requires the enrollment credential;
+ * the revocation takes effect on the device's very next request.
+ */
+export async function revokeCasDevice(enrollmentCredential: string, deviceId: string): Promise<{ id: string; revokedAt: string | null }> {
+  const response = await enrollmentFetch(enrollmentCredential, `/api/cas/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST' });
+  return (await response.json()) as { id: string; revokedAt: string | null };
+}
+
+/** Lists enrolled device credentials. Requires the enrollment credential. */
+export async function listCasDevices(enrollmentCredential: string): Promise<CasDevice[]> {
+  const response = await enrollmentFetch(enrollmentCredential, '/api/cas/devices');
+  const body = await response.json() as { devices?: CasDevice[] };
+  if (!Array.isArray(body.devices)) throw new Error('The server returned an unexpected device list.');
+  return body.devices;
+}
