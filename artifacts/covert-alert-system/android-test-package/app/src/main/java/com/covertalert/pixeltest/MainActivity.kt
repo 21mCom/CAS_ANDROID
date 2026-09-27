@@ -102,10 +102,14 @@ class MainActivity : Activity() {
             TestStore.record(this, "DEVICE_TOKEN_CONFIGURED", mapOf("configured" to TestStore.deviceToken(this).isNotBlank()))
             refreshReport()
         })
-        // Separate from the device token above: this credential authorizes the
-        // alert trigger itself (Authorization: Bearer against CAS_ALERT_TOKEN).
+        // Separate from the device token above: this is the enrollment
+        // credential (the server's CAS_ALERT_TOKEN secret), exchanged once for
+        // this handset's own revocable device credential on the first trigger
+        // and then discarded — the provisioned handset does not retain it, so
+        // a revoked phone cannot re-enroll itself. Re-entering it here is the
+        // trusted operator action that restores access after revocation.
         alertTokenInput = EditText(this).apply {
-            hint = "Alert credential (same value as the server's CAS_ALERT_TOKEN secret)"
+            hint = "Enrollment credential (CAS_ALERT_TOKEN) — consumed on enrollment, re-enter to re-enroll"
             setText(TestStore.alertToken(this@MainActivity))
             isSingleLine = true
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -113,6 +117,11 @@ class MainActivity : Activity() {
         root.addView(alertTokenInput, LinearLayout.LayoutParams(-1, -2))
         root.addView(button("Save alert credential") {
             val value = alertTokenInput.text.toString().trim()
+            if (value != TestStore.alertToken(this)) {
+                // A different enrollment credential invalidates the device
+                // credential enrolled under the old one; re-enroll lazily.
+                TestStore.setEnrolledDeviceToken(this, "")
+            }
             TestStore.setAlertToken(this, value)
             // Record only whether a credential exists, never the credential.
             TestStore.record(this, "ALERT_CREDENTIAL_CONFIGURED", mapOf("configured" to value.isNotBlank()))
@@ -272,20 +281,30 @@ class MainActivity : Activity() {
                 "fixAgeS" to fix?.let { (System.currentTimeMillis() - it.capturedAtMs) / 1000 },
                 "provider" to fix?.provider,
             ))
-            if (baseUrl.isBlank() || token.isBlank()) {
-                // Without a server URL — or without the alert credential the
-                // trigger endpoint requires (401 otherwise) — no incident can
-                // be committed; the alert still leaves this handset directly.
+            if (baseUrl.isBlank() || (token.isBlank() && TestStore.enrolledDeviceToken(this@MainActivity).isBlank())) {
+                // Without a server URL no incident can be committed. Without
+                // any usable credential — no enrollment credential in the
+                // field AND no previously enrolled device credential — the
+                // trigger endpoint would 401. (After provisioning the field
+                // is cleared but the enrolled credential remains, so repeat
+                // alerts must still reach the server.) Either way the alert
+                // still leaves this handset directly.
                 val reason = if (baseUrl.isBlank()) {
                     "no server URL configured; texting responders directly without an incident"
                 } else {
-                    "no alert credential configured; the server would reject the trigger with 401, texting responders directly without an incident"
+                    "no alert credential configured and this handset is not enrolled; the server would reject the trigger with 401, texting responders directly without an incident"
                 }
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to reason))
                 sendSmsFromHandset(null, fix)
             } else {
                 val result = AlertSender.trigger(this@MainActivity, baseUrl, token, fix)
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
+                if (result.credentialConsumed) {
+                    // The enrollment credential was exchanged for this
+                    // handset's device credential and discarded; clear the
+                    // field too so it cannot silently re-enroll this phone.
+                    runOnUiThread { alertTokenInput.setText("") }
+                }
                 if (result.ok && result.reused) {
                     // The repeat tap folded into the still-active incident and
                     // the console queued no new deliveries, so the handset

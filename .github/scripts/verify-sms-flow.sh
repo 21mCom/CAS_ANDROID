@@ -19,8 +19,9 @@
 #   CAS_FLOW_APK           path to the built app-debug.apk
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
-#   CAS_FLOW_ALERT_TOKEN   alert credential (matches CAS_ALERT_TOKEN); the
-#                          trigger and console re-queue endpoints 401 without it
+#   CAS_FLOW_ALERT_TOKEN   enrollment credential (matches CAS_ALERT_TOKEN); the
+#                          script exchanges it once for a per-device token below,
+#                          and the app does the same exchange on the handset
 # Optional env:
 #   CAS_FLOW_API_DEVICE    API base URL as the device sees it. Default: the
 #                          harness runs `adb reverse tcp:<port> tcp:<port>` and
@@ -48,6 +49,18 @@ for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_T
     exit 1
   fi
 done
+
+# The alert credential is now only the enrollment credential: mutation
+# endpoints reject it directly. Exchange it once for a per-device token that
+# authorizes this run's console mutation calls (the handset app performs the
+# same exchange itself inside AlertSender).
+CAS_FLOW_ENROLLED_TOKEN="$(curl -sf -X POST "$CAS_FLOW_API_HOST/api/cas/devices/enroll" \
+  -H "Authorization: Bearer $CAS_FLOW_ALERT_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"label":"ci-sms-flow"}' | jq -r '.token // empty')"
+if [ -z "$CAS_FLOW_ENROLLED_TOKEN" ]; then
+  echo "::error::device enrollment failed; the API did not issue a device credential for CAS_FLOW_ALERT_TOKEN."
+  exit 1
+fi
 
 # APK preflight lives here (not in the workflow's `script:` block): the
 # emulator action runs that block via /usr/bin/sh, which is dash on
@@ -126,14 +139,17 @@ status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending")"
 expect_status "device-pending refuses a missing device token" 401 "$status"
 
 status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending" "" "$CAS_FLOW_DEVICE_TOKEN")"
-expect_status "device-pending accepts the device token" 200 "$status"
+expect_status "device-pending refuses the retired shared device token once enrollment is in use" 401 "$status"
+
+status="$(http_status GET "$CAS_FLOW_API_HOST/api/cas/outbox/device-pending" "" "" "$CAS_FLOW_ENROLLED_TOKEN")"
+expect_status "device-pending accepts the enrolled device credential" 200 "$status"
 if ! jq -e '.items | type == "array"' /tmp/sms-flow-response.json > /dev/null; then
   fail "device-pending 200 response has no items array — the pickup contract drifted: $(cat /tmp/sms-flow-response.json | head -c 300)"
 fi
 echo "contract OK: device-pending returns an items array"
 
 probe='{}'
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" "$probe" "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "device-receipt rejects a malformed body" 400 "$status"
 
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"SMS","results":[{"recipient":"+15550100","ok":true}]}')"
@@ -142,13 +158,13 @@ expect_status "device-receipt refuses a missing device token" 401 "$status"
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" '{"results":[{"recipient":"+15550100","ok":true}]}')"
 expect_status "sms-receipt refuses a missing device token" 401 "$status"
 
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/sms-receipt" "$probe" "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "sms-receipt rejects a malformed body" 400 "$status"
 
 # The on-screen WhatsApp handoff was removed (no-screen-flash rule): WhatsApp
 # is a server-side gateway channel now, so a device receipt naming it must be
 # refused loudly instead of steering a handset flow that no longer exists.
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"WHATSAPP","results":[{"recipient":"+15550100","ok":true}]}' "$CAS_FLOW_DEVICE_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/device-receipt" '{"channel":"WHATSAPP","results":[{"recipient":"+15550100","ok":true}]}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "device-receipt refuses the retired WHATSAPP device channel" 409 "$status"
 
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/trigger")"
@@ -321,7 +337,7 @@ echo "Location phase passed: incident carries fix $loc_json"
 # --- Step 3: console re-queue, then handset pickup with a fixed number -------
 
 echo "== Re-queue phase: console re-queue, handset pickup with fixed number '$GOOD_NUMBER' =="
-status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ALERT_TOKEN")"
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/outbox/$outbox_id/requeue" '{"reason":"emulator flow: responder number corrected"}' '' "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "console re-queue of the dead-lettered item" 200 "$status"
 jq -e --arg id "$outbox_id" '.id == $id and .state == "QUEUED"' /tmp/sms-flow-response.json > /dev/null \
   || fail "re-queue response drifted (expected {id, state: \"QUEUED\"}): $(cat /tmp/sms-flow-response.json | head -c 300)"

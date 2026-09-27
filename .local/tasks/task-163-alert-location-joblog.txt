@@ -1,0 +1,164 @@
+﻿2026-09-27T15:16:53.9943244Z Current runner version: '2.337.0'
+2026-09-27T15:16:53.9969750Z ##[group]Runner Image Provisioner
+2026-09-27T15:16:53.9970711Z Hosted Compute Agent
+2026-09-27T15:16:53.9971417Z Version: 20260828.587
+2026-09-27T15:16:53.9972098Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-27T15:16:53.9972930Z Build Date: 2026-08-28T16:44:25Z
+2026-09-27T15:16:53.9973676Z Worker ID: {535a6958-9353-4aa3-97a9-bd57ecc69555}
+2026-09-27T15:16:53.9974456Z Azure Region: westcentralus
+2026-09-27T15:16:53.9975185Z ##[endgroup]
+2026-09-27T15:16:53.9977070Z ##[group]Operating System
+2026-09-27T15:16:53.9977710Z Ubuntu
+2026-09-27T15:16:53.9978371Z 24.04.5
+2026-09-27T15:16:53.9978948Z LTS
+2026-09-27T15:16:53.9979541Z ##[endgroup]
+2026-09-27T15:16:53.9980184Z ##[group]Runner Image
+2026-09-27T15:16:53.9980844Z Image: ubuntu-24.04
+2026-09-27T15:16:53.9981517Z Version: 20260920.314.1
+2026-09-27T15:16:53.9982839Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-27T15:16:53.9984529Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-27T15:16:53.9985797Z ##[endgroup]
+2026-09-27T15:16:53.9987118Z ##[group]GITHUB_TOKEN Permissions
+2026-09-27T15:16:53.9989839Z Contents: read
+2026-09-27T15:16:53.9990890Z Metadata: read
+2026-09-27T15:16:53.9991749Z Packages: read
+2026-09-27T15:16:53.9992706Z ##[endgroup]
+2026-09-27T15:16:53.9995855Z Secret source: Actions
+2026-09-27T15:16:53.9997941Z Cache mode: write
+2026-09-27T15:16:53.9999052Z Prepare workflow directory
+2026-09-27T15:16:54.0340928Z Prepare all required actions
+2026-09-27T15:16:54.0388850Z Getting action download info
+2026-09-27T15:16:54.3440194Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-27T15:16:54.4565007Z Download action repository 'actions/setup-java@v4' (SHA:cf277c60eb25467037889841efdb72551f06f6c3)
+2026-09-27T15:16:55.3499688Z Complete job name: Alert location harness (JVM, no emulator)
+2026-09-27T15:16:55.4266250Z ##[group]Run actions/checkout@v4
+2026-09-27T15:16:55.4267195Z with:
+2026-09-27T15:16:55.4267694Z   repository: 21mCom/CAS_ANDROID
+2026-09-27T15:16:55.4272153Z   token: ***
+2026-09-27T15:16:55.4272654Z   ssh-strict: true
+2026-09-27T15:16:55.4273145Z   ssh-user: git
+2026-09-27T15:16:55.4273653Z   persist-credentials: true
+2026-09-27T15:16:55.4274199Z   clean: true
+2026-09-27T15:16:55.4274701Z   sparse-checkout-cone-mode: true
+2026-09-27T15:16:55.4275285Z   fetch-depth: 1
+2026-09-27T15:16:55.4275911Z   fetch-tags: false
+2026-09-27T15:16:55.4276402Z   show-progress: true
+2026-09-27T15:16:55.4276900Z   lfs: false
+2026-09-27T15:16:55.4277372Z   submodules: false
+2026-09-27T15:16:55.4277879Z   set-safe-directory: true
+2026-09-27T15:16:55.4278426Z   allow-unsafe-pr-checkout: false
+2026-09-27T15:16:55.4279260Z ##[endgroup]
+2026-09-27T15:16:55.5294321Z Syncing repository: 21mCom/CAS_ANDROID
+2026-09-27T15:16:55.5297444Z ##[group]Getting Git version info
+2026-09-27T15:16:55.5298846Z Working directory is '/home/runner/work/CAS_ANDROID/CAS_ANDROID'
+2026-09-27T15:16:55.5300637Z [command]/usr/bin/git version
+2026-09-27T15:16:55.5355162Z git version 2.55.0
+2026-09-27T15:16:55.5379480Z ##[endgroup]
+2026-09-27T15:16:55.5393475Z Temporarily overriding HOME='/home/runner/work/_temp/ca9c35f6-4aa5-4101-8c88-7f8f98ac3dbc' before making global git config changes
+2026-09-27T15:16:55.5395032Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-27T15:16:55.5399793Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:16:55.5454486Z Deleting the contents of '/home/runner/work/CAS_ANDROID/CAS_ANDROID'
+2026-09-27T15:16:55.5458950Z ##[group]Initializing the repository
+2026-09-27T15:16:55.5463074Z [command]/usr/bin/git init /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:16:55.5538656Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-27T15:16:55.5544211Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-27T15:16:55.5546646Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-27T15:16:55.5547949Z hint: call:
+2026-09-27T15:16:55.5548663Z hint:
+2026-09-27T15:16:55.5549581Z hint: 	git config --global init.defaultBranch <name>
+2026-09-27T15:16:55.5550652Z hint:
+2026-09-27T15:16:55.5551682Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-27T15:16:55.5553325Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-27T15:16:55.5554626Z hint:
+2026-09-27T15:16:55.5555482Z hint: 	git branch -m <name>
+2026-09-27T15:16:55.5556355Z hint:
+2026-09-27T15:16:55.5557483Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-27T15:16:55.5559314Z Initialized empty Git repository in /home/runner/work/CAS_ANDROID/CAS_ANDROID/.git/
+2026-09-27T15:16:55.5563548Z [command]/usr/bin/git remote add origin https://github.com/21mCom/CAS_ANDROID
+2026-09-27T15:16:55.5607345Z ##[endgroup]
+2026-09-27T15:16:55.5611745Z ##[group]Disabling automatic garbage collection
+2026-09-27T15:16:55.5612919Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-27T15:16:55.5646457Z ##[endgroup]
+2026-09-27T15:16:55.5647948Z ##[group]Setting up auth
+2026-09-27T15:16:55.5653731Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-27T15:16:55.5688130Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-27T15:16:55.6034741Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-27T15:16:55.6075685Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-27T15:16:55.6336989Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-27T15:16:55.6375836Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-27T15:16:55.6621368Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-27T15:16:55.6663761Z ##[endgroup]
+2026-09-27T15:16:55.6673481Z ##[group]Fetching the repository
+2026-09-27T15:16:55.6675587Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +8420f27b031e5ced1c845063a973ca8e91c2e30d:refs/remotes/origin/ci-163-alert-location
+2026-09-27T15:16:56.7214477Z From https://github.com/21mCom/CAS_ANDROID
+2026-09-27T15:16:56.7217466Z  * [new ref]         8420f27b031e5ced1c845063a973ca8e91c2e30d -> origin/ci-163-alert-location
+2026-09-27T15:16:56.7222832Z ##[endgroup]
+2026-09-27T15:16:56.7224655Z ##[group]Determining the checkout info
+2026-09-27T15:16:56.7227590Z ##[endgroup]
+2026-09-27T15:16:56.7231598Z [command]/usr/bin/git sparse-checkout disable
+2026-09-27T15:16:56.7289515Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-27T15:16:56.7328536Z ##[group]Checking out the ref
+2026-09-27T15:16:56.7333789Z [command]/usr/bin/git checkout --progress --force -B ci-163-alert-location refs/remotes/origin/ci-163-alert-location
+2026-09-27T15:16:56.7679791Z Switched to a new branch 'ci-163-alert-location'
+2026-09-27T15:16:56.7684802Z branch 'ci-163-alert-location' set up to track 'origin/ci-163-alert-location'.
+2026-09-27T15:16:56.7692842Z ##[endgroup]
+2026-09-27T15:16:56.7738134Z [command]/usr/bin/git log -1 --format=%H
+2026-09-27T15:16:56.7767255Z 8420f27b031e5ced1c845063a973ca8e91c2e30d
+2026-09-27T15:16:56.8191009Z ##[group]Run actions/setup-java@v4
+2026-09-27T15:16:56.8192126Z with:
+2026-09-27T15:16:56.8192958Z   distribution: temurin
+2026-09-27T15:16:56.8193916Z   java-version: 17
+2026-09-27T15:16:56.8194826Z   java-package: jdk
+2026-09-27T15:16:56.8196101Z   check-latest: false
+2026-09-27T15:16:56.8197042Z   server-id: github
+2026-09-27T15:16:56.8198004Z   server-username: GITHUB_ACTOR
+2026-09-27T15:16:56.8199140Z   server-password: GITHUB_TOKEN
+2026-09-27T15:16:56.8200228Z   overwrite-settings: true
+2026-09-27T15:16:56.8201241Z   job-status: success
+2026-09-27T15:16:56.8211293Z   token: ***
+2026-09-27T15:16:56.8212174Z ##[endgroup]
+2026-09-27T15:16:57.0013696Z ##[warning]setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
+2026-09-27T15:16:57.0025565Z ##[group]Installed distributions
+2026-09-27T15:16:57.0225577Z Resolved Java 17.0.20+1 from tool-cache
+2026-09-27T15:16:57.0227327Z Setting Java 17.0.20+1 as the default
+2026-09-27T15:16:57.0236364Z (node:2309) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:16:57.0239321Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:16:57.0242000Z Creating toolchains.xml for JDK version 17 from temurin
+2026-09-27T15:16:57.0310768Z Writing to /home/runner/.m2/toolchains.xml
+2026-09-27T15:16:57.0312027Z 
+2026-09-27T15:16:57.0312572Z Java configuration:
+2026-09-27T15:16:57.0313885Z   Distribution: temurin
+2026-09-27T15:16:57.0315242Z   Version: 17.0.20+1
+2026-09-27T15:16:57.0317214Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:16:57.0318881Z 
+2026-09-27T15:16:57.0320336Z ##[endgroup]
+2026-09-27T15:16:57.0339747Z Creating settings.xml with server-id: github
+2026-09-27T15:16:57.0367037Z Writing to /home/runner/.m2/settings.xml
+2026-09-27T15:16:57.0657981Z ##[group]Run scripts/test-alert-location.sh
+2026-09-27T15:16:57.0660156Z [36;1mscripts/test-alert-location.sh[0m
+2026-09-27T15:16:57.0923881Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:16:57.0924967Z env:
+2026-09-27T15:16:57.0926431Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:16:57.0928454Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:16:57.0930068Z ##[endgroup]
+2026-09-27T15:16:57.1156118Z Downloading json-20240303.jar...
+2026-09-27T15:17:05.4549736Z ALERT_LOCATION_OK checks=30
+2026-09-27T15:17:05.4773910Z Post job cleanup.
+2026-09-27T15:17:05.6187284Z (node:2419) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:17:05.6188189Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:17:05.6460850Z Post job cleanup.
+2026-09-27T15:17:05.7416597Z [command]/usr/bin/git version
+2026-09-27T15:17:05.7496384Z git version 2.55.0
+2026-09-27T15:17:05.7545763Z Temporarily overriding HOME='/home/runner/work/_temp/680137f1-ba90-49ab-acb3-50ba4f251c03' before making global git config changes
+2026-09-27T15:17:05.7558553Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-27T15:17:05.7559987Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:17:05.7786295Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-27T15:17:05.7830871Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-27T15:17:05.8146891Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-27T15:17:05.8512931Z http.https://github.com/.extraheader
+2026-09-27T15:17:05.8520514Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-27T15:17:05.8810686Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-27T15:17:05.9068595Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-27T15:17:05.9106460Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-27T15:17:05.9622134Z Cleaning up orphan processes
+2026-09-27T15:17:05.9919509Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-java@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

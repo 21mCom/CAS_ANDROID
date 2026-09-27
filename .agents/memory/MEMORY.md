@@ -1,7 +1,7 @@
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep registry and worker instrumentation in lockstep.
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
-- [CAS alert API credential gate](cas-auth.md) — trigger/ack/resolve/re-queue need Bearer CAS_ALERT_TOKEN, fail closed when unset; console keeps it in sessionStorage.
+- [CAS alert API credential gate](cas-auth.md) — mutations need per-device enrolled tokens; provisioned devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
@@ -29,3 +29,4 @@
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — run 35319853990 (branch ci-153) already executed the drift/API-floor/JDK-floor gates, validator parity, and guide freshness green; verify code identity before burning a duplicate run.
+- [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.

@@ -1,0 +1,669 @@
+﻿2026-09-27T15:18:02.2664163Z Current runner version: '2.337.0'
+2026-09-27T15:18:02.2686335Z ##[group]Runner Image Provisioner
+2026-09-27T15:18:02.2687094Z Hosted Compute Agent
+2026-09-27T15:18:02.2687936Z Version: 20260828.587
+2026-09-27T15:18:02.2688472Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-27T15:18:02.2689044Z Build Date: 2026-08-28T16:44:25Z
+2026-09-27T15:18:02.2689663Z Worker ID: {2518733d-671c-4d86-94da-6de2bee3be93}
+2026-09-27T15:18:02.2690285Z Azure Region: westcentralus
+2026-09-27T15:18:02.2690798Z ##[endgroup]
+2026-09-27T15:18:02.2692346Z ##[group]Operating System
+2026-09-27T15:18:02.2692904Z Ubuntu
+2026-09-27T15:18:02.2693446Z 24.04.5
+2026-09-27T15:18:02.2693874Z LTS
+2026-09-27T15:18:02.2694363Z ##[endgroup]
+2026-09-27T15:18:02.2694838Z ##[group]Runner Image
+2026-09-27T15:18:02.2695319Z Image: ubuntu-24.04
+2026-09-27T15:18:02.2695853Z Version: 20260920.314.1
+2026-09-27T15:18:02.2696895Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-27T15:18:02.2698188Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-27T15:18:02.2698982Z ##[endgroup]
+2026-09-27T15:18:02.2700037Z ##[group]GITHUB_TOKEN Permissions
+2026-09-27T15:18:02.2702147Z Contents: read
+2026-09-27T15:18:02.2702706Z Metadata: read
+2026-09-27T15:18:02.2703169Z Packages: read
+2026-09-27T15:18:02.2703678Z ##[endgroup]
+2026-09-27T15:18:02.2705564Z Secret source: Actions
+2026-09-27T15:18:02.2706302Z Cache mode: write
+2026-09-27T15:18:02.2706964Z Prepare workflow directory
+2026-09-27T15:18:02.3065895Z Prepare all required actions
+2026-09-27T15:18:02.3107073Z Getting action download info
+2026-09-27T15:18:02.6004190Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-27T15:18:02.6907757Z Download action repository 'actions/setup-java@v4' (SHA:cf277c60eb25467037889841efdb72551f06f6c3)
+2026-09-27T15:18:03.4403586Z Download action repository 'pnpm/action-setup@v4' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+2026-09-27T15:18:04.1465435Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-09-27T15:18:04.2543944Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+2026-09-27T15:18:04.8838244Z Download action repository 'reactivecircus/android-emulator-runner@v2' (SHA:a421e43855164a8197daf9d8d40fe71c6996bb0d)
+2026-09-27T15:18:05.4814149Z Complete job name: Drive the handset SMS send/receipt/re-queue flow against a dev API
+2026-09-27T15:18:05.5462220Z ##[group]Run actions/checkout@v4
+2026-09-27T15:18:05.5462726Z with:
+2026-09-27T15:18:05.5462918Z   repository: 21mCom/CAS_ANDROID
+2026-09-27T15:18:05.5464858Z   token: ***
+2026-09-27T15:18:05.5465043Z   ssh-strict: true
+2026-09-27T15:18:05.5465223Z   ssh-user: git
+2026-09-27T15:18:05.5465402Z   persist-credentials: true
+2026-09-27T15:18:05.5465615Z   clean: true
+2026-09-27T15:18:05.5465806Z   sparse-checkout-cone-mode: true
+2026-09-27T15:18:05.5466056Z   fetch-depth: 1
+2026-09-27T15:18:05.5466231Z   fetch-tags: false
+2026-09-27T15:18:05.5466402Z   show-progress: true
+2026-09-27T15:18:05.5466576Z   lfs: false
+2026-09-27T15:18:05.5466743Z   submodules: false
+2026-09-27T15:18:05.5466926Z   set-safe-directory: true
+2026-09-27T15:18:05.5467135Z   allow-unsafe-pr-checkout: false
+2026-09-27T15:18:05.5467493Z env:
+2026-09-27T15:18:05.5467675Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:05.5467935Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:05.5468236Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:05.5468429Z ##[endgroup]
+2026-09-27T15:18:05.6311835Z Syncing repository: 21mCom/CAS_ANDROID
+2026-09-27T15:18:05.6313170Z ##[group]Getting Git version info
+2026-09-27T15:18:05.6313502Z Working directory is '/home/runner/work/CAS_ANDROID/CAS_ANDROID'
+2026-09-27T15:18:05.6314084Z [command]/usr/bin/git version
+2026-09-27T15:18:05.6355508Z git version 2.55.0
+2026-09-27T15:18:05.6373108Z ##[endgroup]
+2026-09-27T15:18:05.6398893Z Temporarily overriding HOME='/home/runner/work/_temp/46417e31-6bdb-4b09-a92d-1e5fecaf7964' before making global git config changes
+2026-09-27T15:18:05.6400217Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-27T15:18:05.6400903Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:18:05.6449054Z Deleting the contents of '/home/runner/work/CAS_ANDROID/CAS_ANDROID'
+2026-09-27T15:18:05.6452938Z ##[group]Initializing the repository
+2026-09-27T15:18:05.6457878Z [command]/usr/bin/git init /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:18:05.6549528Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-27T15:18:05.6550888Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-27T15:18:05.6551968Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-27T15:18:05.6552816Z hint: call:
+2026-09-27T15:18:05.6553130Z hint:
+2026-09-27T15:18:05.6553552Z hint: 	git config --global init.defaultBranch <name>
+2026-09-27T15:18:05.6553966Z hint:
+2026-09-27T15:18:05.6554354Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-27T15:18:05.6555004Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-27T15:18:05.6555502Z hint:
+2026-09-27T15:18:05.6555762Z hint: 	git branch -m <name>
+2026-09-27T15:18:05.6556053Z hint:
+2026-09-27T15:18:05.6556479Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-27T15:18:05.6557220Z Initialized empty Git repository in /home/runner/work/CAS_ANDROID/CAS_ANDROID/.git/
+2026-09-27T15:18:05.6561987Z [command]/usr/bin/git remote add origin https://github.com/21mCom/CAS_ANDROID
+2026-09-27T15:18:05.6607123Z ##[endgroup]
+2026-09-27T15:18:05.6607734Z ##[group]Disabling automatic garbage collection
+2026-09-27T15:18:05.6610498Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-27T15:18:05.6642914Z ##[endgroup]
+2026-09-27T15:18:05.6643487Z ##[group]Setting up auth
+2026-09-27T15:18:05.6649001Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-27T15:18:05.6681686Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-27T15:18:05.6988667Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-27T15:18:05.7037669Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-27T15:18:05.7247959Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-27T15:18:05.7282614Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-27T15:18:05.7481101Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-27T15:18:05.7519970Z ##[endgroup]
+2026-09-27T15:18:05.7521149Z ##[group]Fetching the repository
+2026-09-27T15:18:05.7528433Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +8420f27b031e5ced1c845063a973ca8e91c2e30d:refs/remotes/origin/ci-163-alert-location
+2026-09-27T15:18:06.7942824Z From https://github.com/21mCom/CAS_ANDROID
+2026-09-27T15:18:06.7943452Z  * [new ref]         8420f27b031e5ced1c845063a973ca8e91c2e30d -> origin/ci-163-alert-location
+2026-09-27T15:18:06.7946125Z ##[endgroup]
+2026-09-27T15:18:06.7946500Z ##[group]Determining the checkout info
+2026-09-27T15:18:06.7948328Z ##[endgroup]
+2026-09-27T15:18:06.7953868Z [command]/usr/bin/git sparse-checkout disable
+2026-09-27T15:18:06.8001493Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-27T15:18:06.8030341Z ##[group]Checking out the ref
+2026-09-27T15:18:06.8034571Z [command]/usr/bin/git checkout --progress --force -B ci-163-alert-location refs/remotes/origin/ci-163-alert-location
+2026-09-27T15:18:06.8349632Z Switched to a new branch 'ci-163-alert-location'
+2026-09-27T15:18:06.8352802Z branch 'ci-163-alert-location' set up to track 'origin/ci-163-alert-location'.
+2026-09-27T15:18:06.8359217Z ##[endgroup]
+2026-09-27T15:18:06.8407161Z [command]/usr/bin/git log -1 --format=%H
+2026-09-27T15:18:06.8430486Z 8420f27b031e5ced1c845063a973ca8e91c2e30d
+2026-09-27T15:18:06.8612504Z ##[group]Run set -euo pipefail
+2026-09-27T15:18:06.8612840Z [36;1mset -euo pipefail[0m
+2026-09-27T15:18:06.8613157Z [36;1m# Same source of truth as the assemble job and the Windows preflight.[0m
+2026-09-27T15:18:06.8613612Z [36;1mecho "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"[0m
+2026-09-27T15:18:06.8614100Z [36;1mecho "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"[0m
+2026-09-27T15:18:06.8814091Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:18:06.8814369Z env:
+2026-09-27T15:18:06.8814571Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:06.8814853Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:06.8815097Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:06.8815293Z ##[endgroup]
+2026-09-27T15:18:06.9070959Z ##[group]Run actions/setup-java@v4
+2026-09-27T15:18:06.9071450Z with:
+2026-09-27T15:18:06.9071634Z   distribution: temurin
+2026-09-27T15:18:06.9071821Z   java-version: 17
+2026-09-27T15:18:06.9071997Z   java-package: jdk
+2026-09-27T15:18:06.9072181Z   check-latest: false
+2026-09-27T15:18:06.9072364Z   server-id: github
+2026-09-27T15:18:06.9072544Z   server-username: GITHUB_ACTOR
+2026-09-27T15:18:06.9072759Z   server-password: GITHUB_TOKEN
+2026-09-27T15:18:06.9072966Z   overwrite-settings: true
+2026-09-27T15:18:06.9073160Z   job-status: success
+2026-09-27T15:18:06.9074921Z   token: ***
+2026-09-27T15:18:06.9075090Z env:
+2026-09-27T15:18:06.9075285Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:06.9075551Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:06.9075804Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:06.9076008Z ##[endgroup]
+2026-09-27T15:18:07.0456097Z ##[warning]setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
+2026-09-27T15:18:07.0464946Z ##[group]Installed distributions
+2026-09-27T15:18:07.0490450Z Resolved Java 17.0.20+1 from tool-cache
+2026-09-27T15:18:07.0490800Z Setting Java 17.0.20+1 as the default
+2026-09-27T15:18:07.0499360Z (node:2105) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:18:07.0500241Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:18:07.0502123Z Creating toolchains.xml for JDK version 17 from temurin
+2026-09-27T15:18:07.0558470Z Writing to /home/runner/.m2/toolchains.xml
+2026-09-27T15:18:07.0559065Z 
+2026-09-27T15:18:07.0559300Z Java configuration:
+2026-09-27T15:18:07.0559633Z   Distribution: temurin
+2026-09-27T15:18:07.0559942Z   Version: 17.0.20+1
+2026-09-27T15:18:07.0560395Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:07.0560761Z 
+2026-09-27T15:18:07.0561405Z ##[endgroup]
+2026-09-27T15:18:07.0577175Z Creating settings.xml with server-id: github
+2026-09-27T15:18:07.0612600Z Writing to /home/runner/.m2/settings.xml
+2026-09-27T15:18:07.0766895Z ##[group]Run pnpm/action-setup@v4
+2026-09-27T15:18:07.0767142Z with:
+2026-09-27T15:18:07.0767309Z   version: 10
+2026-09-27T15:18:07.0767489Z   dest: ~/setup-pnpm
+2026-09-27T15:18:07.0767670Z   run_install: null
+2026-09-27T15:18:07.0767842Z   cache: false
+2026-09-27T15:18:07.0768026Z   cache_dependency_path: pnpm-lock.yaml
+2026-09-27T15:18:07.0768273Z   package_json_file: package.json
+2026-09-27T15:18:07.0768479Z   standalone: false
+2026-09-27T15:18:07.0768647Z env:
+2026-09-27T15:18:07.0768959Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:07.0769465Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:07.0769719Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:07.0770005Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:07.0770401Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:07.0770700Z ##[endgroup]
+2026-09-27T15:18:07.1970070Z ##[group]Running self-installer...
+2026-09-27T15:18:07.5322916Z (node:2129) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-09-27T15:18:07.5324670Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:18:07.7883376Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-09-27T15:18:07.7955915Z Packages: +1
+2026-09-27T15:18:07.7956309Z +
+2026-09-27T15:18:08.2100343Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+2026-09-27T15:18:08.2483197Z 
+2026-09-27T15:18:08.2483617Z dependencies:
+2026-09-27T15:18:08.2483982Z + pnpm 10.34.5 (12.6.0 is available)
+2026-09-27T15:18:08.2484173Z 
+2026-09-27T15:18:08.2503658Z Done in 898ms
+2026-09-27T15:18:08.2672739Z ##[endgroup]
+2026-09-27T15:18:08.2673165Z Installation Completed!
+2026-09-27T15:18:08.2841541Z ##[group]Run actions/setup-node@v4
+2026-09-27T15:18:08.2841824Z with:
+2026-09-27T15:18:08.2842025Z   node-version: 24
+2026-09-27T15:18:08.2842203Z   always-auth: false
+2026-09-27T15:18:08.2842382Z   check-latest: false
+2026-09-27T15:18:08.2844160Z   token: ***
+2026-09-27T15:18:08.2844335Z env:
+2026-09-27T15:18:08.2844516Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:08.2844789Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:08.2845039Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:08.2845318Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:08.2845710Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:08.2846109Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:08.2846365Z ##[endgroup]
+2026-09-27T15:18:08.4036286Z (node:2143) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:18:08.4036978Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:18:08.4044900Z Found in cache @ /opt/hostedtoolcache/node/24.21.0/x64
+2026-09-27T15:18:08.4045420Z ##[group]Environment details
+2026-09-27T15:18:08.6993009Z node: v24.21.0
+2026-09-27T15:18:08.6993412Z npm: 11.19.0
+2026-09-27T15:18:08.6993663Z yarn: 1.22.22
+2026-09-27T15:18:08.6994491Z ##[endgroup]
+2026-09-27T15:18:08.7124110Z ##[group]Run actions/download-artifact@v4
+2026-09-27T15:18:08.7124376Z with:
+2026-09-27T15:18:08.7124559Z   name: gate0a-app-debug-apk
+2026-09-27T15:18:08.7124761Z   path: apk
+2026-09-27T15:18:08.7124936Z   merge-multiple: false
+2026-09-27T15:18:08.7125157Z   repository: 21mCom/CAS_ANDROID
+2026-09-27T15:18:08.7125363Z   run-id: 36328969126
+2026-09-27T15:18:08.7125540Z env:
+2026-09-27T15:18:08.7125720Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:08.7125984Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:08.7126227Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:08.7126508Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:08.7126890Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:08.7127231Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:08.7127478Z ##[endgroup]
+2026-09-27T15:18:08.8388031Z Downloading single artifact
+2026-09-27T15:18:08.8504271Z (node:2174) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:18:08.8505057Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:18:09.0157392Z Preparing to download the following artifacts:
+2026-09-27T15:18:09.0159189Z - gate0a-app-debug-apk (ID: 10935061668, Size: 3090307, Expected Digest: sha256:1b343c218c401f7083af1c70aef05b1473f8456acd6e32109feae0fcc889a41b)
+2026-09-27T15:18:09.2018612Z Redirecting to blob download url: https://productionresultssa8.blob.core.windows.net/actions-results/33bfc172-c920-45ad-ab3b-fdbeb9e56008/workflow-job-run-29e67398-17e8-5a91-a3d1-0520180974f8/artifacts/6bc5ad2e604220f4d876307a389ba626c6efe6ef3bf5a68ae8031d0478308a84.zip
+2026-09-27T15:18:09.2019944Z Starting download of artifact to: /home/runner/work/CAS_ANDROID/CAS_ANDROID/apk
+2026-09-27T15:18:09.4156971Z (node:2174) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-09-27T15:18:09.9283174Z SHA256 digest of downloaded artifact is 1b343c218c401f7083af1c70aef05b1473f8456acd6e32109feae0fcc889a41b
+2026-09-27T15:18:09.9283983Z Artifact download completed successfully.
+2026-09-27T15:18:09.9284532Z Total of 1 artifact(s) downloaded
+2026-09-27T15:18:09.9288243Z Download artifact has finished successfully
+2026-09-27T15:18:09.9389644Z ##[group]Run echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+2026-09-27T15:18:09.9390326Z [36;1mecho 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules[0m
+2026-09-27T15:18:09.9390773Z [36;1msudo udevadm control --reload-rules[0m
+2026-09-27T15:18:09.9391263Z [36;1msudo udevadm trigger --name-match=kvm[0m
+2026-09-27T15:18:09.9391513Z [36;1mls -l /dev/kvm[0m
+2026-09-27T15:18:09.9452715Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:18:09.9452942Z env:
+2026-09-27T15:18:09.9453146Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:09.9453424Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:09.9453692Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:09.9453972Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:09.9454424Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:09.9454783Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:09.9455053Z ##[endgroup]
+2026-09-27T15:18:09.9589032Z KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+2026-09-27T15:18:09.9879890Z crw-rw-rw- 1 root kvm 10, 232 Sep 27 15:18 /dev/kvm
+2026-09-27T15:18:09.9907148Z ##[group]Run set -euo pipefail
+2026-09-27T15:18:09.9907423Z [36;1mset -euo pipefail[0m
+2026-09-27T15:18:09.9907726Z [36;1m# ubuntu-latest ships PostgreSQL via apt; bootstrap a throwaway[0m
+2026-09-27T15:18:09.9908122Z [36;1m# cluster exactly like scripts/disposable-review-database.mjs does[0m
+2026-09-27T15:18:09.9908519Z [36;1m# locally (explicit socket dir + bootstrap role), never touching the[0m
+2026-09-27T15:18:09.9908911Z [36;1m# packaged default cluster. A non-default port avoids any conflict[0m
+2026-09-27T15:18:09.9909306Z [36;1m# with the preinstalled-but-stopped postgresql-16 cluster on 5432.[0m
+2026-09-27T15:18:09.9909681Z [36;1mif ! ls /usr/lib/postgresql/*/bin/initdb > /dev/null 2>&1; then[0m
+2026-09-27T15:18:09.9910051Z [36;1m  sudo apt-get update -qq && sudo apt-get install -y -qq postgresql[0m
+2026-09-27T15:18:09.9910342Z [36;1mfi[0m
+2026-09-27T15:18:09.9910646Z [36;1mpgbin="$(dirname "$(ls /usr/lib/postgresql/*/bin/initdb | sort -V | tail -1)")"[0m
+2026-09-27T15:18:09.9911635Z [36;1mpgdata="$RUNNER_TEMP/cas-flow-pg"[0m
+2026-09-27T15:18:09.9912031Z [36;1m"$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null[0m
+2026-09-27T15:18:09.9912530Z [36;1m"$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 55432" -w start > /dev/null[0m
+2026-09-27T15:18:09.9912912Z [36;1m"$pgbin/createdb" -h 127.0.0.1 -p 55432 -U runner cas_flow[0m
+2026-09-27T15:18:09.9913319Z [36;1mecho "DATABASE_URL=postgresql://runner@127.0.0.1:55432/cas_flow" >> "$GITHUB_ENV"[0m
+2026-09-27T15:18:09.9969348Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:18:09.9969567Z env:
+2026-09-27T15:18:09.9969760Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:09.9970030Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:09.9970287Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:09.9970565Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:09.9970964Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:09.9971559Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:09.9971819Z ##[endgroup]
+2026-09-27T15:18:12.4726027Z ##[group]Run set -euo pipefail
+2026-09-27T15:18:12.4726304Z [36;1mset -euo pipefail[0m
+2026-09-27T15:18:12.4726621Z [36;1mpnpm install --frozen-lockfile --filter @workspace/api-server...[0m
+2026-09-27T15:18:12.4726987Z [36;1mpnpm --filter @workspace/db run push-force[0m
+2026-09-27T15:18:12.4783452Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:18:12.4783708Z env:
+2026-09-27T15:18:12.4783918Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:12.4784192Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:12.4784446Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:12.4784726Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:12.4785121Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:12.4785466Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:12.4785779Z   DATABASE_URL: postgresql://runner@127.0.0.1:55432/cas_flow
+2026-09-27T15:18:12.4786100Z ##[endgroup]
+2026-09-27T15:18:12.8579741Z Scope: 3 of 9 workspace projects
+2026-09-27T15:18:12.9050689Z Lockfile is up to date, resolution step is skipped
+2026-09-27T15:18:12.9366287Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-09-27T15:18:12.9592042Z .                                        | +137 ++++++++++++++
+2026-09-27T15:18:13.7528000Z Progress: resolved 137, reused 0, downloaded 137, added 137, done
+2026-09-27T15:18:13.7980317Z .../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+2026-09-27T15:18:13.8825989Z .../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+2026-09-27T15:18:14.0610360Z . preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+2026-09-27T15:18:14.0760338Z . preinstall: Done
+2026-09-27T15:18:14.1631267Z Done in 1.6s using pnpm v10.34.5
+2026-09-27T15:18:14.4512214Z 
+2026-09-27T15:18:14.4513155Z > @workspace/db@0.0.0 push-force /home/runner/work/CAS_ANDROID/CAS_ANDROID/lib/db
+2026-09-27T15:18:14.4513668Z > drizzle-kit push --force --config ./drizzle.config.ts
+2026-09-27T15:18:14.4513880Z 
+2026-09-27T15:18:14.5686965Z Reading config file '/home/runner/work/CAS_ANDROID/CAS_ANDROID/lib/db/drizzle.config.ts'
+2026-09-27T15:18:14.9181182Z Using 'pg' driver for database querying
+2026-09-27T15:18:15.1398669Z [⣷] Pulling schema from database...
+2026-09-27T15:18:15.1925085Z [2K[1G[✓] Pulling schema from database...
+2026-09-27T15:18:15.2212402Z [✓] Changes applied
+2026-09-27T15:18:15.2652890Z ##[group]Run set -euo pipefail
+2026-09-27T15:18:15.2653174Z [36;1mset -euo pipefail[0m
+2026-09-27T15:18:15.2653428Z [36;1mpnpm --filter @workspace/api-server run build[0m
+2026-09-27T15:18:15.2653720Z [36;1mPORT=5055 NODE_ENV=development \[0m
+2026-09-27T15:18:15.2654052Z [36;1m  CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \[0m
+2026-09-27T15:18:15.2654410Z [36;1m  CAS_ALERT_TOKEN="$CAS_FLOW_ALERT_TOKEN" \[0m
+2026-09-27T15:18:15.2654664Z [36;1m  DATABASE_URL="$DATABASE_URL" \[0m
+2026-09-27T15:18:15.2655017Z [36;1m  nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-flow-api.log 2>&1 &[0m
+2026-09-27T15:18:15.2655358Z [36;1mup=""[0m
+2026-09-27T15:18:15.2655543Z [36;1mfor i in $(seq 1 45); do[0m
+2026-09-27T15:18:15.2655947Z [36;1m  if curl -s "http://127.0.0.1:5055/api/cas/state" > /dev/null 2>&1; then up=1; break; fi[0m
+2026-09-27T15:18:15.2656473Z [36;1m  sleep 2[0m
+2026-09-27T15:18:15.2656653Z [36;1mdone[0m
+2026-09-27T15:18:15.2656876Z [36;1mif [ -z "$up" ]; then[0m
+2026-09-27T15:18:15.2657105Z [36;1m  echo "::error::dev API never came up"[0m
+2026-09-27T15:18:15.2657366Z [36;1m  tail -50 /tmp/cas-flow-api.log || true[0m
+2026-09-27T15:18:15.2657601Z [36;1m  exit 1[0m
+2026-09-27T15:18:15.2657764Z [36;1mfi[0m
+2026-09-27T15:18:15.2658000Z [36;1mecho "dev API is up on port 5055 (CAS_SMS_DELIVERY_MODE=device)"[0m
+2026-09-27T15:18:15.2714534Z shell: /usr/bin/bash -e {0}
+2026-09-27T15:18:15.2714755Z env:
+2026-09-27T15:18:15.2714956Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:15.2715236Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:15.2715492Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:15.2715789Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:15.2716174Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:15.2716532Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:15.2716859Z   DATABASE_URL: postgresql://runner@127.0.0.1:55432/cas_flow
+2026-09-27T15:18:15.2717125Z ##[endgroup]
+2026-09-27T15:18:15.5383321Z 
+2026-09-27T15:18:15.5384316Z > @workspace/api-server@0.0.0 build /home/runner/work/CAS_ANDROID/CAS_ANDROID/artifacts/api-server
+2026-09-27T15:18:15.5384819Z > node ./build.mjs
+2026-09-27T15:18:15.5384948Z 
+2026-09-27T15:18:15.7499280Z 
+2026-09-27T15:18:15.7500322Z   dist/index.mjs                       2.2mb ⚠️
+2026-09-27T15:18:15.7500902Z   dist/pino-worker.mjs               153.4kb
+2026-09-27T15:18:15.7532103Z   dist/pino-file.mjs                 142.1kb
+2026-09-27T15:18:15.7532476Z   dist/pino-pretty.mjs               114.4kb
+2026-09-27T15:18:15.7532773Z   dist/thread-stream-worker.mjs        7.3kb
+2026-09-27T15:18:15.7533049Z   dist/index.mjs.map                   3.9mb
+2026-09-27T15:18:15.7533328Z   dist/pino-worker.mjs.map           256.9kb
+2026-09-27T15:18:15.7533639Z   dist/pino-file.mjs.map             229.1kb
+2026-09-27T15:18:15.7533918Z   dist/pino-pretty.mjs.map           203.6kb
+2026-09-27T15:18:15.7534185Z   dist/thread-stream-worker.mjs.map   12.0kb
+2026-09-27T15:18:15.7534359Z 
+2026-09-27T15:18:15.7534626Z ⚡ Done in 170ms
+2026-09-27T15:18:17.8018045Z dev API is up on port 5055 (CAS_SMS_DELIVERY_MODE=device)
+2026-09-27T15:18:17.8080384Z ##[group]Run reactivecircus/android-emulator-runner@v2
+2026-09-27T15:18:17.8080669Z with:
+2026-09-27T15:18:17.8080841Z   api-level: 35
+2026-09-27T15:18:17.8081232Z   target: google_apis
+2026-09-27T15:18:17.8081412Z   arch: x86_64
+2026-09-27T15:18:17.8081586Z   profile: pixel_6
+2026-09-27T15:18:17.8081768Z   force-avd-creation: false
+2026-09-27T15:18:17.8081978Z   disable-animations: true
+2026-09-27T15:18:17.8082353Z   emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+2026-09-27T15:18:17.8082851Z   script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-sms-flow.sh
+2026-09-27T15:18:17.8083200Z   cores: 2
+2026-09-27T15:18:17.8083369Z   avd-name: test
+2026-09-27T15:18:17.8083557Z   emulator-boot-timeout: 600
+2026-09-27T15:18:17.8083761Z   emulator-port: 5554
+2026-09-27T15:18:17.8083951Z   disable-spellchecker: false
+2026-09-27T15:18:17.8084158Z   disable-linux-hw-accel: auto
+2026-09-27T15:18:17.8084414Z   enable-hw-keyboard: false
+2026-09-27T15:18:17.8084623Z   channel: stable
+2026-09-27T15:18:17.8084792Z env:
+2026-09-27T15:18:17.8084975Z   CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+2026-09-27T15:18:17.8085238Z   CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+2026-09-27T15:18:17.8085489Z   CAS_FLOW_API_PORT: 5055
+2026-09-27T15:18:17.8085770Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:17.8086154Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-09-27T15:18:17.8086500Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-09-27T15:18:17.8086816Z   DATABASE_URL: postgresql://runner@127.0.0.1:55432/cas_flow
+2026-09-27T15:18:17.8087266Z   CAS_FLOW_API_HOST: http://127.0.0.1:5055
+2026-09-27T15:18:17.8087488Z ##[endgroup]
+2026-09-27T15:18:17.8592685Z ##[group]Configure emulator
+2026-09-27T15:18:17.8594122Z API level: 35
+2026-09-27T15:18:17.8594471Z System image API level: 35
+2026-09-27T15:18:17.8594822Z target: google_apis
+2026-09-27T15:18:17.8595191Z CPU architecture: x86_64
+2026-09-27T15:18:17.8595529Z Hardware profile: pixel_6
+2026-09-27T15:18:17.8595827Z Cores: 2
+2026-09-27T15:18:17.8596062Z RAM size: 
+2026-09-27T15:18:17.8596311Z Heap size: 
+2026-09-27T15:18:17.8596699Z SD card path or size: 
+2026-09-27T15:18:17.8597476Z Disk size: 
+2026-09-27T15:18:17.8597749Z AVD name: test
+2026-09-27T15:18:17.8598168Z force avd creation: false
+2026-09-27T15:18:17.8598525Z Emulator boot timeout: 600
+2026-09-27T15:18:17.8598935Z emulator port: 5554
+2026-09-27T15:18:17.8599756Z emulator options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+2026-09-27T15:18:17.8600409Z disable animations: true
+2026-09-27T15:18:17.8600741Z disable spellchecker: false
+2026-09-27T15:18:17.8601381Z disable Linux hardware acceleration: false
+2026-09-27T15:18:17.8601817Z enable hardware keyboard: false
+2026-09-27T15:18:17.8602151Z Channel: 0 (stable)
+2026-09-27T15:18:17.8602696Z Script:
+2026-09-27T15:18:17.8603218Z CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-sms-flow.sh
+2026-09-27T15:18:17.8603738Z Pre emulator launch script:
+2026-09-27T15:18:17.8604255Z ##[endgroup]
+2026-09-27T15:18:17.8604997Z ##[group]Install Android SDK
+2026-09-27T15:18:17.8654950Z [command]/usr/bin/sh -c \yes | sdkmanager --licenses > /dev/null
+2026-09-27T15:18:21.2434245Z Installing latest build tools, platform tools, and platform.
+2026-09-27T15:18:21.2446001Z [command]/usr/bin/sh -c \sdkmanager --install 'build-tools;37.0.0' platform-tools 'platforms;android-35'> /dev/null
+2026-09-27T15:18:22.5136943Z Installing latest emulator.
+2026-09-27T15:18:22.5149289Z [command]/usr/bin/sh -c \sdkmanager --install emulator --channel=0 > /dev/null
+2026-09-27T15:18:31.7721554Z Installing system images.
+2026-09-27T15:18:31.7735652Z [command]/usr/bin/sh -c \sdkmanager --install 'system-images;android-35;google_apis;x86_64' --channel=0 > /dev/null
+2026-09-27T15:19:03.4435824Z ##[endgroup]
+2026-09-27T15:19:03.4437066Z ##[group]Create AVD
+2026-09-27T15:19:03.4442105Z Creating AVD.
+2026-09-27T15:19:03.4454549Z [command]/usr/bin/sh -c \echo no | avdmanager create avd --force -n test --package 'system-images;android-35;google_apis;x86_64' --device 'pixel_6'
+2026-09-27T15:19:04.2002767Z Loading local repository...                                                     
+2026-09-27T15:19:04.2003635Z [=========                              ] 25% Loading local repository...       
+2026-09-27T15:19:04.2004382Z [=========                              ] 25% Fetch remote repository...        
+2026-09-27T15:19:04.2005049Z [=======================================] 100% Fetch remote repository...       
+2026-09-27T15:19:04.5423888Z Auto-selecting single ABI x86_64
+2026-09-27T15:19:04.9161889Z [command]/usr/bin/sh -c \printf 'hw.cpu.ncore=2\n' >> /home/runner/.android/avd/test.avd/config.ini
+2026-09-27T15:19:04.9182816Z ##[endgroup]
+2026-09-27T15:19:04.9184634Z ##[group]Launch Emulator
+2026-09-27T15:19:04.9184960Z Starting emulator.
+2026-09-27T15:19:04.9197896Z [command]/usr/bin/sh -c \/usr/local/lib/android/sdk/emulator/emulator -port 5554 -avd test -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
+2026-09-27T15:19:04.9313932Z INFO         | Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)
+2026-09-27T15:19:04.9314553Z INFO         | Graphics backend: gfxstream
+2026-09-27T15:19:04.9315321Z INFO         | Found systemPath /usr/local/lib/android/sdk/system-images/android-35/google_apis/x86_64/
+2026-09-27T15:19:04.9774232Z INFO         | Saving last run QEMU version for the AVD to 2
+2026-09-27T15:19:04.9775001Z INFO         | Increasing RAM size to 2560MB
+2026-09-27T15:19:04.9775639Z ##############################################################################
+2026-09-27T15:19:04.9776585Z ##                        WARNING - ACTION REQUIRED                         ##
+2026-09-27T15:19:04.9777197Z ##  Consider using the '-metrics-collection' flag to help improve the       ##
+2026-09-27T15:19:04.9777856Z ##  emulator by sending anonymized usage data. Or use the '-no-metrics'     ##
+2026-09-27T15:19:04.9778480Z ##  flag to bypass this warning and turn off the metrics collection.        ##
+2026-09-27T15:19:04.9779100Z ##  In a future release this warning will turn into a one-time blocking     ##
+2026-09-27T15:19:04.9779724Z ##  prompt to ask for explicit user input regarding metrics collection.     ##
+2026-09-27T15:19:04.9780311Z ##                                                                          ##
+2026-09-27T15:19:04.9780958Z ##  Please see '-help-metrics-collection' for more details. You can use     ##
+2026-09-27T15:19:04.9781889Z ##  '-metrics-to-file' or '-metrics-to-console' flags to see what type of   ##
+2026-09-27T15:19:04.9782626Z ##  data is being collected by emulator as part of usage statistics.        ##
+2026-09-27T15:19:04.9783266Z ##############################################################################
+2026-09-27T15:19:04.9783839Z INFO         | Guest GLES Driver: Auto (ext controls)
+2026-09-27T15:19:04.9784496Z INFO         | emuglConfig_init: vulkan_mode_selected:swiftshader gles_mode_selected:swiftshader
+2026-09-27T15:19:04.9784919Z INFO         | Checking system compatibility:
+2026-09-27T15:19:04.9785233Z INFO         |   Checking: hasSufficientDiskSpace
+2026-09-27T15:19:04.9785601Z INFO         |      Ok: Disk space requirements to run avd: `test` are met
+2026-09-27T15:19:04.9785966Z INFO         |   Checking: hasSufficientHwGpu
+2026-09-27T15:19:04.9786343Z INFO         |      Ok: Hardware GPU compatibility checks are not required
+2026-09-27T15:19:04.9786704Z INFO         |   Checking: hasSufficientSystem
+2026-09-27T15:19:04.9787110Z INFO         |      Ok: System requirements to run avd: `test` are met
+2026-09-27T15:19:04.9787907Z WARNING      | Feature QuickbootFileBacked is disabled due to stability issues, if you really want that, the environment variable ANDROID_EMU_FORCE_QUICKBOOT_FILE_BACKED need to set to 1
+2026-09-27T15:19:05.3981150Z ERROR        | Unable to connect to adb daemon on port: 5037
+2026-09-27T15:19:05.3993027Z INFO         | Storing crashdata in: /tmp/android-runner/emu-crash-37.1.11.db, detection is enabled for process: 2682
+2026-09-27T15:19:05.3993913Z INFO         | Initializing gfxstream backend
+2026-09-27T15:19:05.4001534Z INFO         | startOpenglesRendererImpl: gpu info
+2026-09-27T15:19:05.4001947Z INFO         | 
+2026-09-27T15:19:05.4004383Z INFO         | initIcdPaths: ICD set to 'swiftshader', using Swiftshader ICD
+2026-09-27T15:19:05.4005456Z INFO         | Setting ICD filenames for the loader = /usr/local/lib/android/sdk/emulator/lib64/vulkan/vk_swiftshader_icd.json
+2026-09-27T15:19:05.4006334Z INFO         | SharedLibrary::open for [/usr/local/lib/android/sdk/emulator/qemu/linux-x86_64/lib64/vulkan/libvulkan.so]
+2026-09-27T15:19:05.4007176Z INFO         | SharedLibrary::open for [/usr/local/lib/android/sdk/emulator/qemu/linux-x86_64/lib64/vulkan/libvulkan.so.1]
+2026-09-27T15:19:05.4007866Z INFO         | SharedLibrary::open for [/usr/local/lib/android/sdk/emulator/lib64/vulkan/libvulkan.so]
+2026-09-27T15:19:05.4008746Z INFO         | Added library: /usr/local/lib/android/sdk/emulator/lib64/vulkan/libvulkan.so
+2026-09-27T15:19:05.4050232Z INFO         | Selecting Vulkan device: SwiftShader Device (Subzero), Version: 1.3.0
+2026-09-27T15:19:05.4051118Z INFO         | Using Vulkan externalMemoryMode: OpaqueFd for VkEmulation
+2026-09-27T15:19:05.4181552Z INFO         | SharedLibrary::open for [libX11]
+2026-09-27T15:19:05.4181990Z WARNING      | Could not open libX11.so, try libX11.so.6
+2026-09-27T15:19:05.4182357Z INFO         | SharedLibrary::open for [libX11.so.6]
+2026-09-27T15:19:05.4182687Z INFO         | SharedLibrary::open for [libX11-xcb]
+2026-09-27T15:19:05.4183400Z WARNING      | Could not open libX11-xcb.so, try libX11-xcb.so.1
+2026-09-27T15:19:05.4183782Z INFO         | SharedLibrary::open for [libX11-xcb.so.1]
+2026-09-27T15:19:05.4268937Z INFO         | Initializing VkEmulation features:
+2026-09-27T15:19:05.4269320Z INFO         |     glInteropSupported: false
+2026-09-27T15:19:05.4269681Z INFO         |     useDeferredCommands: true
+2026-09-27T15:19:05.4270105Z INFO         |     createResourceWithRequirements: true
+2026-09-27T15:19:05.4270574Z INFO         |     useVulkanComposition: false
+2026-09-27T15:19:05.4271198Z INFO         |     useVulkanNativeSwapchain: false
+2026-09-27T15:19:05.4271701Z INFO         |     enable guestRenderDoc: false
+2026-09-27T15:19:05.4272144Z INFO         |     ASTC LDR emulation mode: Gpu
+2026-09-27T15:19:05.4272577Z INFO         |     enable ETC2 emulation: true
+2026-09-27T15:19:05.4273012Z INFO         |     enable Ycbcr emulation: false
+2026-09-27T15:19:05.4273435Z INFO         |     guestVulkanOnly: false
+2026-09-27T15:19:05.4273876Z INFO         |     useDedicatedAllocations: false
+2026-09-27T15:19:05.4274369Z INFO         |     guestVulkanMaxApiVersion: 1.3.0
+2026-09-27T15:19:05.4274893Z INFO         |     enableProtectedMemoryEmulation: false
+2026-09-27T15:19:05.4275461Z INFO         | Graphics Adapter Vendor Google (Google Inc.)
+2026-09-27T15:19:05.4276085Z INFO         | Graphics Adapter Android Emulator OpenGL ES Translator (Google SwiftShader)
+2026-09-27T15:19:05.4276591Z INFO         | Graphics API Version OpenGL ES 3.0 (OpenGL ES 3.0 SwiftShader 4.0.0.1)
+2026-09-27T15:19:05.4278682Z INFO         | Graphics API Extensions GL_OES_EGL_sync GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_depth24 GL_OES_depth32 GL_OES_element_index_uint GL_OES_texture_float GL_OES_texture_float_linear GL_OES_compressed_paletted_texture GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth_texture GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_packed_depth_stencil GL_OES_vertex_half_float GL_OES_standard_derivatives GL_OES_texture_npot GL_OES_rgb8_rgba8 GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_texture_format_BGRA8888 GL_APPLE_texture_format_BGRA8888 
+2026-09-27T15:19:05.4280350Z INFO         | Graphics Device Extensions N/A
+2026-09-27T15:19:05.4280677Z INFO         | Disabling sparse binding feature support
+2026-09-27T15:19:05.4361313Z INFO         | Sending adb public key [QAAAAC9rXPUxRNn+73Kopq6AdPmjXxIUIk91+Mr8RmAS/VBov8XMM2Gfsw4fiQoEt4k3iU4xh6gatuurhozFjNq3M+ZsSVPEvE2txQDfsG8lMh+w5I9bIqtvbkmsYzNpVFf9Jm3Pi1j8jS3nTKbXPn60lv56KHahB9A/5hx8nwJSCXKh/aLUFNQwDtqDyZWa7WkZl7eNxEEN9bMTz6mAbGsA5QHWsUusG0VkOqXNk8JJmyemCynlwV5Up8pmxh6k9rXNvX3A1IgRPAY6vSZAs2nUz1M44o/jUOzzyVz0u536tcb85J480lNgSR0Q95GlHfXNkAw4GDhp9IFl6bo5t2YeA8guXifkPuDVce9I+uhaz64s5f2lAzwqOsMjVMgKTrBWWub5ZUaMcFMoD5excA89ti2qwmxlP7AphU6c4Lk9WnYy/H6Qq/tN4u3JP3Fprfp7BwrkM/xEtP0RahcfWJ8N0P+cfYK78/gcAe7xH9adZZ0mktjrAHN86bumkKZMKN1cMU3HsgXfg681larQgIdrGMPXLXC40q8VsImMKc8msACJqGzWwdAx9n3vzn/l3/sv2fQfzyu1xyTLk9oAsZN3oOFcWGicExcEQoJFXUkdHqZKeOUvNFjFfCf7SzmZoROQVJA+3VcMcFMLM0uvSxrnJHmQfQgYwqPluQcvR1Kmc5ZrqfueugEAAQA= runner@unknown]
+2026-09-27T15:19:05.4366172Z INFO         | Userspace boot properties:
+2026-09-27T15:19:05.4367003Z INFO         |   androidboot.boot_devices=pci0000:00/0000:00:03.0 pci0000:00/0000:00:06.0
+2026-09-27T15:19:05.4367747Z INFO         |   androidboot.dalvik.vm.heapsize=576m
+2026-09-27T15:19:05.4368382Z INFO         |   androidboot.debug.hwui.renderer=skiagl
+2026-09-27T15:19:05.4369083Z INFO         |   androidboot.debug.sf.nobootanimation=1
+2026-09-27T15:19:05.4369613Z INFO         |   androidboot.hardware=ranchu
+2026-09-27T15:19:05.4370092Z INFO         |   androidboot.hardware.gltransport=pipe
+2026-09-27T15:19:05.4370432Z INFO         |   androidboot.hardware.vulkan=ranchu
+2026-09-27T15:19:05.4370742Z INFO         |   androidboot.logcat=*:V
+2026-09-27T15:19:05.4371249Z INFO         |   androidboot.opengles.version=196608
+2026-09-27T15:19:05.4371547Z INFO         |   androidboot.qemu=1
+2026-09-27T15:19:05.4374895Z INFO         |   androidboot.qemu.adb.pubkey=QAAAAC9rXPUxRNn+73Kopq6AdPmjXxIUIk91+Mr8RmAS/VBov8XMM2Gfsw4fiQoEt4k3iU4xh6gatuurhozFjNq3M+ZsSVPEvE2txQDfsG8lMh+w5I9bIqtvbkmsYzNpVFf9Jm3Pi1j8jS3nTKbXPn60lv56KHahB9A/5hx8nwJSCXKh/aLUFNQwDtqDyZWa7WkZl7eNxEEN9bMTz6mAbGsA5QHWsUusG0VkOqXNk8JJmyemCynlwV5Up8pmxh6k9rXNvX3A1IgRPAY6vSZAs2nUz1M44o/jUOzzyVz0u536tcb85J480lNgSR0Q95GlHfXNkAw4GDhp9IFl6bo5t2YeA8guXifkPuDVce9I+uhaz64s5f2lAzwqOsMjVMgKTrBWWub5ZUaMcFMoD5excA89ti2qwmxlP7AphU6c4Lk9WnYy/H6Qq/tN4u3JP3Fprfp7BwrkM/xEtP0RahcfWJ8N0P+cfYK78/gcAe7xH9adZZ0mktjrAHN86bumkKZMKN1cMU3HsgXfg681larQgIdrGMPXLXC40q8VsImMKc8msACJqGzWwdAx9n3vzn/l3/sv2fQfzyu1xyTLk9oAsZN3oOFcWGicExcEQoJFXUkdHqZKeOUvNFjFfCf7SzmZoROQVJA+3VcMcFMLM0uvSxrnJHmQfQgYwqPluQcvR1Kmc5ZrqfueugEAAQA= runner@unknown
+2026-09-27T15:19:05.4377831Z INFO         |   androidboot.qemu.avd_name=test
+2026-09-27T15:19:05.4378175Z INFO         |   androidboot.qemu.camera_hq_edge_processing=0
+2026-09-27T15:19:05.4378523Z INFO         |   androidboot.qemu.camera_protocol_ver=1
+2026-09-27T15:19:05.4378865Z INFO         |   androidboot.qemu.cpuvulkan.version=4206592
+2026-09-27T15:19:05.4379251Z INFO         |   androidboot.qemu.gltransport.drawFlushInterval=800
+2026-09-27T15:19:05.4379609Z INFO         |   androidboot.qemu.gltransport.name=pipe
+2026-09-27T15:19:05.4379926Z INFO         |   androidboot.qemu.hwcodec.avcdec=2
+2026-09-27T15:19:05.4380285Z INFO         |   androidboot.qemu.hwcodec.hevcdec=2
+2026-09-27T15:19:05.4380595Z INFO         |   androidboot.qemu.hwcodec.vpxdec=2
+2026-09-27T15:19:05.4381165Z INFO         |   androidboot.qemu.settings.system.screen_off_timeout=2147483647
+2026-09-27T15:19:05.4381632Z INFO         |   androidboot.qemu.skin=1080x2400
+2026-09-27T15:19:05.4381929Z INFO         |   androidboot.qemu.virtiowifi=1
+2026-09-27T15:19:05.4382215Z INFO         |   androidboot.qemu.vsync=60
+2026-09-27T15:19:05.4382700Z INFO         |   androidboot.serialno=EMULATOR37X1X11X0
+2026-09-27T15:19:05.4383219Z INFO         |   androidboot.vbmeta.digest=b3271ba499104f4631ae3723913d5c12574e01715fce5b82d60beed097ead264
+2026-09-27T15:19:05.4383685Z INFO         |   androidboot.vbmeta.hash_alg=sha256
+2026-09-27T15:19:05.4383983Z INFO         |   androidboot.vbmeta.size=6720
+2026-09-27T15:19:05.4384282Z INFO         |   androidboot.veritymode=enforcing
+2026-09-27T15:19:05.4563353Z WARNING: cannnot unmap ptr 0x7f3437a01000 as it is in the protected range from 0x7f3397a00000 to 0x7f3437c00000
+2026-09-27T15:19:05.4690878Z INFO         | Monitoring duration of emulator setup.
+2026-09-27T15:19:08.5022321Z INFO         | Activated packet streamer for bluetooth emulation
+2026-09-27T15:19:08.5023007Z INFO         | Successfully initialized netsim WiFi
+2026-09-27T15:19:08.5072234Z INFO         | Setting display: 0 configuration to: 1080x2400, dpi: 420x420 
+2026-09-27T15:19:08.5072697Z INFO         | setDisplayActiveConfig: id:0, 1080x2400
+2026-09-27T15:19:08.5073276Z INFO         | emulatorSetupEnvironment: Environment scene is not required
+2026-09-27T15:19:08.5142242Z INFO         | Loading snapshot 'default_boot'...
+2026-09-27T15:19:08.5164813Z WARNING      | Failed to process .ini file /home/runner/.android/emu-update-last-check.ini for reading.
+2026-09-27T15:19:08.5263742Z WARNING      | Device 'cache' does not have the requested snapshot 'default_boot'
+2026-09-27T15:19:08.5264180Z 
+2026-09-27T15:19:08.5264399Z WARNING      | Failed to load snapshot 'default_boot'
+2026-09-27T15:19:08.5265180Z USER_INFO    | The emulator is performing a cold boot without a saved state because there's no snapshot and you have configured it not to save on exit.
+2026-09-27T15:19:08.7240252Z WARNING      | Failed to process .ini file /home/runner/.android/emu-update-last-check.ini for reading.
+2026-09-27T15:19:14.9245353Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:14.9287507Z * daemon not running; starting now at tcp:5037
+2026-09-27T15:19:15.0692793Z * daemon started successfully
+2026-09-27T15:19:15.0696829Z adb: device offline
+2026-09-27T15:19:15.0702375Z The process '/usr/local/lib/android/sdk/platform-tools/adb' failed with exit code 1
+2026-09-27T15:19:17.0756107Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:17.0778757Z adb: device offline
+2026-09-27T15:19:17.0785333Z The process '/usr/local/lib/android/sdk/platform-tools/adb' failed with exit code 1
+2026-09-27T15:19:19.0853838Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:19.0889328Z adb: device offline
+2026-09-27T15:19:19.0902971Z The process '/usr/local/lib/android/sdk/platform-tools/adb' failed with exit code 1
+2026-09-27T15:19:21.0955369Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:21.1230490Z 
+2026-09-27T15:19:23.1330017Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:23.1504051Z 
+2026-09-27T15:19:25.1612560Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:25.1757926Z 
+2026-09-27T15:19:27.1802919Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:27.2137876Z 
+2026-09-27T15:19:29.2177168Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:29.2619457Z 
+2026-09-27T15:19:31.2672989Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:31.2952705Z 
+2026-09-27T15:19:33.2977943Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:33.3183439Z 
+2026-09-27T15:19:35.3243127Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:35.3432998Z 
+2026-09-27T15:19:37.3507593Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:37.3785713Z 
+2026-09-27T15:19:38.8495779Z INFO         | Boot completed in 33890 ms
+2026-09-27T15:19:38.8501545Z INFO         | Increasing screen off timeout, logcat buffer size to 2M.
+2026-09-27T15:19:39.3918482Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed
+2026-09-27T15:19:39.4246915Z 1
+2026-09-27T15:19:39.4251909Z Emulator booted.
+2026-09-27T15:19:39.4328444Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell input keyevent 82
+2026-09-27T15:19:39.8552524Z Disabling animations.
+2026-09-27T15:19:39.8582777Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell settings put global window_animation_scale 0.0
+2026-09-27T15:19:39.9033288Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell settings put global transition_animation_scale 0.0
+2026-09-27T15:19:39.9452895Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 shell settings put global animator_duration_scale 0.0
+2026-09-27T15:19:39.9925353Z ##[endgroup]
+2026-09-27T15:19:39.9982464Z [command]/usr/bin/sh -c CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-sms-flow.sh
+2026-09-27T15:19:40.0018929Z == Contract preflight against http://127.0.0.1:5055 ==
+2026-09-27T15:19:40.0142915Z contract OK: device-pending refuses a missing device token (HTTP 401)
+2026-09-27T15:19:40.0492622Z contract OK: device-pending accepts the device token (HTTP 200)
+2026-09-27T15:19:40.0524708Z contract OK: device-pending returns an items array
+2026-09-27T15:19:40.1643355Z contract OK: device-receipt rejects a malformed body (HTTP 400)
+2026-09-27T15:19:40.2814586Z contract OK: device-receipt refuses a missing device token (HTTP 401)
+2026-09-27T15:19:40.4070169Z contract OK: sms-receipt refuses a missing device token (HTTP 401)
+2026-09-27T15:19:40.5302178Z contract OK: sms-receipt rejects a malformed body (HTTP 400)
+2026-09-27T15:19:40.6503589Z contract OK: device-receipt refuses the retired WHATSAPP device channel (HTTP 409)
+2026-09-27T15:19:40.7662455Z contract OK: trigger refuses a missing alert credential (HTTP 401)
+2026-09-27T15:19:40.8888962Z contract OK: trigger refuses a wrong alert credential (HTTP 401)
+2026-09-27T15:19:41.0073300Z contract OK: re-queue refuses a missing alert credential (HTTP 401)
+2026-09-27T15:19:41.0074108Z == Installing APK and granting SEND_SMS ==
+2026-09-27T15:19:44.4232549Z Performing Streamed Install
+2026-09-27T15:19:44.4252138Z Success
+2026-09-27T15:19:46.6812857Z 5055
+2026-09-27T15:19:46.6889078Z adb reverse tunnel up: device 127.0.0.1:5055 -> host http://127.0.0.1:5055
+2026-09-27T15:19:46.7162921Z == Alert phase: triggering via the app with broken responder 'not-a-real-number' (previous incident: none) ==
+2026-09-27T15:19:47.7597987Z Starting: Intent { cmp=com.covertalert.pixeltest/.SmsFlowActivity (has extras) }
+2026-09-27T15:19:47.7599253Z Status: ok
+2026-09-27T15:19:47.7620151Z LaunchState: UNKNOWN (0)
+2026-09-27T15:19:47.7620958Z Activity: com.covertalert.pixeltest/.SmsFlowActivity
+2026-09-27T15:19:47.7621784Z WaitTime: 1009
+2026-09-27T15:19:47.7622205Z Complete
+2026-09-27T15:19:56.9673543Z Alert phase passed: incident sim-1790522392305-db4d40b3-373a-4ee8-9d0d-3939a69268a9, outbox item sim-1790522392305-db4d40b3-373a-4ee8-9d0d-3939a69268a9-sms -> DEAD_LETTER (broken number 'not-a-real-number').
+2026-09-27T15:19:56.9839638Z Location phase passed: incident carries fix {"latitude":52.5163,"longitude":13.3777,"accuracyM":5,"capturedAt":"2026-09-27T15:19:51.739Z"}
+2026-09-27T15:19:56.9845355Z == Re-queue phase: console re-queue, handset pickup with fixed number '+15550100' ==
+2026-09-27T15:19:57.0005205Z contract OK: console re-queue of the dead-lettered item (HTTP 200)
+2026-09-27T15:19:57.0048784Z contract OK: re-queue returned {id, state: QUEUED}
+2026-09-27T15:19:57.3648651Z Starting: Intent { cmp=com.covertalert.pixeltest/.SmsFlowActivity (has extras) }
+2026-09-27T15:19:57.3656304Z Status: ok
+2026-09-27T15:19:57.3656893Z LaunchState: UNKNOWN (0)
+2026-09-27T15:19:57.3657507Z Activity: com.covertalert.pixeltest/.SmsFlowActivity
+2026-09-27T15:19:57.3658038Z WaitTime: 308
+2026-09-27T15:19:57.3658417Z Complete
+2026-09-27T15:20:03.4492057Z Re-queue phase passed: outbox item sim-1790522392305-db4d40b3-373a-4ee8-9d0d-3939a69268a9-sms -> SENT after handset pickup.
+2026-09-27T15:20:03.4494636Z == Evidence phase: on-device journal and crash check ==
+2026-09-27T15:20:03.7497333Z SMS flow proof passed: QUEUED -> DEAD_LETTER (broken number) -> QUEUED (re-queue) -> SENT (fixed number), receipts REPORTED from the handset, contracts enforced.
+2026-09-27T15:20:03.7532988Z ##[group]Terminate Emulator
+2026-09-27T15:20:03.7540786Z [command]/usr/local/lib/android/sdk/platform-tools/adb -s emulator-5554 emu kill
+2026-09-27T15:20:03.7579367Z INFO         | Wait for emulator (pid 2682) 20 seconds to shutdown gracefully before kill;you can set environment variable ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL(in seconds) to change the default value (20 seconds)
+2026-09-27T15:20:03.7581699Z 
+2026-09-27T15:20:03.7592979Z OK: killing emulator, bye bye
+2026-09-27T15:20:03.7601361Z OK
+2026-09-27T15:20:03.7602529Z ##[endgroup]
+2026-09-27T15:20:03.7662471Z USER_INFO    | Snapshots have been disabled by the user, save request is ignored.
+2026-09-27T15:20:03.7663412Z INFO         | Saving snapshot 'default_boot' using 0 ms
+2026-09-27T15:20:04.5088320Z ERROR        | stop: Not implemented
+2026-09-27T15:20:04.5089256Z WARNING      | Emulator client has not yet been configured.. Call configure me first!
+2026-09-27T15:20:04.5201142Z INFO         | removeAll
+2026-09-27T15:20:04.5773167Z WARNING      | Netsim Wifi dns:///localhost:36463 is gone due to Stream removed (CANCELLED)
+2026-09-27T15:20:05.1789052Z Post job cleanup.
+2026-09-27T15:20:05.2861708Z (node:3130) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:20:05.2862405Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:20:05.2999140Z Post job cleanup.
+2026-09-27T15:20:05.4241990Z Pruning is unnecessary.
+2026-09-27T15:20:05.4375921Z Post job cleanup.
+2026-09-27T15:20:05.5613371Z (node:3146) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-27T15:20:05.5614453Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-27T15:20:05.5774893Z Post job cleanup.
+2026-09-27T15:20:05.6551662Z [command]/usr/bin/git version
+2026-09-27T15:20:05.6587327Z git version 2.55.0
+2026-09-27T15:20:05.6617783Z Temporarily overriding HOME='/home/runner/work/_temp/26e67b0f-418f-4c61-995f-5c26d95d344a' before making global git config changes
+2026-09-27T15:20:05.6619023Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-27T15:20:05.6623818Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/CAS_ANDROID/CAS_ANDROID
+2026-09-27T15:20:05.6662932Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-27T15:20:05.6726119Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-27T15:20:05.6952337Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-27T15:20:05.6982390Z http.https://github.com/.extraheader
+2026-09-27T15:20:05.6992842Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-27T15:20:05.7039990Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-27T15:20:05.7281158Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-27T15:20:05.7325846Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-27T15:20:05.7714538Z Cleaning up orphan processes
+2026-09-27T15:20:05.8020000Z Terminate orphan process: pid (2219) (postgres)
+2026-09-27T15:20:05.8056863Z Terminate orphan process: pid (2349) (MainThread)
+2026-09-27T15:20:05.8159443Z Terminate orphan process: pid (2800) (adb)
+2026-09-27T15:20:05.8250616Z Terminate orphan process: pid (3083) (sh)
+2026-09-27T15:20:05.8325043Z Terminate orphan process: pid (3085) (sh)
+2026-09-27T15:20:05.8398593Z Terminate orphan process: pid (3094) (sh)
+2026-09-27T15:20:05.8471878Z Terminate orphan process: pid (3096) (sh)
+2026-09-27T15:20:05.8558319Z Terminate orphan process: pid (3098) (sh)
+2026-09-27T15:20:05.8584028Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-java@v4, actions/setup-node@v4, pnpm/action-setup@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

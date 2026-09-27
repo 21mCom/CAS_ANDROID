@@ -72,6 +72,25 @@ export const casTransportCooldowns = pgTable("cas_transport_cooldowns", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-device enrolled alert credentials. The shared CAS_ALERT_TOKEN secret
+ * only authorizes enrolling/revoking these; every mutation endpoint
+ * (trigger, ack/resolve, re-queue, readiness writes) requires one of these
+ * per-device tokens instead, so a lost phone or leaked console session is
+ * containable by revoking a single row. Only the SHA-256 hash of the token
+ * is stored — the plaintext token is returned once at enrollment and never
+ * persisted, so neither the database nor a journal dump can leak a usable
+ * credential. Revocation takes effect on the very next request: the auth
+ * gate reads this table per request and never caches.
+ */
+export const casDeviceCredentials = pgTable("cas_device_credentials", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
 export const casSetupReadiness = pgTable("cas_setup_readiness", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -104,5 +123,7 @@ export const insertCasGateEvidenceSchema = createInsertSchema(casGateEvidence);
 export type CasIncident = typeof casIncidents.$inferSelect;
 export type CasIncidentEvent = typeof casIncidentEvents.$inferSelect;
 export type CasOutbox = typeof casOutbox.$inferSelect;
+
+export type CasDeviceCredential = typeof casDeviceCredentials.$inferSelect;
 export type CasSetupReadiness = typeof casSetupReadiness.$inferSelect;
 export type CasGateEvidence = typeof casGateEvidence.$inferSelect;

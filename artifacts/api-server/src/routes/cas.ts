@@ -26,10 +26,91 @@ import {
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
 import { deviceAccessToken, deviceChannels, maskRecipient, smsDeliveryMode, type DeviceChannel } from "../lib/cas-device-delivery";
-import { requireCasCredential } from "../lib/cas-auth";
+import {
+  anyDeviceCredentialExists,
+  casDeviceFrom,
+  findDeviceCredentialByToken,
+  issueDeviceCredential,
+  listDeviceCredentials,
+  requireCasCredential,
+  requireCasEnrollmentCredential,
+  revokeDeviceCredential,
+  type CasAuthenticatedDevice,
+} from "../lib/cas-auth";
+import { logger } from "../lib/logger";
 import { detectSecretInNote } from "../lib/note-secrets";
 
 const router: IRouter = Router();
+
+// --- Enrolled device credentials -------------------------------------------
+// The shared CAS_ALERT_TOKEN secret is now only the *enrollment* credential:
+// it authorizes these three management endpoints and nothing else. Day-to-day
+// mutations require a per-device token issued here, so a lost phone or leaked
+// console session is containable by revoking one credential, and every
+// journaled mutation names the device that sent it.
+
+const enrollSchema = z.object({
+  // Operator-chosen name shown in the device list and the incident journal,
+  // e.g. "Owner Pixel 11" or "Console: ops laptop".
+  label: z.string().trim().min(1).max(80),
+});
+
+/**
+ * Enrolls a new device credential. The issued token is returned exactly once
+ * in this response; only its SHA-256 hash is stored, so a lost token cannot
+ * be recovered — enroll a replacement and revoke the old one.
+ */
+router.post("/cas/devices/enroll", requireCasEnrollmentCredential, async (req, res, next) => {
+  try {
+    const parsed = enrollSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid enrollment request", issues: parsed.error.issues });
+    }
+    const { record, token } = await issueDeviceCredential(parsed.data.label);
+    logger.info({ casDeviceId: record.id, label: record.label }, "Enrolled CAS device credential");
+    return res.status(201).json({
+      device: { id: record.id, label: record.label, createdAt: record.createdAt.toISOString() },
+      token,
+    });
+  } catch (error) { return next(error); }
+});
+
+/** Lists enrolled credentials (ids, labels, usage, revocation) — never hashes. */
+router.get("/cas/devices", requireCasEnrollmentCredential, async (_req, res, next) => {
+  try {
+    const devices = await listDeviceCredentials();
+    return res.json({
+      devices: devices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        createdAt: device.createdAt.toISOString(),
+        lastUsedAt: device.lastUsedAt?.toISOString() ?? null,
+        revokedAt: device.revokedAt?.toISOString() ?? null,
+      })),
+    });
+  } catch (error) { return next(error); }
+});
+
+/**
+ * Revokes one credential. The auth gate reads the credential table on every
+ * request and never caches, so the revoked device is blocked from its very
+ * next request. Re-revoking is idempotent and keeps the original timestamp.
+ */
+router.post("/cas/devices/:id/revoke", requireCasEnrollmentCredential, async (req: Request<{ id: string }>, res, next) => {
+  try {
+    const record = await revokeDeviceCredential(req.params.id);
+    if (!record) return res.status(404).json({ error: "Device credential not found" });
+    logger.info({ casDeviceId: record.id, label: record.label }, "Revoked CAS device credential");
+    return res.json({ id: record.id, revokedAt: record.revokedAt?.toISOString() ?? null });
+  } catch (error) { return next(error); }
+});
+
+/** Journal/log attribution for the enrolled device behind this request. */
+function deviceAttribution(res: Response): string {
+  const device = casDeviceFrom(res);
+  return `enrolled device "${device.label}" (${device.id})`;
+}
+
 
 export const DELIVERY_LEASE_MS = 30_000;
 // A delivery that keeps being rejected after this many attempts is abandoned
@@ -84,6 +165,7 @@ router.post("/cas/gate0a/import", requireCasCredential, async (req, res, next) =
       return res.status(400).json({ error: validation.error, issues: validation.issues ?? [] });
     }
     const report = validation.report;
+    logger.info({ casDevice: casDeviceFrom(res), schema: report.schema }, "Gate 0A report import accepted");
     const observation = {
       result: "inconclusive" as const,
       notes: formatGate0aNotes(report),
@@ -236,26 +318,53 @@ router.get("/cas/outbox/status", async (_req, res, next) => {
 
 /**
  * The handset endpoints (device-pending, device-receipt) enumerate and
- * mutate delivery state, so they require the shared device token. In device
- * mode the token is mandatory: with CAS_DEVICE_TOKEN unset they stay closed
- * (503) rather than let any network client mark an unsent alert SENT.
- * Returns true when the request may proceed.
+ * mutate delivery state. An enrolled handset presents its own revocable
+ * device credential as `Authorization: Bearer` — strictly: when a Bearer
+ * credential is presented it must be valid and non-revoked, so a revoked
+ * handset cannot fall back to the shared device token to keep mutating
+ * delivery state. The shared CAS_DEVICE_TOKEN alone only passes during the
+ * pre-enrollment bootstrap window: once any device credential exists
+ * (revocation keeps the row), omitting Bearer is refused, so a revoked
+ * handset that still holds the shared token loses pickup and receipt access
+ * from its very next request. While CAS_DEVICE_TOKEN is unset the endpoints
+ * stay 503-closed rather than letting any network client mark an unsent
+ * alert SENT.
+ * Returns the authenticated device (when known) or null after responding.
  */
-function requireDeviceToken(req: Request, res: Response): boolean {
+async function requireDeviceAccess(req: Request, res: Response): Promise<{ device?: CasAuthenticatedDevice } | null> {
+  const bearer = /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "")?.[1]?.trim();
+  if (bearer) {
+    const credential = await findDeviceCredentialByToken(bearer);
+    if (!credential || credential.revokedAt) {
+      res.status(401).json({ error: "The presented device credential was rejected (unknown or revoked)." });
+      return null;
+    }
+    return { device: { id: credential.id, label: credential.label } };
+  }
   const expected = deviceAccessToken();
   if (!expected) {
     res.status(503).json({
       error: "Device access is not configured on this console (CAS_DEVICE_TOKEN unset); handset endpoints stay closed until it is set.",
     });
-    return false;
+    return null;
+  }
+  // Retire the shared-token fallback once enrollment is in use (revocation
+  // keeps the credential row, so this stays retired): a revoked handset
+  // still holds the shared token and could otherwise omit its Bearer
+  // credential and keep reading pickup lists and posting receipts.
+  if (await anyDeviceCredentialExists()) {
+    res.status(401).json({
+      error: "The shared device token is retired once device credentials are enrolled; present an enrolled device credential (Authorization: Bearer).",
+    });
+    return null;
   }
   const presented = Buffer.from(req.get("x-cas-device-token") ?? "");
   const expectedBuffer = Buffer.from(expected);
   if (presented.length !== expectedBuffer.length || !timingSafeEqual(presented, expectedBuffer)) {
     res.status(401).json({ error: "Missing or invalid device token" });
-    return false;
+    return null;
   }
-  return true;
+  return {};
 }
 
 /**
@@ -274,7 +383,7 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
         error: "Device pickup is only available when CAS_SMS_DELIVERY_MODE=device; items are delivered by the server-side provider worker.",
       });
     }
-    if (!requireDeviceToken(req, res)) return;
+    if (!await requireDeviceAccess(req, res)) return;
     const now = new Date();
     const items = await db
       .select({
@@ -382,7 +491,14 @@ async function handleDeviceReceipt(
         error: "Device receipts are only accepted when CAS_SMS_DELIVERY_MODE=device; in gateway mode the server-side provider delivers and a device receipt could falsely mark an alert sent.",
       });
     }
-    if (!requireDeviceToken(req, res)) return;
+    const access = await requireDeviceAccess(req, res);
+    if (!access) return;
+    // When the handset authenticated with its enrolled credential, receipts
+    // are attributable to (and revocable with) that device, exactly like the
+    // console-side mutations.
+    const receiptAttribution = access.device
+      ? ` Reported by enrolled device "${access.device.label}" (${access.device.id}).`
+      : "";
     const body = deviceReceiptSchema.safeParse(req.body ?? {});
     if (!body.success) {
       return res.status(400).json({ error: "Invalid device receipt", issues: body.error.issues });
@@ -451,7 +567,7 @@ async function handleDeviceReceipt(
           priority: "P1",
           // Only device-enabled channels reach this point (others are
           // refused 409 above), and SMS is the sole device channel.
-          detail: `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM (device-direct mode; no gateway involved).`,
+          detail: `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM (device-direct mode; no gateway involved).${receiptAttribution}`,
           createdAt: now,
         });
         return "sent" as const;
@@ -471,7 +587,7 @@ async function handleDeviceReceipt(
         incidentId,
         type: "DELIVERY_ABANDONED",
         priority: "P1",
-        detail: `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. Fix the responder configuration on the handset and re-queue this delivery; the handset picks re-queued items up from the device-pending list.`,
+        detail: `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. Fix the responder configuration on the handset and re-queue this delivery; the handset picks re-queued items up from the device-pending list.${receiptAttribution}`,
         createdAt: now,
       });
       return "dead-lettered" as const;
@@ -530,6 +646,7 @@ router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
           await tx.insert(casGateEvidence).values(parsed.data.gates);
         }
       });
+      logger.info({ casDevice: casDeviceFrom(res) }, "CAS readiness catalog bootstrapped");
     }
     res.status(201).json({ seeded: existing.length === 0 });
   } catch (error) { return next(error); }
@@ -544,7 +661,7 @@ router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) 
     const now = new Date();
     const id = `test-${now.getTime()}-${randomUUID()}`;
     await db.insert(casIncidents).values({ id, priority: "P3", status: "RESOLVED", triggerCount: 1, createdAt: now, updatedAt: now });
-    await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: "Local test action completed. No message was sent and no device action was triggered.", createdAt: now });
+    await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: `Local test action completed by ${deviceAttribution(res)}. No message was sent and no device action was triggered.`, createdAt: now });
     return res.status(201).json({ id });
   } catch (error) { return next(error); }
 });
@@ -640,7 +757,7 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
           updatedAt: now,
           ...(storeNewerFix ? locationColumns : {}),
         }).where(eq(casIncidents.id, incident.id));
-        const events = [{ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: "Repeat trigger folded into the existing active incident; timers and outbox were not reset.", createdAt: now }];
+        const events = [{ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: `Repeat trigger from ${deviceAttribution(res)} folded into the existing active incident; timers and outbox were not reset.`, createdAt: now }];
         if (storeNewerFix && location) {
           events.push({
             id: `${incident.id}-location-${randomUUID()}`,
@@ -669,7 +786,7 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
         ),
       ];
       await tx.insert(casIncidentEvents).values([
-        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: "Durable trigger received and incident identity committed.", createdAt: now },
+        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: `Durable trigger received from ${deviceAttribution(res)}; incident identity committed.`, createdAt: now },
         { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: transports.length > 0 ? `${transports.join(", ")} outbox items queued independently.` : "No outbox items queued: no deliverable channel was requested/enabled on the handset or provider-configured on the console.", createdAt: now },
       ]);
       if (transports.length > 0) {
@@ -692,6 +809,7 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
 
 async function appendTransition(id: string, from: string, to: string, type: string, detail: string, res: Response, _next: NextFunction) {
   const now = new Date();
+  const attributed = `${detail} (by ${deviceAttribution(res)})`;
   const result = await db.transaction(async (tx) => {
     // Lock the incident before checking its state. Without this, concurrent
     // responders can both read the same status and append duplicate events.
@@ -699,7 +817,7 @@ async function appendTransition(id: string, from: string, to: string, type: stri
     const rows = await tx.select().from(casIncidents).where(eq(casIncidents.id, id)).limit(1);
     if (!rows[0] || rows[0].status !== from) return false;
     await tx.update(casIncidents).set({ status: to, updatedAt: now }).where(eq(casIncidents.id, id));
-    await tx.insert(casIncidentEvents).values({ id: `${id}-${type.toLowerCase()}-${now.getTime()}`, incidentId: id, type, priority: "P1", detail, createdAt: now });
+    await tx.insert(casIncidentEvents).values({ id: `${id}-${type.toLowerCase()}-${now.getTime()}`, incidentId: id, type, priority: "P1", detail: attributed, createdAt: now });
     return true;
   });
   if (!result) return res.status(409).json({ error: `Incident is not ${from}` });
@@ -772,7 +890,7 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
         incidentId: item.incidentId,
         type: "DELIVERY_REQUEUED",
         priority: item.priority,
-        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again.${body.data.reason ? ` Responder note: ${body.data.reason}` : ""}`,
+        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again. Re-queued by ${deviceAttribution(res)}.${body.data.reason ? ` Responder note: ${body.data.reason}` : ""}`,
         createdAt: now,
       });
       return "requeued" as const;
@@ -795,6 +913,7 @@ router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: s
     }
     const [row] = await db.update(casSetupReadiness).set({ complete: parsed.data.complete, updatedAt: new Date() }).where(eq(casSetupReadiness.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Setup item not found" });
+    logger.info({ casDevice: casDeviceFrom(res), setupId: row.id, complete: row.complete }, "CAS setup readiness toggled");
     return res.json(row);
   } catch (error) { return next(error); }
 });
@@ -804,6 +923,7 @@ router.patch("/cas/gates/:id", requireCasCredential, async (req: Request<{ id: s
     const body = gatePatchSchema.parse(req.body);
     const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Gate not found" });
+    logger.info({ casDevice: casDeviceFrom(res), gateId: row.id, status: row.status }, "CAS gate evidence status updated");
     return res.json(row);
   } catch (error) { return next(error); }
 });

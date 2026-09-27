@@ -216,7 +216,7 @@ const initialState: FieldTestState = {
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 
-const ALERT_TOKEN_KEY = 'cas-alert-token';
+const DEVICE_TOKEN_KEY = 'cas-device-token';
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
 
@@ -355,30 +355,41 @@ export type FieldRun = {
 export type ReadinessDecision = 'pending' | 'go' | 'no-go';
 
 async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const token = ensureAlertToken();
-  if (!token) throw new Error('The alert credential is required for this action.');
+  const token = await ensureDeviceToken();
+  if (!token) throw new Error('An enrolled device credential is required for this action.');
   const response = await fetch(input, {
     ...init,
     headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
   });
   if (response.status === 401) {
-    sessionStorage.removeItem(ALERT_TOKEN_KEY);
-    throw new Error('The alert credential was rejected by the server. The next action will ask for it again.');
+    // Revoked or unknown credential: drop it so the next action re-enrolls.
+    sessionStorage.removeItem(DEVICE_TOKEN_KEY);
+    throw new Error('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
   }
   return response;
 }
 
-function ensureAlertToken(): string {
-  let token = sessionStorage.getItem(ALERT_TOKEN_KEY) ?? '';
-  if (!token) {
-    token = window.prompt(
-      'Enter the CAS alert credential (the same token configured on the enrolled phone) to authorize this action.',
-    )?.trim() ?? '';
-    if (token) sessionStorage.setItem(ALERT_TOKEN_KEY, token);
+async function ensureDeviceToken(): Promise<string> {
+  const stored = sessionStorage.getItem(DEVICE_TOKEN_KEY) ?? '';
+  if (stored) return stored;
+  const enrollmentCredential = window.prompt(
+    'Enter the CAS enrollment credential (the server\u2019s CAS_ALERT_TOKEN secret). This browser exchanges it for its own revocable device credential.',
+  )?.trim() ?? '';
+  if (!enrollmentCredential) return '';
+  const response = await fetch('/api/cas/devices/enroll', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${enrollmentCredential}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: `operator-console-${Math.random().toString(16).slice(2, 8)}` }),
+  });
+  if (!response.ok) {
+    window.alert('The enrollment credential was rejected by the server; no device credential was enrolled.');
+    return '';
   }
+  const { token } = (await response.json()) as { token?: string };
+  if (!token) return '';
+  sessionStorage.setItem(DEVICE_TOKEN_KEY, token);
   return token;
 }
-
 function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
 }
