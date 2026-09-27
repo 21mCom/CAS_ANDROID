@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
-import { applyLoadFailure } from '@/hooks/use-field-test';
+import { applyLoadFailure, casAuthedFetch, CasCredentialError } from '@/hooks/use-field-test';
 import { StateResponseError } from '@/components/state-response-error';
+import { ConsoleLocked } from '@/components/console-locked';
+import { OfflineDemoBanner } from '@/components/offline-demo-banner';
 
 /**
  * Runtime contract for GET /api/cas/state: the console must reject a
@@ -130,18 +132,74 @@ test('a non-object body is rejected instead of blowing up on property access', (
 
 test('load failure routing: a shape error raises the mismatch surface, never the demo fallback', () => {
   let surfaced: string | null = null;
+  let locked: string | null = null;
   let demo = false;
-  applyLoadFailure(new CasStateShapeError('drifted'), (message) => { surfaced = message; }, () => { demo = true; });
+  applyLoadFailure(new CasStateShapeError('drifted'), (message) => { surfaced = message; }, (message) => { locked = message; }, () => { demo = true; });
   assert.equal(surfaced, 'drifted');
+  assert.equal(locked, null);
   assert.equal(demo, false, 'a malformed state payload must not fall back to demo data');
 });
 
-test('load failure routing: unrelated failures keep the existing demo fallback', () => {
+test('load failure routing: a credential failure locks the console, never the demo fallback', () => {
   let surfaced: string | null = null;
+  let locked: string | null = null;
   let demo = false;
-  applyLoadFailure(new Error('Unable to load durable state'), (message) => { surfaced = message; }, () => { demo = true; });
+  applyLoadFailure(
+    new CasCredentialError('The device credential was rejected by the server (revoked or unknown).'),
+    (message) => { surfaced = message; },
+    (message) => { locked = message; },
+    () => { demo = true; },
+  );
   assert.equal(surfaced, null);
+  assert.equal(demo, false, 'a missing/rejected credential must not fall back to demo data');
+  assert.match(locked ?? '', /credential was rejected/);
+});
+
+test('load failure routing: only a genuinely unreachable server keeps the demo fallback', () => {
+  let surfaced: string | null = null;
+  let locked: string | null = null;
+  let demo = false;
+  applyLoadFailure(new Error('Unable to load durable state'), (message) => { surfaced = message; }, (message) => { locked = message; }, () => { demo = true; });
+  assert.equal(surfaced, null);
+  assert.equal(locked, null);
   assert.equal(demo, true);
+});
+
+test('cancel prompt -> locked state, not sample incidents', async () => {
+  // Simulate a browser where the operator cancels the enrollment prompt:
+  // the load path must surface a credential lock and never reach for the
+  // demo seed — and no request may go out without a credential.
+  const store = new Map<string, string>();
+  const globals = globalThis as Record<string, unknown>;
+  const original = { window: globals.window, sessionStorage: globals.sessionStorage, fetch: globals.fetch };
+  let fetchCalled = false;
+  globals.window = { prompt: () => null, alert: () => {} };
+  globals.sessionStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+  };
+  globals.fetch = async () => { fetchCalled = true; throw new Error('no request may be attempted without a credential'); };
+  try {
+    let surfaced: string | null = null;
+    let locked: string | null = null;
+    let demo = false;
+    await casAuthedFetch('/api/cas/state').then(
+      () => assert.fail('a cancelled enrollment prompt must reject the load'),
+      (error: unknown) => {
+        assert.ok(error instanceof CasCredentialError, 'the cancel path must be a credential error, not a generic failure');
+        applyLoadFailure(error, (message) => { surfaced = message; }, (message) => { locked = message; }, () => { demo = true; });
+      },
+    );
+    assert.equal(fetchCalled, false, 'no request may be attempted without a credential');
+    assert.equal(surfaced, null);
+    assert.equal(demo, false, 'a cancelled prompt must not fall back to sample incidents');
+    assert.match(locked ?? '', /credential is required/);
+  } finally {
+    globals.window = original.window;
+    globals.sessionStorage = original.sessionStorage;
+    globals.fetch = original.fetch;
+  }
 });
 
 test('the mismatch surface renders the reason and a retry, with no console data', () => {
@@ -153,4 +211,25 @@ test('the mismatch surface renders the reason and a retry, with no console data'
   assert.match(html, /does not match what this console expects/);
   assert.match(html, /No console data is being shown/);
   assert.match(html, /data-testid="button-retry-state-load"/);
+});
+
+test('the locked surface renders the reason and an unlock retry, with no console data', () => {
+  const html = renderToStaticMarkup(
+    createElement(ConsoleLocked, { message: 'An enrolled device credential is required for this action.', onUnlock: () => {} }),
+  );
+  assert.match(html, /data-testid="console-locked"/);
+  assert.match(html, /Console locked/);
+  assert.match(html, /credential is required/);
+  assert.match(html, /No incident data is being shown/);
+  assert.match(html, /data-testid="button-unlock-console"/);
+  assert.doesNotMatch(html, /SAMPLE EVIDENCE/, 'the locked surface must not render sample incidents');
+});
+
+test('the offline fallback labels itself as demo data and offers a retry', () => {
+  const html = renderToStaticMarkup(createElement(OfflineDemoBanner, { onRetry: () => {} }));
+  assert.match(html, /data-testid="banner-offline-demo"/);
+  assert.match(html, /Server unreachable/);
+  assert.match(html, /demo data/);
+  assert.match(html, /not live incident state/);
+  assert.match(html, /data-testid="button-retry-offline-load"/);
 });

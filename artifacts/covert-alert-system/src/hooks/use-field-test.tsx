@@ -50,6 +50,19 @@ export type Gate0AImportSummary = {
   warningCount: number;
 };
 
+/**
+ * The state load (or an action) could not proceed because this browser has
+ * no usable device credential: the operator cancelled the enrollment prompt
+ * or the server rejected the credential. Distinct from an unreachable
+ * server — this must lock the console, never fall back to demo data.
+ */
+export class CasCredentialError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CasCredentialError';
+  }
+}
+
 export type Gate0AImportIssue = { path?: string; message?: string };
 
 /** Import rejection that carries the server's structured per-field issue list. */
@@ -148,6 +161,20 @@ type FieldTestContextValue = FieldTestState & {
   stateIssue: string | null;
   /** Retries the state load after a stateIssue; clears it on success. */
   retryStateLoad: () => void;
+  /**
+   * Set when the state load failed because this browser has no usable
+   * device credential (enrollment prompt cancelled or credential rejected):
+   * the console locks behind a signed-out surface instead of showing any
+   * incident data — least of all the demo seed.
+   */
+  authLock: string | null;
+  /** Re-opens the enrollment prompt and retries the state load. */
+  unlockConsole: () => void;
+  /**
+   * True only when the visible state is the built-in demo seed because the
+   * server itself was unreachable; the shell labels it as demo/offline data.
+   */
+  offlineDemo: boolean;
 };
 const initialGates: Gate[] = [
   {
@@ -247,6 +274,20 @@ const DEVICE_TOKEN_KEY = 'cas-device-token';
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
   const [stateIssue, setStateIssue] = useState<string | null>(null);
+  const [authLock, setAuthLock] = useState<string | null>(null);
+  const [offlineDemo, setOfflineDemo] = useState(false);
+
+  // A cancelled or rejected credential locks the console (never demo data);
+  // only a genuinely unreachable server falls back to the demo seed, and
+  // that state is labeled as offline demo data by the shell.
+  const routeLoadFailure = (error: unknown) => {
+    applyLoadFailure(
+      error,
+      setStateIssue,
+      (message) => { setOfflineDemo(false); setAuthLock(message); },
+      () => { setAuthLock(null); setState(initialState); setOfflineDemo(true); },
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -277,9 +318,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setState({ ...remote, fieldRun: initialState.fieldRun });
           setStateIssue(null);
+          setAuthLock(null);
+          setOfflineDemo(false);
         }
       } catch (error) {
-        if (!cancelled) applyLoadFailure(error, setStateIssue, () => setState(initialState));
+        if (!cancelled) routeLoadFailure(error);
       }
     };
     void load();
@@ -292,6 +335,8 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     const remote = parseCasStateResponse(await response.json());
     setState((current) => ({ ...remote, fieldRun: current.fieldRun }));
     setStateIssue(null);
+    setAuthLock(null);
+    setOfflineDemo(false);
   };
 
   // Any action whose reload hits a drifted server raises the same mismatch
@@ -389,8 +434,13 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     },
     resetDemo: () => { void reload().catch(handleActionError); },
     stateIssue,
-    retryStateLoad: () => { void reload().catch(handleActionError); },
-  }), [state, stateIssue]);
+    retryStateLoad: () => { void reload().catch(routeLoadFailure); },
+    authLock,
+    // The retry re-opens the enrollment prompt: a cancelled/rejected
+    // credential leaves no stored token, so casAuthedFetch asks again.
+    unlockConsole: () => { void reload().catch(routeLoadFailure); },
+    offlineDemo,
+  }), [state, stateIssue, authLock, offlineDemo]);
 
   return <FieldTestContext.Provider value={value}>{children}</FieldTestContext.Provider>;
 }
@@ -419,7 +469,7 @@ export type ReadinessDecision = 'pending' | 'go' | 'no-go';
 
 export async function casAuthedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = await ensureDeviceToken();
-  if (!token) throw new Error('An enrolled device credential is required for this action.');
+  if (!token) throw new CasCredentialError('An enrolled device credential is required for this action.');
   const response = await fetch(input, {
     ...init,
     headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
@@ -427,7 +477,7 @@ export async function casAuthedFetch(input: string, init: RequestInit = {}): Pro
   if (response.status === 401) {
     // Revoked or unknown credential: drop it so the next action re-enrolls.
     sessionStorage.removeItem(DEVICE_TOKEN_KEY);
-    throw new Error('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
+    throw new CasCredentialError('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
   }
   return response;
 }
@@ -466,19 +516,22 @@ function reportAuthError(error: unknown) {
 }
 
 /**
- * Decides what the console shows when the initial state load fails. A
- * response the console cannot parse is a server/console version mismatch
- * and must raise the visible mismatch surface — falling back to the demo
- * seed data would let an operator mistake it for real durable state. Only
- * other failures (offline server, cancelled credential prompt) keep the
- * demo fallback.
+ * Decides what the console shows when a state load fails. A response the
+ * console cannot parse is a server/console version mismatch and must raise
+ * the visible mismatch surface. A missing or rejected credential locks the
+ * console behind an explicit signed-out surface — falling back to the demo
+ * seed in either case would let an operator mistake sample records for real
+ * durable state. Only a genuinely unreachable server keeps the demo
+ * fallback, and that path is labeled as offline demo data by the shell.
  */
 export function applyLoadFailure(
   error: unknown,
   raiseMismatch: (message: string) => void,
+  lockForCredential: (message: string) => void,
   fallBackToDemo: () => void,
 ): void {
   if (error instanceof CasStateShapeError) raiseMismatch(error.message);
+  else if (error instanceof CasCredentialError) lockForCredential(error.message);
   else fallBackToDemo();
 }
 
