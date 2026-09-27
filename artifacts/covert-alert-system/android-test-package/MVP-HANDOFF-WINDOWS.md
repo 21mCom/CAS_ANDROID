@@ -81,6 +81,12 @@ on-screen report, chat, or email.
 
 Note: the development URL works while the CAS workspace is running. If the team
 publishes the app, use the published URL instead — it is stable and stays up.
+For running the backend on the team's own always-on server (recommended for
+real use), follow the self-hosting runbook at
+`artifacts/api-server/SELF-HOSTING.md` and use its HTTPS URL here. Note that
+the console now asks for the enrollment credential on first load in each
+browser — reads of incident state are credential-gated, same as the
+acknowledge/resolve actions.
 
 ## Step 6 — Configure responders and SMS permission on the phone
 

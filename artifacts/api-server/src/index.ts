@@ -17,14 +17,22 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const server = app.listen(port, (err) => {
+// Self-hosted deployments sit behind the Caddy reverse proxy and must not
+// answer the public interface directly: HOST=127.0.0.1 binds loopback only.
+// Unset keeps the platform default (all interfaces), which the Replit
+// workspace preview needs.
+const host = process.env["HOST"]?.trim() || undefined;
+
+const onListen = (err?: Error) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
 
-  logger.info({ port }, "Server listening");
-});
+  logger.info({ port, host: host ?? "0.0.0.0" }, "Server listening");
+};
+
+const server = host ? app.listen(port, host, onListen) : app.listen(port, onListen);
 
 // Drain the CAS outbox on a bounded interval so queued P1 alerts actually
 // reach the configured SMS/XMPP/email providers. The loop survives adapter

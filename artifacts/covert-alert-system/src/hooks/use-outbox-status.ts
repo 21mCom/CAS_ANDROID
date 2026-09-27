@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { casStoredDeviceToken } from './use-field-test';
 
 export type OutboxStateCounts = {
   QUEUED: number;
@@ -41,7 +42,15 @@ export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null;
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch('/api/cas/outbox/status');
+        // The status endpoint is credential-gated like every other incident
+        // read. Until this browser has enrolled (the state load prompts), skip
+        // the tick quietly instead of prompting twice or flagging a false
+        // outage; the next poll picks the credential up from sessionStorage.
+        const token = casStoredDeviceToken();
+        if (!token) return;
+        const response = await fetch('/api/cas/outbox/status', {
+          headers: { authorization: `Bearer ${token}` },
+        });
         if (!response.ok) throw new Error('Unable to load outbox status');
         const body = (await response.json()) as OutboxStatus;
         if (!cancelled) {

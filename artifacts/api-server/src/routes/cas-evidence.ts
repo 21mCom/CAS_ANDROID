@@ -104,9 +104,11 @@ async function readPolicy() {
   };
 }
 
-// Policy reads are anonymous configuration reads, matching the console's
-// /cas/state posture; writes stay credentialed below.
-router.get("/cas/evidence-policy", async (_req, res, next) => {
+// Policy reads are credentialed like every other console read (the policy
+// reveals the system's capture posture); the handset already presents its
+// enrolled credential on this GET and falls back to the cached policy when
+// it is rejected. Writes ride the same gate below.
+router.get("/cas/evidence-policy", requireCasCredential, async (_req, res, next) => {
   try {
     return res.json(await readPolicy());
   } catch (error) { return next(error); }

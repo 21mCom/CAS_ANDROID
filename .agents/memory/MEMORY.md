@@ -29,4 +29,4 @@
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.
-- [CAS console read posture](cas-console-read-posture.md) — console GETs stay anonymous like /cas/state; gating a read 401s the page (only visible in browser logs).
+- [CAS console read posture](cas-console-read-posture.md) — console GETs are credentialed like mutations; anonymous reads were retired for self-hosting (healthz stays open).

@@ -22,9 +22,11 @@ const DEFAULT_POLICY: CapturePolicy = {
 
 /**
  * The evidence-capture policy the handset honors on every trigger and server
- * contact. Reads are anonymous (same posture as /api/cas/state); writes go
- * through the credentialed mutation path. The device fetches this policy on
- * its next contact, so a change here takes effect with no app reinstall.
+ * contact. Reads are credential-gated like every other console read (the
+ * policy reveals the system's capture posture), so they go through
+ * casAuthedFetch like the writes. The device fetches this policy with its
+ * own enrolled credential on its next contact, so a change here takes effect
+ * with no app reinstall.
  */
 export function useCapturePolicy() {
   const [policy, setPolicy] = useState<CapturePolicy>(DEFAULT_POLICY);
@@ -34,7 +36,7 @@ export function useCapturePolicy() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch('/api/cas/evidence-policy');
+      const response = await casAuthedFetch('/api/cas/evidence-policy');
       if (!response.ok) throw new Error(`Unable to load the capture policy (${response.status}).`);
       setPolicy(await response.json() as CapturePolicy);
       setError(null);

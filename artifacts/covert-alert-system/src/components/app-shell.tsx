@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { Activity, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
+import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
-import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, Radio, ShieldAlert, X } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },

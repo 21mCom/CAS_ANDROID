@@ -7,6 +7,7 @@
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
+    "start:production": "export NODE_ENV=production && node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../scripts/run-cas-contract-tests.mjs",
     "test:review-db-cleanup": "node ../../scripts/test-review-database-cleanup.mjs",

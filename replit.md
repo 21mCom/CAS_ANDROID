@@ -10,6 +10,11 @@ _Replace the heading above with the project's name, and this line with one sente
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Self-hosting: `artifacts/api-server/SELF-HOSTING.md` is the production runbook
+  (own server, systemd, HTTPS, backups, uptime checks). Production start:
+  `pnpm --filter @workspace/api-server run build` then `start:production`.
+  Read endpoints that expose incident state require an enrolled device
+  credential, same as mutations.
 
 The workspace build supplies the preview defaults required by both Vite
 artifacts: `PORT=5173 BASE_PATH=/` for the web console and

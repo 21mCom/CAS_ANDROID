@@ -32,8 +32,9 @@ object CapturePolicy {
 
     fun fetch(context: Context, baseUrl: String): Policy? {
         if (baseUrl.isBlank()) return null
-        // Policy reads are anonymous on the server (configuration, not a
-        // secret); the enrolled credential rides along when present.
+        // Policy reads are credential-gated on the server (the policy reveals
+        // the capture posture); the enrolled credential rides along, and a
+        // rejected read falls back to the last cached policy.
 
         return try {
             val connection = ConnectionConfig.open(context, baseUrl, "/api/cas/evidence-policy")

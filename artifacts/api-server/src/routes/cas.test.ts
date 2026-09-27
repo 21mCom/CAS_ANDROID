@@ -623,7 +623,7 @@ test("trigger accepts a location fix, persists it with accuracy and capture time
   assert.equal(incident.locationAccuracyM, 12.5);
   assert.equal(incident.locationCapturedAt?.getTime(), capturedAt.getTime());
 
-  const state = await (await fetch(`${baseUrl}/cas/state`)).json() as {
+  const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS })).json() as {
     activeIncident: { id: string; location: unknown };
   };
   assert.equal(state.activeIncident.id, id);
@@ -666,7 +666,7 @@ test("GET /cas/state response validates against the console-mirrored contract sc
     });
     assert.equal(trigger.status, 201);
 
-    const response = await fetch(`${baseUrl}/cas/state`);
+    const response = await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS });
     assert.ok(response.ok);
     const body = await response.json();
     const parsed = casStateResponseSchema.safeParse(body);
@@ -1043,7 +1043,7 @@ test("the state view surfaces dead-lettered deliveries distinctly", async () => 
   });
   assert.equal(run.deadLettered, 1);
 
-  const state = await fetch(`${baseUrl}/cas/state`);
+  const state = await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS });
   assert.equal(state.status, 200);
   const body = (await state.json()) as {
     activeIncident: {
@@ -2265,7 +2265,7 @@ test("outbox status reports counts by state and the oldest pending item", async 
     { id: "status-sent", incidentId: "status-inc", transport: "XMPP", state: "SENT", priority: "P1", createdAt: now },
   ]);
 
-  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  const response = await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS });
   assert.equal(response.status, 200);
   const body = (await response.json()) as {
     counts: Record<string, number>;
@@ -2314,7 +2314,7 @@ test("a dead-lettered delivery is reported by the status endpoint end-to-end", a
     .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.id} <> ${itemId}`);
 
   // Before the cap is reached the status endpoint must not cry dead letter.
-  const before = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { counts: Record<string, number> };
+  const before = await (await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS })).json() as { counts: Record<string, number> };
   assert.equal(before.counts.DEAD_LETTER, 0);
 
   for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
@@ -2325,7 +2325,7 @@ test("a dead-lettered delivery is reported by the status endpoint end-to-end", a
     await processCasOutbox({ workerId: "status-worker", maxItems: 1, send });
   }
 
-  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  const response = await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS });
   assert.equal(response.status, 200);
   const body = (await response.json()) as {
     counts: Record<string, number>;
@@ -2344,7 +2344,7 @@ test("a dead-lettered delivery is reported by the status endpoint end-to-end", a
 });
 
 test("outbox status reports an empty pipeline with no worker heartbeat", async () => {
-  const response = await fetch(`${baseUrl}/cas/outbox/status`);
+  const response = await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS });
   assert.equal(response.status, 200);
   const body = (await response.json()) as {
     counts: Record<string, number>;
@@ -2381,7 +2381,7 @@ test("outbox status surfaces the worker heartbeat once ticks are recorded", asyn
     });
     recordCasOutboxTickError("database hiccup");
 
-    const response = await fetch(`${baseUrl}/cas/outbox/status`);
+    const response = await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS });
     assert.equal(response.status, 200);
     const body = (await response.json()) as {
       worker: {
@@ -2467,10 +2467,10 @@ test("device mode keeps the worker from claiming SMS items while XMPP still drai
     assert.equal(xmpp.state, "FAILED");
 
     // The status endpoint tells the console who delivers SMS.
-    const status = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { smsDeliveryMode: string };
+    const status = await (await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS })).json() as { smsDeliveryMode: string };
     assert.equal(status.smsDeliveryMode, "device");
   });
-  const status = await (await fetch(`${baseUrl}/cas/outbox/status`)).json() as { smsDeliveryMode: string };
+  const status = await (await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS })).json() as { smsDeliveryMode: string };
   assert.equal(status.smsDeliveryMode, "gateway");
 });
 
@@ -3321,6 +3321,46 @@ test("unauthenticated console write endpoints (bootstrap, test incident, setup/g
         { method: "PATCH", path: "/api/cas/gates/proxy-launch", reason: "missing-token" },
         { method: "POST", path: "/api/cas/gate0a/import", reason: "missing-token" },
         { method: "POST", path: "/api/cas/incidents/test", reason: "invalid-token" },
+      ],
+    );
+    assert.ok(!JSON.stringify(rejections).includes("not-the-alert-token"));
+  } finally {
+    setCasAuthRejectionRecorder();
+  }
+});
+
+test("unauthenticated incident-state reads (state, outbox status) are rejected with 401 and recorded", async () => {
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    const attempts = [
+      { make: () => fetch(`${baseUrl}/cas/state`), path: "/api/cas/state" },
+      { make: () => fetch(`${baseUrl}/cas/outbox/status`), path: "/api/cas/outbox/status" },
+    ];
+    for (const attempt of attempts) {
+      const response = await attempt.make();
+      assert.equal(response.status, 401, `GET ${attempt.path}`);
+      assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="cas"');
+      const body = (await response.json()) as { error?: string };
+      assert.ok(body.error);
+    }
+
+    // A wrong credential and the enrollment credential are both rejected:
+    // reads carry the same enrolled-device contract as writes.
+    const wrongToken = await fetch(`${baseUrl}/cas/state`, {
+      headers: { authorization: "Bearer not-the-alert-token" },
+    });
+    assert.equal(wrongToken.status, 401);
+    const enrollmentToken = await fetch(`${baseUrl}/cas/outbox/status`, { headers: ENROLLMENT_HEADERS });
+    assert.equal(enrollmentToken.status, 401);
+
+    assert.deepEqual(
+      rejections.map(({ method, path, reason }) => ({ method, path, reason })),
+      [
+        { method: "GET", path: "/api/cas/state", reason: "missing-token" },
+        { method: "GET", path: "/api/cas/outbox/status", reason: "missing-token" },
+        { method: "GET", path: "/api/cas/state", reason: "invalid-token" },
+        { method: "GET", path: "/api/cas/outbox/status", reason: "enrollment-token-not-authorized" },
       ],
     );
     assert.ok(!JSON.stringify(rejections).includes("not-the-alert-token"));

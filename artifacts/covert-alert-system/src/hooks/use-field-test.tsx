@@ -242,7 +242,10 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const load = async () => {
       try {
-        let response = await fetch('/api/cas/state');
+        // State reads are credential-gated like mutations: the first load of
+        // a session asks for the enrollment credential and this browser
+        // enrolls its own revocable device credential before anything is read.
+        let response = await casAuthedFetch('/api/cas/state');
         if (!response.ok) throw new Error('Unable to load durable state');
         let remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
         if (remote.gates.length === 0 && remote.setup.length === 0) {
@@ -254,7 +257,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gates: initialGates, setup: initialSetup }),
           });
-          response = await fetch('/api/cas/state');
+          response = await casAuthedFetch('/api/cas/state');
           remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
         }
         if (!cancelled) setState({ ...remote, fieldRun: initialState.fieldRun });
@@ -267,7 +270,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reload = async () => {
-    const response = await fetch('/api/cas/state');
+    const response = await casAuthedFetch('/api/cas/state');
     if (!response.ok) throw new Error('Unable to reload durable state');
     const remote = await response.json() as Omit<FieldTestState, 'fieldRun'>;
     setState((current) => ({ ...remote, fieldRun: current.fieldRun }));
@@ -433,6 +436,16 @@ async function ensureDeviceToken(): Promise<string> {
 
 function reportAuthError(error: unknown) {
   if (error instanceof Error && error.message.includes('credential')) window.alert(error.message);
+}
+
+/**
+ * The session's enrolled device token, or null when this browser has not
+ * enrolled yet. Read-only: unlike casAuthedFetch this never prompts, so
+ * polling surfaces (outbox status) can wait for the credential instead of
+ * opening a second enrollment prompt.
+ */
+export function casStoredDeviceToken(): string | null {
+  return sessionStorage.getItem(DEVICE_TOKEN_KEY);
 }
 
 export type CaptureRequestItem = {

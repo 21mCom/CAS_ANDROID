@@ -120,16 +120,20 @@ function uploadEvidence(incidentId: string, overrides: {
 }
 
 test("policy defaults to everything off with immediate timing", async () => {
-  const response = await fetch(`${baseUrl}/cas/evidence-policy`);
+  const response = await fetch(`${baseUrl}/cas/evidence-policy`, { headers: AUTH });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     audio: "off", photo: "off", video: "off", timing: "immediate", updatedAt: null,
   });
 });
 
-test("policy fetch accepts the console credential and anonymous reads", async () => {
+test("policy fetch requires an enrolled credential; anonymous reads are rejected", async () => {
+  // The policy reveals the system's capture posture, so reads are gated like
+  // every other console read. The console credential and the handset's own
+  // enrolled credential both pass; an anonymous request gets 401.
   assert.equal((await fetch(`${baseUrl}/cas/evidence-policy`, { headers: AUTH })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/cas/evidence-policy`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/cas/evidence-policy`, { headers: HANDSET })).status, 200);
+  assert.equal((await fetch(`${baseUrl}/cas/evidence-policy`)).status, 401);
 });
 
 test("policy write requires the console credential and validates values", async () => {
@@ -156,7 +160,7 @@ test("policy write requires the console credential and validates values", async 
 
 test("policy write round-trips and is what the handset fetches", async () => {
   await putPolicy({ audio: "trigger", photo: "responder", video: "off", timing: "screen-off" });
-  const response = await fetch(`${baseUrl}/cas/evidence-policy`);
+  const response = await fetch(`${baseUrl}/cas/evidence-policy`, { headers: HANDSET });
   const body = await response.json() as Record<string, unknown>;
   assert.equal(body.audio, "trigger");
   assert.equal(body.photo, "responder");
@@ -243,7 +247,7 @@ test("evidence upload stores the clip, journals it, and lists it in /cas/state",
   const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
   assert.ok(journal.some((event) => event.type === "EVIDENCE_UPLOADED"));
 
-  const state = await (await fetch(`${baseUrl}/cas/state`)).json() as {
+  const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH })).json() as {
     activeIncident: { id: string; evidence: { id: string; kind: string; sizeBytes: number }[] };
   };
   assert.equal(state.activeIncident.id, incidentId);
@@ -370,7 +374,7 @@ test("handset evidence endpoints do not depend on CAS_DEVICE_TOKEN at all", asyn
     assert.equal(upload.status, 201);
     const pending = await fetch(`${baseUrl}/cas/capture-requests/pending`, { headers: HANDSET });
     assert.equal(pending.status, 200);
-    const policy = await fetch(`${baseUrl}/cas/evidence-policy`);
+    const policy = await fetch(`${baseUrl}/cas/evidence-policy`, { headers: HANDSET });
     assert.equal(policy.status, 200);
   } finally {
     process.env.CAS_DEVICE_TOKEN = saved;
