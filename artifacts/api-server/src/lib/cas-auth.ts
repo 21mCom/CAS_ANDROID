@@ -29,6 +29,12 @@ import { logger } from "./logger";
  * rejects everything, and a server with no enrolled credentials rejects
  * every mutation — a freshly deployed server can never silently run
  * unlocked.
+ *
+ * Online-guessing tarpit: every credential rejection (here and in the
+ * handset device-access gate) additionally passes through
+ * delayCasAuthRejection, which slows repeated 401s from one client IP with
+ * a doubling delay and emits a distinct burst warn line for log monitoring.
+ * Successful credentialed requests are never delayed.
  */
 
 export type CasAuthRejectionReason =
@@ -36,6 +42,7 @@ export type CasAuthRejectionReason =
   | "invalid-token"
   | "revoked-token"
   | "enrollment-token-not-authorized"
+  | "shared-device-token-retired"
   | "server-not-configured";
 
 export type CasAuthRejection = {
@@ -70,6 +77,138 @@ export function setCasAuthRejectionRecorder(
   recordRejection = recorder ?? defaultRecorder;
 }
 
+/** Records a rejection produced outside reject() (the handset device-access
+ * gate in routes/cas.ts keeps its own 401 bodies) so every credential
+ * rejection reaches the same sink. */
+export function recordCasCredentialRejection(rejection: CasAuthRejection) {
+  recordRejection(rejection);
+}
+
+/**
+ * Online-guessing tarpit for the credential gates. Self-hosting puts these
+ * endpoints on a public URL; the tokens are high-entropy, but repeated 401s
+ * from one client IP should still cost the guesser exponentially more time,
+ * and a sustained burst should surface as a distinct log line that uptime/log
+ * monitoring can alert on.
+ *
+ * Design: only *rejection responses* are delayed (never successful
+ * credentialed requests), so legitimate polling — console state reads every
+ * few seconds, outbox status every 12s — is never slowed, even from an IP
+ * with a live failure streak. The delay doubles per consecutive failure from
+ * the same IP (first failure answers at full speed so an honest typo is not
+ * punished), capped at maxDelayMs; a streak decays after resetWindowMs of
+ * quiet. Every burstThreshold consecutive failures emits one burst record.
+ *
+ * Keyed on req.ip: a self-hosting deployment behind a reverse proxy must set
+ * Express `trust proxy` for the limiter to see real client addresses.
+ */
+export type CasAuthFailureBurst = {
+  ip: string;
+  failures: number;
+  windowMs: number;
+};
+
+export type CasAuthFailureLimitConfig = {
+  /** Delay for the second consecutive failure; doubles per failure. */
+  baseDelayMs: number;
+  /** Cap on the per-response delay. */
+  maxDelayMs: number;
+  /** Consecutive failures from one IP that constitute an alertable burst. */
+  burstThreshold: number;
+  /** Quiet period after which an IP's streak decays back to zero. */
+  resetWindowMs: number;
+};
+
+const DEFAULT_FAILURE_LIMIT_CONFIG: CasAuthFailureLimitConfig = {
+  baseDelayMs: 250,
+  maxDelayMs: 30_000,
+  burstThreshold: 10,
+  resetWindowMs: 10 * 60_000,
+};
+
+let failureLimitConfig: CasAuthFailureLimitConfig = { ...DEFAULT_FAILURE_LIMIT_CONFIG };
+
+type FailureStreak = { count: number; lastFailureAt: number };
+const failureStreaksByIp = new Map<string, FailureStreak>();
+
+// The burst sink is injectable for the same reason as the rejection sink:
+// tests prove the alert fires without scraping logs. The default is one
+// distinct structured warn line per threshold crossing.
+const defaultBurstRecorder = (burst: CasAuthFailureBurst) => {
+  logger.warn({ casAuthRejectionBurst: burst }, "CAS credential rejection burst detected");
+};
+
+let recordBurst: (burst: CasAuthFailureBurst) => void = defaultBurstRecorder;
+
+/** Test hook: swap the burst sink; call with no argument to restore. */
+export function setCasAuthBurstRecorder(
+  recorder?: (burst: CasAuthFailureBurst) => void,
+) {
+  recordBurst = recorder ?? defaultBurstRecorder;
+}
+
+/** Test/ops hook: override the delay schedule; call with no argument to restore defaults. */
+export function setCasAuthFailureLimitConfig(config?: Partial<CasAuthFailureLimitConfig>) {
+  failureLimitConfig = { ...DEFAULT_FAILURE_LIMIT_CONFIG, ...config };
+}
+
+/** Test hook: forget all recorded failure streaks. */
+export function resetCasAuthFailureTracking() {
+  failureStreaksByIp.clear();
+}
+
+function clientIpKey(req: Parameters<RequestHandler>[0]): string {
+  return req.ip ?? "unknown";
+}
+
+function liveStreak(key: string, now: number): number {
+  const streak = failureStreaksByIp.get(key);
+  if (!streak) return 0;
+  if (now - streak.lastFailureAt > failureLimitConfig.resetWindowMs) {
+    failureStreaksByIp.delete(key);
+    return 0;
+  }
+  return streak.count;
+}
+
+/** Response delay for the n-th consecutive failure from one IP: the first is free, then doubling. */
+export function casAuthFailureDelayMs(streak: number): number {
+  if (streak <= 1) return 0;
+  return Math.min(
+    failureLimitConfig.baseDelayMs * 2 ** (streak - 2),
+    failureLimitConfig.maxDelayMs,
+  );
+}
+
+/**
+ * Records a credential rejection for the client IP, emits a burst record at
+ * each threshold multiple, and holds the response for the streak's delay.
+ * Call exactly once per rejection, before sending the 401 body.
+ */
+export async function delayCasAuthRejection(req: Parameters<RequestHandler>[0]): Promise<void> {
+  const now = Date.now();
+  const key = clientIpKey(req);
+  const streak = liveStreak(key, now) + 1;
+  failureStreaksByIp.set(key, { count: streak, lastFailureAt: now });
+  // Bound the map under a flood of spoofed/source-NATted addresses: stale
+  // entries are worthless, so evict them once the table grows past a
+  // generous working set.
+  if (failureStreaksByIp.size > 4096) {
+    for (const [ip, entry] of failureStreaksByIp) {
+      if (now - entry.lastFailureAt > failureLimitConfig.resetWindowMs) {
+        failureStreaksByIp.delete(ip);
+      }
+    }
+  }
+  if (streak % failureLimitConfig.burstThreshold === 0) {
+    recordBurst({ ip: key, failures: streak, windowMs: failureLimitConfig.resetWindowMs });
+  }
+  const delayMs = casAuthFailureDelayMs(streak);
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
 function tokensEqual(presented: string, expected: string): boolean {
   const a = Buffer.from(presented, "utf8");
   const b = Buffer.from(expected, "utf8");
@@ -84,6 +223,8 @@ const ERROR_BY_REASON: Record<CasAuthRejectionReason, string> = {
     "The presented device credential has been revoked; enroll a new device credential via POST /api/cas/devices/enroll.",
   "enrollment-token-not-authorized":
     "That is the enrollment credential (CAS_ALERT_TOKEN); it only authorizes enrolling, listing, and revoking device credentials. Present an enrolled device credential instead.",
+  "shared-device-token-retired":
+    "The shared device token is retired once device credentials are enrolled; present an enrolled device credential (Authorization: Bearer).",
   "server-not-configured":
     "The enrollment credential is not configured on the server (CAS_ALERT_TOKEN); refusing all device-credential management and failing closed.",
 };
@@ -92,7 +233,7 @@ function bearerToken(req: Parameters<RequestHandler>[0]): string | undefined {
   return /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "")?.[1]?.trim();
 }
 
-function reject(
+async function reject(
   res: Response,
   req: Parameters<RequestHandler>[0],
   reason: CasAuthRejectionReason,
@@ -105,6 +246,9 @@ function reject(
     ip: req.ip,
     ...(deviceId ? { deviceId } : {}),
   });
+  // Tarpit repeated failures from this IP before the response goes out;
+  // successful credentialed requests never pass through here.
+  await delayCasAuthRejection(req);
   res.setHeader("WWW-Authenticate", 'Bearer realm="cas"');
   return res.status(401).json({ error: ERROR_BY_REASON[reason] });
 }
@@ -229,7 +373,7 @@ export const requireCasCredential: RequestHandler = async (req, res, next) => {
  * enrolled device token, so a leaked device credential cannot mint more
  * credentials and escalate itself.
  */
-export const requireCasEnrollmentCredential: RequestHandler = (req, res, next) => {
+export const requireCasEnrollmentCredential: RequestHandler = async (req, res, next) => {
   const configured = process.env.CAS_ALERT_TOKEN?.trim();
   const presented = bearerToken(req);
 

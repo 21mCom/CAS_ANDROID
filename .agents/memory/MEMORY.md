@@ -4,7 +4,7 @@
 - [CAS alert API credential gate](cas-auth.md) — mutations need enrolled per-device tokens; devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
-- [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown.
+- [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown; suites stringing credential 401s must neutralize the per-IP tarpit schedule.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
@@ -22,7 +22,6 @@
 - [Gate 0A harness python3 shim coupling](gate0a-harness-python3-shim.md) — CI shadows python3 with a broken shim, so harness code before write_report must not call python3.
 - [Launch smoke detection lessons](launch-smoke-detection-selftest.md) — am start -W exits 0 on onCreate crashes; tail -200 alone can miss the fatal block — grep it explicitly.
 - [Android emulator in this workspace](android-emulator-in-workspace.md) — boots under TCG with workspace-device state; its modem never registers (no local SMS); use adb reverse, not 10.0.2.2.
-- [Android emulator CI runners](android-emulator-ci-runners.md) — macos-latest cannot boot the emulator (no HVF); use ubuntu-latest + KVM; emulator-runner script blocks run under dash.
 - [Protected broadcasts need adb root](protected-broadcasts-adb.md) — API 35 shell uid can't send protected broadcasts or start non-exported activities; LOCKED_BOOT_COMPLETED ≠ direct boot.
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
 - [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — a stale snapshot can revert concurrent work, even committed; diff touched files against the parent before completing.
@@ -36,4 +35,3 @@
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
-- [Testing subagent secret bridging](testing-subagent-secret-bridging.md) — tester shell has secrets but its browser runtime lacks process.env; bridge via shell-written file and name the exact secret.

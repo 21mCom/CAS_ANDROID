@@ -13,6 +13,21 @@ import {
   casOutbox,
 } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  resetCasAuthFailureTracking,
+  setCasAuthBurstRecorder,
+  setCasAuthFailureLimitConfig,
+  setCasAuthRejectionRecorder,
+  type CasAuthFailureBurst,
+  type CasAuthRejection,
+} from "../lib/cas-auth";
+
+// This suite intentionally strings credential rejections together; run the
+// per-IP rejection tarpit (see lib/cas-auth.ts) on a near-zero schedule so
+// the 401s stay instant. The tarpit's own route test below installs a
+// measurable schedule and restores this one.
+const SUITE_FAILURE_LIMIT_CONFIG = { baseDelayMs: 3, maxDelayMs: 15, burstThreshold: 1_000 };
+setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
 
 // Evidence endpoints require enrolled credentials on both sides: the handset
 // presents its own enrolled device credential (Authorization: Bearer) — the
@@ -190,6 +205,56 @@ test("evidence upload requires an enrolled credential; the shared device token i
     body: Buffer.from("fake-jpeg-bytes"),
   });
   assert.equal(wrongBearer.status, 401);
+});
+
+test("evidence-gate rejections pass through the same per-IP tarpit and burst alert as the other credential gates", async () => {
+  // requireEnrolledDevice is a public credential gate like the enrollment and
+  // delivery gates: repeated guesses against it must slow down and alert, or
+  // it would be the fastest oracle on the box.
+  setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
+  resetCasAuthFailureTracking();
+  const bursts: CasAuthFailureBurst[] = [];
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthBurstRecorder((burst) => bursts.push(burst));
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    const guess = () => fetch(`${baseUrl}/cas/capture-requests/pending`, {
+      headers: { authorization: "Bearer casdev_evidence-guess" },
+    });
+
+    let response = await guess();
+    assert.equal(response.status, 401);
+    let started = performance.now();
+    response = await guess();
+    assert.equal(response.status, 401);
+    const second = performance.now() - started;
+    assert.ok(second >= 45, `second evidence-gate rejection should wait ~50ms, took ${second}ms`);
+    started = performance.now();
+    response = await guess();
+    assert.equal(response.status, 401);
+    const third = performance.now() - started;
+    assert.ok(third >= 95, `third evidence-gate rejection should wait ~100ms, took ${third}ms`);
+
+    // The burst alert fires on this gate too, and every rejection was
+    // recorded without the presented credential.
+    assert.equal(bursts.length, 1);
+    assert.equal(bursts[0].failures, 3);
+    assert.deepEqual(rejections.map((rejection) => rejection.reason), ["invalid-token", "invalid-token", "invalid-token"]);
+    assert.ok(rejections.every((rejection) => rejection.path === "/api/cas/capture-requests/pending"));
+    assert.ok(!JSON.stringify([bursts, rejections]).includes("casdev_evidence-guess"));
+
+    // The enrolled handset's own polling is never delayed, even mid-streak.
+    started = performance.now();
+    const legit = await fetch(`${baseUrl}/cas/capture-requests/pending`, { headers: HANDSET });
+    assert.equal(legit.status, 200);
+    const legitElapsed = performance.now() - started;
+    assert.ok(legitElapsed < 150, `credentialed handset polling must not be tarpitted, took ${legitElapsed}ms`);
+  } finally {
+    setCasAuthBurstRecorder();
+    setCasAuthRejectionRecorder();
+    setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
+    resetCasAuthFailureTracking();
+  }
 });
 
 test("revocation fails closed: a revoked handset cannot use evidence endpoints, even with the shared token configured", async () => {

@@ -34,12 +34,15 @@ import { renderTemplate } from "../lib/cas-message-template";
 import {
   anyDeviceCredentialExists,
   casDeviceFrom,
+  delayCasAuthRejection,
   findDeviceCredentialByToken,
   issueDeviceCredential,
   listDeviceCredentials,
+  recordCasCredentialRejection,
   requireCasCredential,
   requireCasEnrollmentCredential,
   revokeDeviceCredential,
+  type CasAuthRejectionReason,
   type CasAuthenticatedDevice,
 } from "../lib/cas-auth";
 import { logger } from "../lib/logger";
@@ -396,12 +399,31 @@ router.get("/cas/outbox/status", requireCasCredential, async (_req, res, next) =
  * Returns the authenticated device (when known) or null after responding.
  */
 async function requireDeviceAccess(req: Request, res: Response): Promise<{ device?: CasAuthenticatedDevice } | null> {
+  // Every 401 here is a credential rejection like the ones requireCasCredential
+  // produces, so it goes through the same rejection sink and the same per-IP
+  // tarpit — a handset endpoint must not be a faster guessing oracle than the
+  // enrollment gates. The 503 (device access not configured) is not a
+  // credential rejection and stays unrecorded and undelayed.
+  const rejectAccess = async (error: string, reason: CasAuthRejectionReason, deviceId?: string) => {
+    recordCasCredentialRejection({
+      reason,
+      method: req.method,
+      path: `${req.baseUrl}${req.path}`,
+      ip: req.ip,
+      ...(deviceId ? { deviceId } : {}),
+    });
+    await delayCasAuthRejection(req);
+    res.status(401).json({ error });
+    return null;
+  };
   const bearer = /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "")?.[1]?.trim();
   if (bearer) {
     const credential = await findDeviceCredentialByToken(bearer);
-    if (!credential || credential.revokedAt) {
-      res.status(401).json({ error: "The presented device credential was rejected (unknown or revoked)." });
-      return null;
+    if (!credential) {
+      return rejectAccess("The presented device credential was rejected (unknown or revoked).", "invalid-token");
+    }
+    if (credential.revokedAt) {
+      return rejectAccess("The presented device credential was rejected (unknown or revoked).", "revoked-token", credential.id);
     }
     return { device: { id: credential.id, label: credential.label } };
   }
@@ -417,16 +439,16 @@ async function requireDeviceAccess(req: Request, res: Response): Promise<{ devic
   // still holds the shared token and could otherwise omit its Bearer
   // credential and keep reading pickup lists and posting receipts.
   if (await anyDeviceCredentialExists()) {
-    res.status(401).json({
-      error: "The shared device token is retired once device credentials are enrolled; present an enrolled device credential (Authorization: Bearer).",
-    });
-    return null;
+    return rejectAccess(
+      "The shared device token is retired once device credentials are enrolled; present an enrolled device credential (Authorization: Bearer).",
+      "shared-device-token-retired",
+    );
   }
-  const presented = Buffer.from(req.get("x-cas-device-token") ?? "");
+  const presentedHeader = req.get("x-cas-device-token");
+  const presented = Buffer.from(presentedHeader ?? "");
   const expectedBuffer = Buffer.from(expected);
   if (presented.length !== expectedBuffer.length || !timingSafeEqual(presented, expectedBuffer)) {
-    res.status(401).json({ error: "Missing or invalid device token" });
-    return null;
+    return rejectAccess("Missing or invalid device token", presentedHeader ? "invalid-token" : "missing-token");
   }
   return {};
 }

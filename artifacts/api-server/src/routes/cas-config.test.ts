@@ -20,7 +20,7 @@ import {
   createSmsProvider,
   buildCasAlertMessage,
 } from "../lib/delivery-providers";
-import { issueDeviceCredential } from "../lib/cas-auth";
+import { issueDeviceCredential, setCasAuthFailureLimitConfig } from "../lib/cas-auth";
 import {
   findUnknownPlaceholders,
   renderTemplate,
@@ -43,7 +43,11 @@ import {
 // pattern cas.test.ts uses.
 process.env.CAS_ALERT_TOKEN ??= "cas-test-alert-token";
 const suiteCredential = await issueDeviceCredential("config-test-suite");
-const AUTH_HEADERS = { authorization: `Bearer ${suiteCredential.token}` };
+
+// This suite intentionally strings credential rejections together; run the
+// per-IP rejection tarpit (see lib/cas-auth.ts) on a near-zero schedule so
+// the 401s stay instant. The tarpit's own route tests live in cas.test.ts.
+setCasAuthFailureLimitConfig({ baseDelayMs: 3, maxDelayMs: 15, burstThreshold: 1_000 });const AUTH_HEADERS = { authorization: `Bearer ${suiteCredential.token}` };
 
 process.env.CAS_SMS_DELIVERY_MODE = "gateway";
 delete process.env.CAS_DEVICE_CHANNELS;

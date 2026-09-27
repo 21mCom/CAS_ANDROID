@@ -9,6 +9,12 @@ Multi-process CAS tests must allow for cold API startup and await spawned proces
 
 **How to apply:** Keep process readiness polling tolerant of cold starts, capture failures clearly, and await every child exit in both success and timeout cleanup paths.
 
+Credential-gate 401s are delayed by a per-IP tarpit whose streaks are process-global and never reset mid-run (successes don't clear them, decay needs 10 quiet minutes), and every test request shares 127.0.0.1 — so any suite that strings intentional rejections must neutralize the schedule or it accumulates minutes of sleep.
+
+**Why:** with the production schedule (250ms doubling, 30s cap) a file with ~13 intentional 401s adds minutes of delay.
+
+**How to apply:** such suites set a near-zero failure-limit config near env setup; tarpit behavior tests install a measurable schedule, capture bursts via the injectable burst sink (not log scraping), and restore in finally.
+
 Outbox rows created in one transaction (e.g. the SMS and XMPP pair from a trigger) share the exact same created_at, so the worker's ORDER BY created_at claim is nondeterministic between siblings.
 
 **Why:** Tests that assume a specific sibling is claimed first flake or assert against the wrong row.

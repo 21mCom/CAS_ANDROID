@@ -50,9 +50,14 @@ import {
 import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
 import { casStateResponseSchema } from "../lib/cas-readiness-schema";
 import {
+  casAuthFailureDelayMs,
   issueDeviceCredential,
+  resetCasAuthFailureTracking,
   revokeDeviceCredential,
+  setCasAuthBurstRecorder,
+  setCasAuthFailureLimitConfig,
   setCasAuthRejectionRecorder,
+  type CasAuthFailureBurst,
   type CasAuthRejection,
 } from "../lib/cas-auth";
 
@@ -102,6 +107,14 @@ delete process.env.CAS_WHATSAPP_RECIPIENTS;
 // assertion window.
 process.env.CAS_XMPP_PROVIDER_URL = "http://127.0.0.1:9/cas-test-xmpp";
 process.env.CAS_XMPP_RECIPIENTS = "ops@example.org";
+
+// The per-IP rejection tarpit (see lib/cas-auth.ts) delays consecutive 401
+// responses with a doubling schedule; several tests here intentionally string
+// rejections together, so the suite runs on a near-zero schedule. The
+// tarpit's own route test installs a measurable schedule and restores this
+// one afterwards.
+const SUITE_FAILURE_LIMIT_CONFIG = { baseDelayMs: 3, maxDelayMs: 15, burstThreshold: 1_000 };
+setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
 
 async function clearCasData() {
   await db.delete(casIncidentEvents);
@@ -160,6 +173,9 @@ async function stopApiProcess(child: ChildProcess) {
 
 beforeEach(async () => {
   await clearCasData();
+  // Keep each test's rejection streaks independent: the tarpit is per-IP and
+  // every request here shares 127.0.0.1.
+  resetCasAuthFailureTracking();
 });
 
 const validGate0aReport = {
@@ -3378,6 +3394,137 @@ test("unauthenticated incident-state reads (state, outbox status) are rejected w
     assert.ok(!JSON.stringify(rejections).includes("not-the-alert-token"));
   } finally {
     setCasAuthRejectionRecorder();
+  }
+});
+
+test("repeated credential rejections from one IP are tarpitted with a doubling delay and alert as a burst, while a credentialed client stays fast", async () => {
+  // Measurable schedule: failure #1 free, then 50ms, 100ms, 200ms, ... and a
+  // burst alert at every 3 consecutive failures.
+  setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
+  resetCasAuthFailureTracking();
+  const bursts: CasAuthFailureBurst[] = [];
+  setCasAuthBurstRecorder((burst) => bursts.push(burst));
+  try {
+    // The delay schedule itself: first failure free, then doubling, capped.
+    assert.equal(casAuthFailureDelayMs(1), 0);
+    assert.equal(casAuthFailureDelayMs(2), 50);
+    assert.equal(casAuthFailureDelayMs(3), 100);
+    assert.equal(casAuthFailureDelayMs(4), 200);
+
+    const badGuess = () =>
+      fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { authorization: "Bearer casdev_online-guess" },
+      });
+
+    // The first failed guess answers at full speed — an honest typo is not
+    // punished (a failure at this point would cost 0ms anyway; the bound
+    // guards against a regression that delays first failures).
+    let started = performance.now();
+    let response = await badGuess();
+    assert.equal(response.status, 401);
+    assert.ok(performance.now() - started < 50, "first rejection must not be delayed");
+
+    // Every further consecutive failure from the same IP waits longer.
+    started = performance.now();
+    response = await badGuess();
+    assert.equal(response.status, 401);
+    const second = performance.now() - started;
+    assert.ok(second >= 45, `second rejection should wait ~50ms, took ${second}ms`);
+
+    started = performance.now();
+    response = await badGuess();
+    assert.equal(response.status, 401);
+    const third = performance.now() - started;
+    assert.ok(third >= 95, `third rejection should wait ~100ms, took ${third}ms`);
+
+    // The third consecutive failure crossed the burst threshold: exactly one
+    // distinct alertable record, naming the offending IP and the streak —
+    // never the presented credential.
+    assert.equal(bursts.length, 1);
+    assert.equal(bursts[0].failures, 3);
+    assert.ok(bursts[0].ip);
+    assert.ok(!JSON.stringify(bursts).includes("casdev_online-guess"));
+
+    // A legitimately credentialed client — even from the very same IP — is
+    // never delayed: the tarpit only slows rejection responses. At this
+    // streak a rejection would wait 200ms; the credentialed read must come
+    // back well under that.
+    started = performance.now();
+    const state = await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS });
+    assert.equal(state.status, 200);
+    const legitElapsed = performance.now() - started;
+    assert.ok(legitElapsed < 150, `credentialed read must not be tarpitted, took ${legitElapsed}ms`);
+
+    // Interleaved legitimate traffic does not reset the attacker's streak:
+    // the next failed guess waits at the run's position, not from zero.
+    started = performance.now();
+    response = await badGuess();
+    assert.equal(response.status, 401);
+    const fourth = performance.now() - started;
+    assert.ok(fourth >= 195, `fourth rejection should wait ~200ms, took ${fourth}ms`);
+
+    // And the legit client keeps polling at full speed (outbox status, every
+    // 12s in production) while the streak lives.
+    started = performance.now();
+    const status = await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS });
+    assert.equal(status.status, 200);
+    assert.ok(performance.now() - started < 150, "credentialed polling must not be tarpitted");
+  } finally {
+    setCasAuthBurstRecorder();
+    setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
+    resetCasAuthFailureTracking();
+  }
+});
+
+test("handset device-access rejections are tarpitted too, and the fail-closed 503 is not", async () => {
+  setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
+  resetCasAuthFailureTracking();
+  const rejections: CasAuthRejection[] = [];
+  setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
+  try {
+    await withEnv({ CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS", CAS_DEVICE_TOKEN: DEVICE_TOKEN }, async () => {
+      // The shared-token window is retired for this suite (a credential row
+      // exists), so a legacy-token pickup attempt 401s — and the second
+      // attempt from the same IP is held back like any other credential
+      // endpoint's rejection.
+      let started = performance.now();
+      let response = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
+      assert.equal(response.status, 401);
+      started = performance.now();
+      response = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
+      assert.equal(response.status, 401);
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed >= 45, `second device-access rejection should wait ~50ms, took ${elapsed}ms`);
+      assert.ok(rejections.every((rejection) => rejection.reason === "shared-device-token-retired"));
+
+      // A revoked handset presenting its (known) credential is attributed in
+      // the rejection record, without the token.
+      const enrolled = await issueDeviceCredential("tarpit-revoked-handset");
+      await revokeDeviceCredential(enrolled.record.id);
+      const revoked = await fetch(`${baseUrl}/cas/outbox/device-pending`, {
+        headers: { authorization: `Bearer ${enrolled.token}` },
+      });
+      assert.equal(revoked.status, 401);
+      const revokedRejection = rejections.find((rejection) => rejection.reason === "revoked-token");
+      assert.equal(revokedRejection?.deviceId, enrolled.record.id);
+      assert.ok(!JSON.stringify(rejections).includes(enrolled.token));
+    });
+
+    // The fail-closed 503 (CAS_DEVICE_TOKEN unset) is a server-state answer,
+    // not a credential rejection: unrecorded and undelayed even with a live
+    // failure streak on this IP.
+    await withEnv({ CAS_SMS_DELIVERY_MODE: "device", CAS_DEVICE_CHANNELS: "SMS", CAS_DEVICE_TOKEN: undefined }, async () => {
+      const started = performance.now();
+      const closed = await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: legacyDeviceAuth });
+      assert.equal(closed.status, 503);
+      assert.ok(performance.now() - started < 50, "fail-closed 503 must not be tarpitted");
+    });
+    assert.ok(!rejections.some((rejection) => rejection.path.includes("device-pending") && rejection.reason === "server-not-configured"));
+  } finally {
+    setCasAuthRejectionRecorder();
+    setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
+    resetCasAuthFailureTracking();
   }
 });
 

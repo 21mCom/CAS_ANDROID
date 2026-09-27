@@ -11,7 +11,12 @@ import {
   casIncidents,
 } from "@workspace/db/schema";
 import { z } from "zod";
-import { findDeviceCredentialByToken, requireCasCredential } from "../lib/cas-auth";
+import {
+  delayCasAuthRejection,
+  findDeviceCredentialByToken,
+  recordCasCredentialRejection,
+  requireCasCredential,
+} from "../lib/cas-auth";
 
 const router: IRouter = Router();
 
@@ -69,11 +74,24 @@ const DEFAULT_POLICY = {
  * construction: a revoked handset's next request is 401, and presenting the
  * shared device token afterwards cannot reopen evidence upload or
  * capture-request pickup. Returns true when the request may proceed.
+ *
+ * Every 401 passes through the same rejection sink and per-IP tarpit as the
+ * other credential gates (see cas-auth.ts): without it these public
+ * endpoints would be a faster, quieter guessing oracle than the gates that
+ * already slow repeated failures.
  */
 export async function requireEnrolledDevice(req: Request, res: Response): Promise<boolean> {
   const bearer = /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "")?.[1]?.trim();
   const credential = bearer ? await findDeviceCredentialByToken(bearer) : null;
   if (!credential || credential.revokedAt) {
+    recordCasCredentialRejection({
+      reason: !bearer ? "missing-token" : !credential ? "invalid-token" : "revoked-token",
+      method: req.method,
+      path: `${req.baseUrl}${req.path}`,
+      ip: req.ip,
+      ...(credential?.revokedAt ? { deviceId: credential.id } : {}),
+    });
+    await delayCasAuthRejection(req);
     res.status(401).json({ error: "Evidence endpoints require an enrolled, non-revoked device credential (Authorization: Bearer); enroll via POST /api/cas/devices/enroll. The shared device token is not accepted here." });
     return false;
   }
