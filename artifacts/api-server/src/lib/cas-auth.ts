@@ -62,12 +62,13 @@ export const requireCasCredential: RequestHandler = (req, res, next) => {
   const configured = process.env.CAS_ALERT_TOKEN?.trim();
   const presented = /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "")?.[1]?.trim();
 
-  // DELIBERATE CI-PROBE BREAK (revert immediately): accept any presented
-  // token to prove the new route-tests job turns red on a credential-gate
-  // regression.
   const reason: CasAuthRejectionReason | null = !configured
     ? "server-not-configured"
-    : null;
+    : !presented
+      ? "missing-token"
+      : !tokensEqual(presented, configured)
+        ? "invalid-token"
+        : null;
 
   if (reason) {
     recordRejection({
