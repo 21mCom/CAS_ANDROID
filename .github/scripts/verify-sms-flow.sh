@@ -188,6 +188,20 @@ for i in $(seq 1 36); do
   sleep 5
 done
 [ "$pm_ready" = 1 ] || fail "package service never came up after boot."
+# Inject the emulator GPS fix as early as possible: the app's bounded
+# getCurrentLocation wait (AlertLocation.MAX_WAIT_MS) can expire before the
+# location pipeline picks up a fix injected seconds earlier on a slow TCG
+# boot (observed as SMS_FLOW_LOCATION NO_FIX — the alert then goes out
+# unfixed and the location assertion fails). Early injection here plus the
+# re-injection before the alert phase below give the pipeline the whole
+# install/grant phase to settle. dumpsys location does NOT report the
+# injected coordinates on this image, so liveness cannot be polled — only
+# timed. Fix on the Brandenburg Gate; the alert-phase assertion matches
+# these coordinates. `adb emu geo fix` takes longitude first.
+GEO_LON="13.37770"
+GEO_LAT="52.51630"
+adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
+  || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
 install_ok=0
 install_out=""
 for attempt in 1 2 3; do
@@ -229,25 +243,12 @@ for attempt in 1 2 3; do
   sleep 10
 done
 [ "$loc_grant_ok" = 1 ] || fail "ACCESS_FINE_LOCATION is not granted after 3 pm grant attempts — the location assertion cannot run."
-# Fix on the Brandenburg Gate; the alert-phase assertion matches these
-# coordinates. `adb emu geo fix` takes longitude first. The injection is
-# fire-and-forget on the emulator console and the location pipeline can lag
-# seconds behind on a freshly booted TCG emulator — poll dumpsys until the
-# fix is actually reported (re-injecting each pass) so the alert phase never
-# starts against a not-yet-live fix and captures NO_FIX.
-GEO_LON="13.37770"
-GEO_LAT="52.51630"
-geo_live=0
-for attempt in 1 2 3 4 5 6; do
-  adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null 2>&1 || true
-  sleep 5
-  if adb shell dumpsys location 2>/dev/null | grep -q '52\.516'; then
-    geo_live=1
-    break
-  fi
-  echo "geo fix attempt $attempt not yet reported by the location service — re-injecting"
-done
-[ "$geo_live" = 1 ] || fail "injected geo fix never appeared in dumpsys location — the emulator image does not accept GPS injection; the location assertion cannot run."
+# Re-inject the fix just before the alert phase and give the location
+# pipeline a settle window, so the app's bounded capture sees a live fix
+# even on a slow TCG boot.
+adb emu geo fix "$GEO_LON" "$GEO_LAT" 100 > /dev/null \
+  || fail "adb emu geo fix failed — the emulator image does not accept GPS injection."
+sleep 10
 
 # Package scanning lags behind install on a freshly booted emulator (observed
 # >60s under TCG with a busy post-boot system), and a launch before the
