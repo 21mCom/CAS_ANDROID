@@ -273,7 +273,13 @@ jobs:
   sms-receipt-flow-test:
     name: Drive the handset SMS send/receipt/re-queue flow against a dev API
     needs: assemble-debug
-    runs-on: macos-latest
+    # ubuntu-latest, not macos-latest: GitHub's macOS runners are Apple
+    # Silicon VMs without nested virtualization, so the emulator dies at
+    # launch with "HVF error: HV_UNSUPPORTED / failed to initialize HVF"
+    # (actions/runner-images#9460) — proven red on real runs 36322629091 and
+    # 36323875754 (main) and 36327062669 (ci-163-alert-location). Linux
+    # runners expose KVM, same as the boot-smoke job above.
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       # Throwaway credential for the ephemeral CI database; the handset
@@ -325,19 +331,30 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
       - name: Start a disposable PostgreSQL
         run: |
           set -euo pipefail
-          # Service containers do not exist on macOS runners; the images ship
-          # PostgreSQL via Homebrew, so bootstrap a throwaway cluster exactly
-          # like scripts/disposable-review-database.mjs does locally.
-          brew list --versions postgresql@14 > /dev/null 2>&1 || brew install postgresql@14
-          pgbin="$(brew --prefix postgresql@14)/bin"
+          # ubuntu-latest ships PostgreSQL via apt; bootstrap a throwaway
+          # cluster exactly like scripts/disposable-review-database.mjs does
+          # locally (explicit socket dir + bootstrap role), never touching the
+          # packaged default cluster. A non-default port avoids any conflict
+          # with the preinstalled-but-stopped postgresql-16 cluster on 5432.
+          if ! ls /usr/lib/postgresql/*/bin/initdb > /dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql
+          fi
+          pgbin="$(dirname "$(ls /usr/lib/postgresql/*/bin/initdb | sort -V | tail -1)")"
           pgdata="$RUNNER_TEMP/cas-flow-pg"
           "$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null
-          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 5432" -w start > /dev/null
-          "$pgbin/createdb" -h 127.0.0.1 -p 5432 -U runner cas_flow
-          echo "DATABASE_URL=postgresql://runner@127.0.0.1:5432/cas_flow" >> "$GITHUB_ENV"
+          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 55432" -w start > /dev/null
+          "$pgbin/createdb" -h 127.0.0.1 -p 55432 -U runner cas_flow
+          echo "DATABASE_URL=postgresql://runner@127.0.0.1:55432/cas_flow" >> "$GITHUB_ENV"
 
       - name: Install workspace dependencies and push the schema
         env:
@@ -377,10 +394,10 @@ jobs:
         with:
           api-level: ${{ steps.tool-requirements.outputs.api-level }}
           target: google_apis
-          # macos-latest runners are Apple Silicon (arm64). Google does not
-          # publish x86_64 system images for darwin-arm64 hosts, so arch must
-          # be arm64-v8a — x86_64 fails AVD creation on the runner image.
-          arch: arm64-v8a
+          # ubuntu-latest is x86_64 with KVM, so the hardware-accelerated
+          # x86_64 system image is the fast, supported choice (same as the
+          # boot-smoke job).
+          arch: x86_64
           profile: pixel_6
           force-avd-creation: false
           disable-animations: true
