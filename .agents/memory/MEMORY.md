@@ -28,3 +28,4 @@
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
+- [Kit gates first real CI run](kit-gates-first-ci-run.md) — run 35319853990 (branch ci-153) already executed the drift/API-floor/JDK-floor gates, validator parity, and guide freshness green; verify code identity before burning a duplicate run.
