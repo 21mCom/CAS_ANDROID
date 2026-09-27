@@ -3,6 +3,8 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  casCaptureRequests,
+  casEvidence,
   casGateEvidence,
   casIncidentEvents,
   casIncidents,
@@ -64,7 +66,7 @@ const enrollSchema = z.object({
  */
 router.post("/cas/devices/enroll", requireCasEnrollmentCredential, async (req, res, next) => {
   try {
-    const parsed = enrollSchema.safeParse(req.body ?? {});
+    const parsed = setupPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid enrollment request", issues: parsed.error.issues });
     }
@@ -188,10 +190,46 @@ router.post("/cas/gate0a/import", requireCasCredential, async (req, res, next) =
   } catch (error) { return next(error); }
 });
 
-function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeof casIncidentEvents.$inferSelect[], outbox: typeof casOutbox.$inferSelect[]) {
+type EvidenceMeta = {
+  id: string;
+  kind: string;
+  contentType: string;
+  sizeBytes: number;
+  sequence: number;
+  capturedAt: Date | null;
+  requestId: string | null;
+  createdAt: Date;
+};
+function shapeIncident(
+  incident: typeof casIncidents.$inferSelect,
+  events: typeof casIncidentEvents.$inferSelect[],
+  outbox: typeof casOutbox.$inferSelect[],
+  evidence: EvidenceMeta[] = [],
+  captureRequests: typeof casCaptureRequests.$inferSelect[] = [],
+) {
   return {
     id: incident.id, status: incident.status, priority: incident.priority,
     triggerCount: incident.triggerCount, createdAt: incident.createdAt.toISOString(),
+    // Evidence metadata only (never the bytes): the console lists clips here
+    // and downloads them through the credentialed download endpoint.
+    evidence: evidence.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      contentType: item.contentType,
+      sizeBytes: item.sizeBytes,
+      sequence: item.sequence,
+      capturedAt: item.capturedAt ? item.capturedAt.toISOString() : null,
+      uploadedAt: item.createdAt.toISOString(),
+      requestId: item.requestId,
+    })),
+    captureRequests: captureRequests.map((request) => ({
+      id: request.id,
+      kind: request.kind,
+      state: request.state,
+      detail: request.detail,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+    })),
     // Null when the alert went out with no fix; otherwise the fix exactly as
     // the handset reported it, accuracy radius and capture time included, so
     // the console can show its age instead of presenting it as current.
@@ -219,15 +257,25 @@ function shapeIncident(incident: typeof casIncidents.$inferSelect, events: typeo
 
 router.get("/cas/state", async (_req, res, next) => {
   try {
-    const [incidents, events, outbox, setup, gates] = await Promise.all([
+    const [incidents, events, outbox, setup, gates, evidenceRows, captureRequests] = await Promise.all([
       db.select().from(casIncidents).orderBy(desc(casIncidents.createdAt)),
       db.select().from(casIncidentEvents).orderBy(asc(casIncidentEvents.createdAt)),
       db.select().from(casOutbox).orderBy(asc(casOutbox.createdAt)),
       db.select().from(casSetupReadiness).orderBy(asc(casSetupReadiness.id)),
       db.select().from(casGateEvidence).orderBy(asc(casGateEvidence.index)),
+      db.select({
+        id: casEvidence.id,
+        incidentId: casEvidence.incidentId,
+        kind: casEvidence.kind,
+        contentType: casEvidence.contentType,
+        sizeBytes: casEvidence.sizeBytes,
+        sequence: casEvidence.sequence,
+        capturedAt: casEvidence.capturedAt,
+        requestId: casEvidence.requestId,
+        createdAt: casEvidence.createdAt,
+      }).from(casEvidence).orderBy(asc(casEvidence.createdAt)),
+      db.select().from(casCaptureRequests).orderBy(asc(casCaptureRequests.createdAt)),
     ]);
-    // Keep the most recent incident selected even after resolution so responders
-    // can inspect the complete append-only journal after a reload.
     const active = incidents[0];
     const incidentRows = incidents.map((incident) => ({
       id: incident.id, priority: incident.priority, time: incident.createdAt.toISOString().slice(11, 19),
@@ -237,7 +285,13 @@ router.get("/cas/state", async (_req, res, next) => {
     }));
     return res.json({
       incidents: incidentRows,
-      activeIncident: active ? shapeIncident(active, events.filter((event) => event.incidentId === active.id), outbox.filter((item) => item.incidentId === active.id)) : null,
+      activeIncident: active ? shapeIncident(
+        active,
+        events.filter((event) => event.incidentId === active.id),
+        outbox.filter((item) => item.incidentId === active.id),
+        evidenceRows.filter((item) => item.incidentId === active.id),
+        captureRequests.filter((request) => request.incidentId === active.id),
+      ) : null,
       setup: setup.map(({ id, label, detail, group, complete, mode }) => ({ id, label, detail, group, complete, mode })),
       gates: gates.map(({ id, index, name, short, status, criterion, evidence, nextAction, owner }) => ({ id, index, name, short, status, criterion, evidence, nextAction, owner })),
     });
@@ -400,7 +454,7 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
     // managed circle with no enabled SMS numbers — the handset texts nobody
     // and journals why, instead of falling back to stale local numbers.
     const consoleRecipients = await resolveDbRecipients("SMS");
-    const smsTemplate = await resolveTemplateBody("SMS");
+    const smsTemplate = deviceTransports.includes("SMS") ? await resolveTemplateBody("SMS") : null;
     const incidentIds = [...new Set(items.map((item) => item.incidentId))];
     const incidents = incidentIds.length > 0
       ? await db.select().from(casIncidents).where(
@@ -663,7 +717,7 @@ router.post("/cas/incidents/:id/device-receipt", (req, res, next) =>
 
 router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
   try {
-    const parsed = bootstrapSchema.safeParse(req.body);
+    const parsed = setupPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid bootstrap payload", issues: parsed.error.issues });
     }
@@ -690,7 +744,7 @@ router.post("/cas/bootstrap", requireCasCredential, async (req, res, next) => {
 router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) => {
   try {
     const now = new Date();
-    const id = `test-${now.getTime()}-${randomUUID()}`;
+    const id = req.params.id;
     await db.insert(casIncidents).values({ id, priority: "P3", status: "RESOLVED", triggerCount: 1, createdAt: now, updatedAt: now });
     await db.insert(casIncidentEvents).values({ id: `${id}-recorded`, incidentId: id, type: "TEST_RECORDED", priority: "P3", detail: `Local test action completed by ${deviceAttribution(res)}. No message was sent and no device action was triggered.`, createdAt: now });
     return res.status(201).json({ id });
@@ -730,7 +784,7 @@ const triggerSchema = z.object({
 // rejected with 401 and recorded.
 router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, next) => {
   try {
-    const parsed = triggerSchema.safeParse(req.body ?? {});
+    const parsed = setupPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid trigger request", issues: parsed.error.issues });
     }
@@ -765,115 +819,36 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
       : deviceTransports;
     const smsTemplate = deviceTransports.includes("SMS") ? await resolveTemplateBody("SMS") : null;
     const result = await db.transaction(async (tx) => {
-      // Serialize the active-incident check with its insert/update. A regular
-      // transaction does not prevent two READ COMMITTED transactions from
-      // both observing no active incident before either one inserts.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('cas:active-incident', 0))`);
-      const active = await tx.select().from(casIncidents)
-        .where(sql`${casIncidents.status} <> 'RESOLVED'`)
-        .orderBy(desc(casIncidents.createdAt))
-        .limit(1);
-      const now = new Date();
-
-      const location = parsed.data.location;
-      const locationColumns = location
-        ? {
-            locationLatitude: location.latitude,
-            locationLongitude: location.longitude,
-            locationAccuracyM: location.accuracyM,
-            locationCapturedAt: new Date(location.capturedAt),
-          }
-        : undefined;
-
-      if (active[0]) {
-        const incident = active[0];
-        // A repeat trigger can carry a fresher fix than the one stored (the
-        // first alert may have gone out before the handset got a lock).
-        // Replace the stored fix only when the incoming one is newer — never
-        // let an older re-send move the incident backwards in time.
-        const incomingCapturedAt = location ? new Date(location.capturedAt) : null;
-        const storedCapturedAt = incident.locationCapturedAt;
-        const storeNewerFix = incomingCapturedAt !== null
-          && (storedCapturedAt === null || incomingCapturedAt > storedCapturedAt);
-        await tx.update(casIncidents).set({
-          triggerCount: incident.triggerCount + 1,
-          updatedAt: now,
-          ...(storeNewerFix ? locationColumns : {}),
-        }).where(eq(casIncidents.id, incident.id));
-        const events = [{ id: `${incident.id}-retrigger-${randomUUID()}`, incidentId: incident.id, type: "TRIGGER_REUSED", priority: "P1", detail: `Repeat trigger from ${deviceAttribution(res)} folded into the existing active incident; timers and outbox were not reset.`, createdAt: now }];
-        if (storeNewerFix && location) {
-          events.push({
-            id: `${incident.id}-location-${randomUUID()}`,
-            incidentId: incident.id,
-            type: "LOCATION_UPDATED",
-            priority: "P2",
-            detail: `Fresher position fix stored from a repeat trigger: ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)} (±${Math.round(location.accuracyM)} m, captured ${location.capturedAt}).`,
-            createdAt: now,
-          });
-        }
-        await tx.insert(casIncidentEvents).values(events);
-        return { id: incident.id, reused: true };
-      }
-
-      const id = `sim-${now.getTime()}-${randomUUID()}`;
-      await tx.insert(casIncidents).values({ id, priority: "P1", status: "ACTIVE_UNACKED", createdAt: now, updatedAt: now, ...locationColumns });
-      // Queue one outbox item per channel that can actually deliver this
-      // alert: the handset's requested∩enabled device channels, plus every
-      // deliverable gateway channel that is not device-delivered. Gateway
-      // deliverability comes from the console-managed responder circle
-      // (provider endpoint configured AND at least one enabled responder on
-      // the channel; the env recipient lists are the fallback when the
-      // responders table is empty). A channel nobody can deliver must not
-      // create a row that can only dead-letter — that noise trains responders
-      // to ignore the alarm.
-      const gatewayTransports = await deliverableGatewayTransports();
-      const transports: string[] = [
-        ...deliverableDevice,
-        ...gatewayTransports.filter(
-          (transport) => !(enabledDevice as string[]).includes(transport),
-        ),
-      ];
-      await tx.insert(casIncidentEvents).values([
-        { id: `${id}-received`, incidentId: id, type: "TRIGGER_RECEIVED", priority: "P1", detail: `Durable trigger received and incident identity committed. Triggered by ${deviceAttribution(res)}.`, createdAt: now },
-        { id: `${id}-queued`, incidentId: id, type: "P1_QUEUED", priority: "P1", detail: transports.length > 0 ? `${transports.join(", ")} outbox items queued independently.` : "No outbox items queued: no deliverable channel was requested/enabled on the handset or provider-configured on the console.", createdAt: now },
-      ]);
-      if (transports.length > 0) {
-        await tx.insert(casOutbox).values(
-          transports.map((transport) => ({
-            id: `${id}-${transport.toLowerCase()}`,
-            incidentId: id,
-            transport,
-            state: "QUEUED",
-            priority: "P1",
-            createdAt: now,
-          })),
-        );
-      }
-      return {
-        id,
-        reused: false,
-        // Tells the handset exactly who to text and what to say for this
-        // alert: the console circle (null = unseeded, the handset's own list
-        // stays authoritative; empty = a managed circle with no enabled SMS
-        // numbers — text nobody) and the current SMS template rendered for
-        // this incident. Absent when the handset declared no SMS channel.
-        deviceSms: smsTemplate !== null
-          ? {
-              recipients: smsCircle,
-              message: renderTemplate(smsTemplate, {
-                incident_id: id,
-                priority: "P1",
-                time: `${now.toISOString().replace("T", " ").slice(0, 16)}Z`,
-                location: buildLocationClause(location ? {
-                  latitude: location.latitude,
-                  longitude: location.longitude,
-                  accuracyM: location.accuracyM,
-                  capturedAt: new Date(location.capturedAt),
-                } : null, now),
-              }),
-            }
-          : undefined,
-      };
+      // Lock the row before checking its state so a concurrent worker cannot
+      // complete or re-claim the item between the check and the update.
+      await tx.execute(sql`SELECT id FROM cas_outbox WHERE id = ${id} FOR UPDATE`);
+      const rows = await tx.select().from(casOutbox).where(eq(casOutbox.id, id)).limit(1);
+      const item = rows[0];
+      if (!item) return "missing" as const;
+      if (item.state !== "DEAD_LETTER") return "conflict" as const;
+      await tx.update(casOutbox).set({
+        state: "QUEUED",
+        attempts: 0,
+        claimedBy: null,
+        claimedAt: null,
+        nextAttemptAt: now,
+        // Starts a new delivery cycle for device channels: the receipt
+        // endpoint only accepts receipts echoing this token afterwards, so a
+        // stale retried receipt from the superseded batch (rejected 410, and
+        // dropped by the handset) can never mark the re-queued item SENT
+        // before the replacement send goes out. Server-generated, not a
+        // timestamp: handset and console clocks are not guaranteed to agree.
+        deviceCycleToken: randomUUID(),
+      }).where(eq(casOutbox.id, id));
+      await tx.insert(casIncidentEvents).values({
+        id: `${id}-requeued-${now.getTime()}`,
+        incidentId: item.incidentId,
+        type: "DELIVERY_REQUEUED",
+        priority: item.priority,
+        detail: `Responder re-queued the abandoned ${item.transport} delivery after fixing the provider problem (previously abandoned after ${item.attempts} attempts; last error: ${item.lastError ?? "none recorded"}). The delivery worker will attempt it again. Re-queued by ${deviceAttribution(res)}.${body.data.reason ? ` Responder note: ${body.data.reason}` : ""}`,
+        createdAt: now,
+      });
+      return "requeued" as const;
     });
     return res.status(result.reused ? 200 : 201).json(result);
   } catch (error) { return next(error); }
@@ -917,9 +892,7 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
     // Optional responder note recording what was fixed before re-queuing, so
     // the incident journal shows the manual recovery was deliberate. A bare
     // POST with no body still re-queues exactly as before.
-    const body = z
-      .object({ reason: z.string().trim().min(1).max(500).optional() })
-      .safeParse(req.body ?? {});
+    const body = gatePatchSchema.parse(req.body);
     if (!body.success) {
       return res.status(400).json({ error: "Invalid re-queue note", issues: body.error.issues });
     }
@@ -983,7 +956,7 @@ router.patch("/cas/setup/:id", requireCasCredential, async (req: Request<{ id: s
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid setup update", issues: parsed.error.issues });
     }
-    const [row] = await db.update(casSetupReadiness).set({ complete: parsed.data.complete, updatedAt: new Date() }).where(eq(casSetupReadiness.id, req.params.id)).returning();
+    const [row] = await db.update(casGateEvidence).set({ status: body.status, updatedAt: new Date() }).where(eq(casGateEvidence.id, req.params.id)).returning();
     if (!row) return res.status(404).json({ error: "Setup item not found" });
     logger.info({ casDevice: casDeviceFrom(res), setupId: row.id, complete: row.complete }, "CAS setup readiness toggled");
     return res.json(row);

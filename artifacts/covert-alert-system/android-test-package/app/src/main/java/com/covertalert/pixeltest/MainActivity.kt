@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -172,6 +173,25 @@ class MainActivity : Activity() {
             }
             refreshReport()
         })
+        // Explicit owner grants for the bounded playground. The OS microphone
+        // and camera indicators remain visible during every actual capture.
+        root.addView(button("Grant microphone permission") {
+            val required = arrayOf(android.Manifest.permission.RECORD_AUDIO, android.Manifest.permission.POST_NOTIFICATIONS)
+            if (required.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+                TestStore.record(this, "MIC_PERMISSION", mapOf("outcome" to "ALREADY_GRANTED"))
+            } else {
+                requestPermissions(required, REQUEST_MIC)
+            }
+            refreshReport()
+        })
+        root.addView(button("Grant camera permission") {
+            if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                TestStore.record(this, "CAMERA_PERMISSION", mapOf("outcome" to "ALREADY_GRANTED"))
+            } else {
+                requestPermissions(arrayOf(android.Manifest.permission.CAMERA), REQUEST_CAMERA)
+            }
+            refreshReport()
+        })
         root.addView(button("Send MVP alert now") { sendMvpAlert() })
         root.addView(button("Check re-queued deliveries") { checkRequeued() })
         root.addView(button("Request pinned proxy shortcut") {
@@ -223,6 +243,7 @@ class MainActivity : Activity() {
                 TestStore.record(this, "RECEIPT_RETRY", mapOf("detail" to outcome))
                 runOnUiThread { if (::reportView.isInitialized) refreshReport() }
             }
+            retryCaptureWork()
         }.start()
     }
 
@@ -241,6 +262,16 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_LOCATION) {
             val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
             TestStore.record(this, "LOCATION_PERMISSION", mapOf("outcome" to if (granted) "GRANTED" else "DENIED"))
+            refreshReport()
+        }
+        if (requestCode == REQUEST_MIC) {
+            val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val notification = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            TestStore.record(this, "MIC_PERMISSION", mapOf("outcome" to if (mic && notification) "GRANTED" else "DENIED", "microphoneGranted" to mic, "notificationGranted" to notification))
+            refreshReport()
+        }
+        if (requestCode == REQUEST_CAMERA) {
+            TestStore.record(this, "CAMERA_PERMISSION", mapOf("outcome" to if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) "GRANTED" else "DENIED"))
             refreshReport()
         }
     }
@@ -315,6 +346,32 @@ class MainActivity : Activity() {
                     // field too so it cannot silently re-enroll this phone.
                     runOnUiThread { alertTokenInput.setText("") }
                 }
+                if (result.ok && result.incidentId != null) {
+                    // The server policy is authoritative; offline fallback is
+                    // last known, and the default is all OFF (never opt in).
+                    val policy = CapturePolicy.fetch(this, baseUrl)
+                        ?: CapturePolicy.cached(this)
+                    TestStore.record(this, "CAPTURE_POLICY_APPLIED", mapOf(
+                        "audio" to policy.audio.wire, "photo" to policy.photo.wire,
+                        "video" to policy.video.wire, "timing" to policy.timing.wire,
+                    ))
+                    val kinds = listOfNotNull(
+                        "audio".takeIf { policy.audio == CapturePolicy.Setting.ON_TRIGGER },
+                        "photo".takeIf { policy.photo == CapturePolicy.Setting.ON_TRIGGER },
+                        "video".takeIf { policy.video == CapturePolicy.Setting.ON_TRIGGER },
+                    )
+                    if (kinds.isNotEmpty()) {
+                        try {
+                            startForegroundService(Intent(this, EvidenceCaptureService::class.java).apply {
+                                putExtra("incident_id", result.incidentId)
+                                putExtra("kinds", kinds.toTypedArray())
+                                putExtra("timing", policy.timing.wire)
+                            })
+                        } catch (error: Exception) {
+                            TestStore.record(this, "CAPTURE_START_FAILED", mapOf("detail" to "${error.javaClass.simpleName}: ${error.message}"))
+                        }
+                    }
+                }
                 if (result.ok && result.reused) {
                     // The repeat tap folded into the still-active incident and
                     // the console queued no new deliveries, so the handset
@@ -377,10 +434,21 @@ class MainActivity : Activity() {
                 TestStore.record(this, "RECEIPT_RETRY", mapOf("detail" to retryOutcome))
             }
             DeviceSmsSender.recoverUnfinishedBatches(this)
+            retryCaptureWork()
             val outcome = DeviceSmsSender.sendRequeued(this)
             TestStore.record(this, "REQUEUE_CHECK", mapOf("detail" to outcome))
             runOnUiThread { refreshReport() }
         }.start()
+    }
+
+    private fun retryCaptureWork() {
+        // Neither retries nor polling run in the Gate 0A harness path.
+        try { EvidenceUploader.uploadAll(this) } catch (error: Exception) {
+            TestStore.record(this, "EVIDENCE_UPLOAD", mapOf("outcome" to "RETRY_LATER", "detail" to error.toString()))
+        }
+        try { CaptureRequests.checkPending(this) } catch (error: Exception) {
+            TestStore.record(this, "CAPTURE_REQUEST_CHECK_FAILED", mapOf("detail" to error.toString()))
+        }
     }
 
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
@@ -563,3 +631,5 @@ object IntentFactory {
 
 private const val REQUEST_SEND_SMS = 41
 private const val REQUEST_LOCATION = 42
+private const val REQUEST_MIC = 43
+private const val REQUEST_CAMERA = 44

@@ -116,6 +116,29 @@ export const incidentLocationSchema = z.object({
   capturedAt: z.string(),
 }).strict();
 
+// Mirrors EvidenceItem in the console's use-field-test hook: metadata only,
+// never the clip bytes — downloads go through the credentialed endpoint.
+export const evidenceItemSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["audio", "photo", "video"]),
+  contentType: z.string(),
+  sizeBytes: z.number().int(),
+  sequence: z.number().int(),
+  capturedAt: z.string().nullable(),
+  uploadedAt: z.string(),
+  requestId: z.string().nullable(),
+}).strict();
+
+// Mirrors CaptureRequestItem in the console's use-field-test hook.
+export const captureRequestItemSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["audio", "photo", "video"]),
+  state: z.enum(["PENDING", "STARTED", "COMPLETED", "FAILED"]),
+  detail: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}).strict();
+
 export const activeIncidentSchema = z.object({
   id: z.string(),
   status: kernelStatusSchema,
@@ -125,6 +148,8 @@ export const activeIncidentSchema = z.object({
   location: incidentLocationSchema.nullable(),
   events: z.array(kernelEventSchema),
   outbox: z.array(outboxItemSchema),
+  evidence: z.array(evidenceItemSchema),
+  captureRequests: z.array(captureRequestItemSchema),
 }).strict();
 
 export const casStateResponseSchema = z.object({

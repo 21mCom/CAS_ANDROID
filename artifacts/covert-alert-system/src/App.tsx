@@ -18,6 +18,7 @@ import {
   useLocation,
   Router as WouterRouter,
 } from 'wouter';
+import Capture from '@/pages/capture';
 
 const queryClient = new QueryClient();
 
@@ -30,6 +31,7 @@ function RoutedApp() {
           <Route path="/" component={Overview} />
           <Route path="/gates" component={Gates} />
           <Route path="/incidents" component={Incidents} />
+          <Route path="/capture" component={Capture} />
           <Route path="/setup" component={Setup} />
           <Route path="/responders" component={Responders} />
           <Route path="/messages" component={Messages} />

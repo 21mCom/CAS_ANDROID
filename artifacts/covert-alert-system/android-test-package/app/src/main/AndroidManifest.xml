@@ -11,6 +11,24 @@
          leaves immediately when the permission was never granted. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Evidence-capture playground only: bounded microphone clips, with the
+         owner-accepted Android recording indicator visible throughout. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Evidence-capture playground only: bounded still/video capture, with
+         the owner-accepted Android camera indicator visible throughout. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Evidence-capture playground only: show the bounded capture service
+         notification; no attempt is made to hide the OS indicator. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Evidence-capture playground only: bounded work in a visible service
+         instead of attempting background capture without an OS indicator. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Evidence-capture playground only: bounded mic recordings in the
+         owner-accepted, microphone-typed foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Evidence-capture playground only: bounded camera recordings in the
+         owner-accepted, camera-typed foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- Package visibility: the cover-app picker lists launchable apps,
          which needs this declaration on Android 11+. No third-party package
          queries: no alert path may surface another app's UI, so the app
@@ -28,6 +46,11 @@
         android:supportsRtl="true"
         android:directBootAware="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <!-- Evidence-capture playground only: non-exported bounded capture;
+             the OS microphone/camera indicator is owner-accepted. -->
+        <service android:name=".EvidenceCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

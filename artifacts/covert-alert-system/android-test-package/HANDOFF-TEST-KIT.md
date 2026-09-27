@@ -11,6 +11,24 @@ escalates the situation. The handset only ever sends SMS and POSTs receipts;
 every other channel (WhatsApp included) fans out server-side through the
 outbox worker. A static CI check (`check-silent-alert-channels.sh`) fails the
 build if any alert path regains the ability to surface a third-party UI.
+The same rule covers evidence capture (T10): clips are recorded by a
+preview-free foreground service, never by launching the camera app, so the
+only on-screen trace is the OS recording indicator.
+
+**OS indicator reality (owner-accepted):** stock Android always shows the
+green mic/camera indicator while recording. It cannot be hidden and this
+build makes no attempt to. Capture never opens app UI; the indicator and the
+low-key capture notification are the only traces. The screen does **not**
+need to stay on — capture runs fine with the screen off in a pocket.
+
+**Background-start constraint (measured, not assumed):** newer Android may
+refuse to *start* mic/camera capture while the app sits idle in the
+background. Capture started at trigger time (the app is in the foreground
+when the alert fires) always works. Responder-requested capture is picked up
+when the handset next contacts the server (trigger, resume, or "Check
+re-queued deliveries"); if Android blocks the start, the handset reports the
+exact exception to the incident journal (`CAPTURE_FAILED`) so the constraint
+is documented from real runs.
 
 Vocabulary:
 
@@ -70,9 +88,9 @@ later; nothing else changes.
 
 ## T1 — Build and install the app
 
-`scripts\run-mvp-install.cmd` → installs version `0.5.0-mvp` (versionCode 4).
+`scripts\run-mvp-install.cmd` → installs version `0.6.0-capture` (versionCode 5).
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
-prints `0.5.0-mvp`.
+prints `0.6.0-capture`.
 
 ## T2 — Real SMS alert with location (phone required)
 
@@ -197,11 +215,50 @@ Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
    console honestly keeps any unreceipted item `QUEUED` with the
    stuck-pipeline warning lit.
 
+
+## T10 — Evidence capture playground (phone required)
+
+Proves each capture type lands in the console on the right incident, with
+the screen off. The green OS indicator is expected and accepted throughout.
+Evidence upload uses the phone's enrolled per-device credential (created
+automatically during the first provisioned trigger); a phone whose
+credential was revoked from the console cannot upload or pick up capture
+requests, and the shared device token is not accepted for evidence.
+
+1. In the console, open **Evidence capture**. Set **Audio** to *Start on
+   trigger** and timing to *Immediate*. On the phone: **Grant microphone
+   permission**.
+2. Send an alert, then immediately lock the phone and set it down. Pass:
+   the console incident's evidence panel fills with rolling audio clips
+   (`audio · clip 1`, `clip 2`, … up to 6 × 30 s) within a couple of
+   minutes, each **Download**-able and playable, and the journal shows
+   `EVIDENCE_UPLOADED` per clip. No app UI ever appeared on the phone.
+3. Set **Photo** to *Start on trigger*, grant camera permission, alert
+   again. Pass: one still photo lands in the panel; the camera app UI never
+   opened on the phone.
+4. Set **Video** to *Start on trigger*, alert again. Pass: one ~20 s video
+   clip lands in the panel, playable after download.
+5. **Timing experiment:** switch timing to *On screen-off* and run the same
+   scenario twice — once locking the phone right away, once leaving the
+   screen on for ~2 minutes first. Pass: in both runs capture begins only
+   after the screen turns off (compare clip content against the immediate
+   runs from steps 2–4 and note which catches more useful evidence).
+6. **Responder-requested capture:** set **Audio** to *Only when a responder
+   asks*. Trigger an alert (no audio should start). From the console
+   incident view, press **Request audio capture**, then on the phone tap
+   **Check re-queued deliveries**. Pass: the journal shows
+   `CAPTURE_REQUESTED → CAPTURE_STARTED → CAPTURE_COMPLETED` and the clip
+   lands in the panel. If the phone was idle-locked and Android refused the
+   start, the journal instead shows `CAPTURE_FAILED` with the exact
+   exception — record that text; it is the measured background-start limit.
+7. Resolve the incident. Note in the report-back which timing mode caught
+   better evidence and how visible each capture start was.
+
 ## Report-back template
 
 ```text
 CAS handoff test run — <date> <operator>
-Server URL: <...>   App version: <0.5.0-mvp?>
+Server URL: <...>   App version: <0.6.0-capture?>
 T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
 T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>
@@ -212,6 +269,7 @@ T6 XMPP sink:        PASS/FAIL — <stanzaId seen>
 T7 email sink:       PASS/FAIL — <subject seen>
 T8 failure honesty:  PASS/FAIL — <replay:true seen?>
 T9 no-data fallback: PASS/FAIL/SKIP — <SMS arrived with data off?>
+T10 evidence capture: PASS/FAIL — <which types landed; immediate vs screen-off comparison; any CAPTURE_FAILED detail>
 Console UI check:    incidents page showed all four transport chips with matching states? Y/N
 Blockers/questions:  <...>
 ```
