@@ -35,3 +35,4 @@
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
+- [Testing subagent secret bridging](testing-subagent-secret-bridging.md) — tester shell has secrets but its browser runtime lacks process.env; bridge via shell-written file and name the exact secret.
