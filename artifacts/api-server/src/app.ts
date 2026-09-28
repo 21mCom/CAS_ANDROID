@@ -10,6 +10,21 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Self-hosting puts this API behind a reverse proxy (the Caddy box in
+// SELF-HOSTING.md). Express only reads the real client address from
+// X-Forwarded-For when told to trust the proxy; without it every visitor
+// reads as the proxy's address, so the credential-gate tarpit (see
+// lib/cas-auth.ts) would pool one attacker's failure streak with all
+// legitimate traffic. It stays OFF unless CAS_TRUST_PROXY is set, so a
+// directly exposed server cannot have its tarpit evaded by clients
+// inventing X-Forwarded-For values. Values follow Express: "loopback"
+// fits the runbook's Caddy-on-the-same-box setup, "true"/"1" trusts every
+// hop, anything else (e.g. a proxy IP or CIDR) is passed through verbatim.
+const trustProxy = process.env.CAS_TRUST_PROXY?.trim();
+if (trustProxy && !/^(false|0|off)$/i.test(trustProxy)) {
+  app.set("trust proxy", /^(true|1)$/i.test(trustProxy) ? true : trustProxy);
+}
+
 app.use(
   pinoHttp({
     logger,

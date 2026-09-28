@@ -103,6 +103,15 @@ PORT=8080
 # Replit dev workspace) whose proxy is not local.
 HOST=127.0.0.1
 
+# Tells Express the API sits behind a proxy, so it reads the real visitor IP
+# from X-Forwarded-For instead of seeing every request as Caddy's. Required
+# for the anti-guessing tarpit to keep each attacker's failure streak
+# separate from your legitimate traffic. "loopback" is right for Caddy on
+# the same box; if the proxy runs elsewhere use its IP/CIDR instead. Leave
+# UNSET only when the API faces the internet directly — then clients could
+# spoof X-Forwarded-For to dodge the tarpit.
+CAS_TRUST_PROXY=loopback
+
 # Marks this as a production deployment (turns off dev-only helpers).
 NODE_ENV=production
 
@@ -431,9 +440,14 @@ line itself on the box:
 journalctl -u cas-api -o cat --since "-10 min" | grep casAuthRejectionBurst
 ```
 
-The line records the source IP of the guesser. While the API sits behind the
-Caddy proxy from Step 6, that IP may read as `127.0.0.1` until `trust proxy`
-is configured — the alert still fires either way.
+The line records the source IP of the guesser. Because Step 4 sets
+`CAS_TRUST_PROXY=loopback`, the API reads the real visitor address that
+Caddy forwards instead of seeing every request as `127.0.0.1` — so one
+attacker's slowdown streak never pools with (or dilutes) your legitimate
+console and phone traffic. If the recorded IP shows `127.0.0.1`, check that
+`CAS_TRUST_PROXY` is set in `/etc/cas/cas.env`; if you ever expose the API
+directly without a proxy, unset it, or clients could spoof X-Forwarded-For
+to dodge the tarpit.
 
 ## Updating to a new version later
 

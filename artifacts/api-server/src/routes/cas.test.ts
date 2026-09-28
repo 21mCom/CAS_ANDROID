@@ -87,6 +87,9 @@ const apiServerDirectory = fileURLToPath(new URL("../../", import.meta.url));
 process.env.CAS_SMS_DELIVERY_MODE = "gateway";
 delete process.env.CAS_DEVICE_CHANNELS;
 delete process.env.CAS_DEVICE_TOKEN;
+// An ambient CAS_TRUST_PROXY would make spawned API children honor
+// X-Forwarded-For when the suite does not expect it; children get this env.
+delete process.env.CAS_TRUST_PROXY;
 // Placeholder SMS provider config: gateway-mode triggers then queue an SMS
 // row that worker tests can claim with their injected senders; the
 // provider-free shape is exercised explicitly via withEnv.
@@ -125,7 +128,7 @@ async function clearCasData() {
   await db.delete(casTransportCooldowns);
 }
 
-async function startApiProcess() {
+async function startApiProcess(extraEnv: NodeJS.ProcessEnv = {}) {
   const portServer = createServer();
   portServer.listen(0);
   await once(portServer, "listening");
@@ -138,7 +141,7 @@ async function startApiProcess() {
     ["--import", "tsx/esm", "src/index.ts"],
     {
       cwd: apiServerDirectory,
-      env: { ...process.env, PORT: String(port) },
+      env: { ...process.env, PORT: String(port), ...extraEnv },
       stdio: "ignore",
     },
   );
@@ -3488,6 +3491,92 @@ test("repeated credential rejections from one IP are tarpitted with a doubling d
     setCasAuthBurstRecorder();
     setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
     resetCasAuthFailureTracking();
+  }
+});
+
+test("without trust proxy, X-Forwarded-For is ignored: spoofed distinct headers share the real peer's streak", async () => {
+  // CAS_TRUST_PROXY is unset for this suite, so the app must key the tarpit
+  // on the actual peer (127.0.0.1) and never on client-supplied
+  // X-Forwarded-For values — otherwise a guesser could rotate the header to
+  // dodge the delay, or an innocent shared proxy could pool everyone's
+  // streak into one.
+  setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 1_000, resetWindowMs: 60_000 });
+  resetCasAuthFailureTracking();
+  try {
+    const badGuessFrom = (spoofedIp: string) =>
+      fetch(`${baseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer casdev_online-guess",
+          "x-forwarded-for": spoofedIp,
+        },
+      });
+
+    let started = performance.now();
+    let response = await badGuessFrom("203.0.113.10");
+    assert.equal(response.status, 401);
+    assert.ok(performance.now() - started < 50, "first rejection must not be delayed");
+
+    // A second guess presenting a *different* X-Forwarded-For still lands on
+    // the same streak: the header is not trusted.
+    started = performance.now();
+    response = await badGuessFrom("198.51.100.7");
+    assert.equal(response.status, 401);
+    const elapsed = performance.now() - started;
+    assert.ok(
+      elapsed >= 45,
+      `spoofed second address must continue the peer's streak (~50ms), took ${elapsed}ms`,
+    );
+  } finally {
+    setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
+    resetCasAuthFailureTracking();
+  }
+});
+
+test("with CAS_TRUST_PROXY set, failures from two X-Forwarded-For addresses get independent streaks", async () => {
+  // The self-hosting runbook's topology: the API sits behind a proxy on the
+  // same box, so CAS_TRUST_PROXY=loopback lets Express read the real visitor
+  // IP the proxy forwards. Proven against a real server process (the env var
+  // is read at app construction, and the tarpit state is process-local), so
+  // this exercises the actual deployment wiring, not a test double.
+  const { child, baseUrl: childBaseUrl } = await startApiProcess({ CAS_TRUST_PROXY: "loopback" });
+  try {
+    const badGuessFrom = (clientIp: string) =>
+      fetch(`${childBaseUrl}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer casdev_online-guess",
+          "x-forwarded-for": clientIp,
+        },
+      });
+
+    // The child runs the production schedule (first failure free, second
+    // waits baseDelayMs=250). A slow first failure is not asserted on: only
+    // that it comes back fast relative to the tarpit.
+    let started = performance.now();
+    let response = await badGuessFrom("203.0.113.10");
+    assert.equal(response.status, 401);
+    assert.ok(performance.now() - started < 200, "first failure from A must not be delayed");
+
+    started = performance.now();
+    response = await badGuessFrom("203.0.113.10");
+    assert.equal(response.status, 401);
+    const secondFromA = performance.now() - started;
+    assert.ok(secondFromA >= 200, `second failure from A should wait ~250ms, took ${secondFromA}ms`);
+
+    // A guess from a different forwarded address starts its own streak at
+    // zero even while A's streak is live — the two visitors are not pooled
+    // behind the proxy's address.
+    started = performance.now();
+    response = await badGuessFrom("198.51.100.7");
+    assert.equal(response.status, 401);
+    const firstFromB = performance.now() - started;
+    assert.ok(
+      firstFromB < 200,
+      `first failure from B must start a fresh streak despite A's live streak, took ${firstFromB}ms`,
+    );
+  } finally {
+    await stopApiProcess(child);
   }
 });
 
