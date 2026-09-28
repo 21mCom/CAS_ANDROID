@@ -21,6 +21,7 @@ import {
   buildCasAlertMessage,
 } from "../lib/delivery-providers";
 import { issueDeviceCredential, setCasAuthFailureLimitConfig } from "../lib/cas-auth";
+import { loadConsoleMirrors } from "../lib/cas-console-mirror";
 import {
   findUnknownPlaceholders,
   renderTemplate,
@@ -176,6 +177,43 @@ test("responder create/validate/edit/disable cycle", async () => {
 // ---------------------------------------------------------------------------
 // Templates: defaults, validation, preview, reset
 // ---------------------------------------------------------------------------
+
+// The live config payloads must satisfy the console's mirror schemas: the
+// parity test (lib/cas-outbox-config-schema.test.ts) pins field NAMES, but
+// only these runtime parses catch a same-key type or nullability change on
+// either side (they throw CasStateShapeError on drift).
+test("config responses satisfy the console mirror schemas", async () => {
+  const mirrors = await loadConsoleMirrors();
+
+  const responders = await api("/cas/config/responders");
+  assert.equal(responders.status, 200);
+  mirrors.parseCasRespondersResponse(await responders.json());
+
+  const templates = await api("/cas/config/templates");
+  assert.equal(templates.status, 200);
+  mirrors.parseCasTemplatesResponse(await templates.json());
+
+  const saved = await api("/cas/config/templates/SMS", {
+    method: "PUT",
+    body: JSON.stringify({ body: "Help needed: {{incident_id}} at {{time}}. {{location}}" }),
+  });
+  assert.equal(saved.status, 200);
+  mirrors.parseCasTemplateInfo(await saved.json());
+
+  const okPreview = await api("/cas/config/templates/preview", {
+    method: "POST",
+    body: JSON.stringify({ channel: "SMS", body: "Alert {{incident_id}} at {{time}}" }),
+  });
+  assert.equal(okPreview.status, 200);
+  mirrors.parseCasTemplatePreviewResult(await okPreview.json());
+
+  const badPreview = await api("/cas/config/templates/preview", {
+    method: "POST",
+    body: JSON.stringify({ channel: "SMS", body: "Alert {{not_a_placeholder}}" }),
+  });
+  assert.equal(badPreview.status, 200);
+  mirrors.parseCasTemplatePreviewResult(await badPreview.json());
+});
 
 test("templates default to the built-in wording and render a preview", async () => {
   const response = await api("/cas/config/templates");

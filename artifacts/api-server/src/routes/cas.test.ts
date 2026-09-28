@@ -25,6 +25,7 @@ import {
   casTransportCooldowns,
 } from "@workspace/db/schema";
 import { asc, eq, sql } from "drizzle-orm";
+import { loadConsoleMirrors } from "../lib/cas-console-mirror";
 import {
   DELIVERY_LEASE_MS,
   MAX_DELIVERY_ATTEMPTS,
@@ -2307,6 +2308,12 @@ test("outbox status reports counts by state and the oldest pending item", async 
     attempts: 8,
     message: "permanent rejection",
   });
+
+  // The live payload must also satisfy the console's mirror schema: the
+  // parity test (lib/cas-outbox-config-schema.test.ts) pins field NAMES,
+  // but only this runtime parse catches a same-key type or nullability
+  // change (it throws CasStateShapeError on drift).
+  (await loadConsoleMirrors()).parseCasOutboxStatusResponse(body);
 });
 
 test("a dead-lettered delivery is reported by the status endpoint end-to-end", async () => {
@@ -2381,6 +2388,9 @@ test("outbox status reports an empty pipeline with no worker heartbeat", async (
   // The in-process test app never starts the delivery worker, so the
   // heartbeat must be reported as absent rather than invented.
   assert.equal(body.worker, null);
+
+  // Runtime mirror-schema parse: covers the all-null branches.
+  (await loadConsoleMirrors()).parseCasOutboxStatusResponse(body);
 });
 
 test("outbox status surfaces the worker heartbeat once ticks are recorded", async () => {
@@ -2422,6 +2432,10 @@ test("outbox status surfaces the worker heartbeat once ticks are recorded", asyn
     assert.equal(body.worker.lastError?.message, "database hiccup");
     assert.equal(body.worker.stoppedAt, null);
     assert.ok(getCasOutboxWorkerHeartbeat());
+
+    // Runtime mirror-schema parse: covers the populated worker heartbeat,
+    // including the nested lastTick/lastError shapes.
+    (await loadConsoleMirrors()).parseCasOutboxStatusResponse(body);
   } finally {
     resetCasOutboxWorkerHeartbeat();
   }

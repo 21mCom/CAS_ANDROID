@@ -16,6 +16,12 @@ on:
       # The console parity test reads this hook from disk; a console-side type
       # change must re-run the gate or a schema/console drift could merge green.
       - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
+      # The outbox/config parity test (cas-outbox-config-schema.test.ts) reads
+      # these console mirror schemas from disk and the route tests import them,
+      # so a console-side edit must re-run the gate too.
+      - "artifacts/covert-alert-system/src/lib/cas-outbox-status-schema.ts"
+      - "artifacts/covert-alert-system/src/lib/cas-config-schema.ts"
+      - "artifacts/covert-alert-system/src/lib/cas-state-schema.ts"
       - ".github/workflows/api-server-tests.yml"
   pull_request:
     paths:
@@ -28,6 +34,12 @@ on:
       # The console parity test reads this hook from disk; a console-side type
       # change must re-run the gate or a schema/console drift could merge green.
       - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
+      # The outbox/config parity test (cas-outbox-config-schema.test.ts) reads
+      # these console mirror schemas from disk and the route tests import them,
+      # so a console-side edit must re-run the gate too.
+      - "artifacts/covert-alert-system/src/lib/cas-outbox-status-schema.ts"
+      - "artifacts/covert-alert-system/src/lib/cas-config-schema.ts"
+      - "artifacts/covert-alert-system/src/lib/cas-state-schema.ts"
       - ".github/workflows/api-server-tests.yml"
 
 jobs:
