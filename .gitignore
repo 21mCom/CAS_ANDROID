@@ -63,3 +63,7 @@ scripts/.cache/
 
 # Local Android toolchain + emulator state (task verification rigs)
 /android/
+
+# Field-build-only Firebase config for the capture-request push wake
+# (deployment-specific; see app/build.gradle.kts) — never committed.
+/artifacts/covert-alert-system/android-test-package/app/google-services.json
