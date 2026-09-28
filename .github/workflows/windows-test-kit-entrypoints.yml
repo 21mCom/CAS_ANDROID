@@ -176,6 +176,77 @@ jobs:
           cd "$COMMITTED_HANDOFF_ROOT"
           sha256sum -c SHA256SUMS.txt
 
+      - name: An identical-content rebuild to the same path must succeed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Positive test for the same-path overwrite guard: rebuilding to a
+          # path that already holds an identical package is a harmless
+          # idempotent rebuild and must succeed. The guard's accept branch is
+          # asserted by its log line, so a refactor that deleted the guard
+          # outright (rebuild succeeds silently) fails here too.
+          $rebuildZip = Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-identical.zip'
+          pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $rebuildZip
+          if ($LASTEXITCODE -ne 0) { throw "Test setup broken: initial package-mvp-handoff.ps1 build exited $LASTEXITCODE" }
+          $rebuildOutput = & pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $rebuildZip 2>&1 | Out-String
+          $rebuildCode = $LASTEXITCODE
+          Write-Host $rebuildOutput
+          if ($rebuildCode -ne 0) { throw "The packager refused an identical-content rebuild to the same path (exit $rebuildCode)." }
+          if ($rebuildOutput -notmatch 'identical content') { throw 'The rebuild succeeded without the guard reporting identical content; the same-path overwrite guard is not engaging.' }
+          Write-Host 'An identical-content rebuild to the same path succeeded, as required.'
+          exit 0
+
+      - name: Different content under one filename must be refused and the existing ZIP left untouched
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Negative test for the same-path overwrite guard (2026-09-27
+          # incident: two different kits shipped as "v0.4.0", leaving operators
+          # unable to tell them apart). Build the package once, doctor the
+          # ZIP's manifest in place so the existing file pretends to hold
+          # different content, then re-run the packager against the same
+          # -OutputPath. The packager must exit non-zero with the refusal
+          # message and must not modify the existing ZIP.
+          $targetZip = Join-Path $env:RUNNER_TEMP 'CAS-Pixel11-MVP-Handoff-guard.zip'
+          pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $targetZip
+          if ($LASTEXITCODE -ne 0) { throw "Test setup broken: initial package-mvp-handoff.ps1 build exited $LASTEXITCODE" }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::Open($targetZip, 'Update')
+          try {
+              $sumsEntry = $archive.GetEntry('CAS-Pixel11-MVP/SHA256SUMS.txt')
+              if ($null -eq $sumsEntry) { throw 'Test setup broken: the fresh ZIP has no CAS-Pixel11-MVP/SHA256SUMS.txt entry to doctor.' }
+              $sumsStream = $sumsEntry.Open()
+              try {
+                  $sumsStream.SetLength(0)
+                  $doctored = [System.Text.Encoding]::UTF8.GetBytes(("0000000000000000000000000000000000000000000000000000000000000000  doctored-different-content.txt`n"))
+                  $sumsStream.Write($doctored, 0, $doctored.Length)
+              } finally {
+                  $sumsStream.Dispose()
+              }
+          } finally {
+              $archive.Dispose()
+          }
+
+          $originalZipHash = (Get-FileHash -LiteralPath $targetZip -Algorithm SHA256).Hash
+          # The packager is expected to exit non-zero here; do not let pwsh 7.4+
+          # turn the native command's exit code into a terminating error before
+          # the assertions below run.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = & pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $targetZip 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) { throw 'The packager overwrote an existing ZIP holding different content, re-opening the 2026-09-27 same-filename incident.' }
+          if ($output -notmatch 'Refusing to overwrite') { throw 'The packager failed without the same-path refusal message.' }
+          if ($output -notmatch 'two different kits must never share one filename') { throw 'The packager failed without explaining why the overwrite was refused.' }
+          $afterZipHash = (Get-FileHash -LiteralPath $targetZip -Algorithm SHA256).Hash
+          if ($afterZipHash -ne $originalZipHash) { throw 'The packager modified the existing ZIP it claimed to refuse.' }
+          Write-Host 'Different content under one filename was refused and the existing ZIP was left untouched, as required.'
+          # Every assertion above passed. The last native command in this step
+          # is EXPECTED to exit non-zero, and pwsh would otherwise propagate
+          # that $LASTEXITCODE as the step's exit code — exit 0 explicitly.
+          exit 0
+
   gate0a-guide-freshness:
     name: Committed Gate 0A run-guide PDF matches its generator
     # ubuntu-latest: the mvp-handoff-freshness job proves the ZIP matches the
