@@ -1,5 +1,6 @@
 import { boolean, customType, doublePrecision, integer, jsonb, pgTable, real, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
+import { boolean, doublePrecision, integer, jsonb, pgTable, real, text, timestamp } from "drizzle-orm/pg-core";
 
 // Drizzle has no built-in bytea column; the evidence blob rides the pg driver
 // as a Buffer.

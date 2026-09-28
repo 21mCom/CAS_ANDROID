@@ -140,7 +140,6 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
 1. Open the console **Gates** page.
 2. Import `report.json` as a file (do not paste it as text).
 3. Review the imported evidence and record the Gate 0A observation.
-
 ## Troubleshooting
 
 | Symptom | Action |

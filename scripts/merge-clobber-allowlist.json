@@ -1,12 +1,29 @@
 {
   "_doc": "Exclusions for scripts/check-merge-clobber.mjs. Use this file for deliberate reverts/break-proofs whose commit message cannot carry the [no-clobber-check] marker (e.g. already-landed history). commits: sha prefix (>=7 chars) -> reason, skips that commit in both checks. paths: glob -> reason, always ignores matching paths. reversions: suppress a specific A->B->A blob reversion; path is a glob, by is the reverting commit's sha prefix.",
-  "commits": {},
+  "commits": {
+    "559bf4c": "Deliberate add-then-remove scratch pair with 0536cd8 (.push-files.txt push scratch); nothing was meant to survive to HEAD."
+  },
   "paths": {},
   "reversions": [
     {
       "path": "artifacts/api-server/src/routes/cas.ts",
       "by": "2fa9c1b",
       "reason": "Deliberate canonical-restore of the clobbered route handlers, verified green (114/114 contract suite) on the final rebased tree; HEAD cas.ts has since absorbed later verified repairs."
+    },
+    {
+      "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.5.0-mvp.zip",
+      "by": "6b41467",
+      "reason": "Deterministic repack after the drift-fixture repair reproduced the earlier verified blob; the same A->B->A pattern exists in the pre-rebase pushed history (34b1192 -> 0299520d), and HEAD's blob b35a14f9 matches the CI-verified pushed tip fb71d69."
+    },
+    {
+      "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
+      "by": "ac9f351",
+      "reason": "Rebase replay of the old content-sync re-added the superseded v0.4.0 ZIP mid-history; it is deliberately absent at HEAD (superseded by v0.5.x), matching the pushed tip fb71d69."
+    },
+    {
+      "path": "artifacts/api-server/src/lib/cas-auth.ts",
+      "by": "069d3c8",
+      "reason": "Deliberate break/revert proof pair (probe 74a1aa9 broke the credential gate to prove the route-tests CI job goes red; the revert restores the healthy gate)."
     }
   ]
 }
