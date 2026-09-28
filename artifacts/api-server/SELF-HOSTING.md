@@ -9,7 +9,8 @@ Estimated time: one afternoon.
 
 **What you end up with:** the CAS API server running as a system service on
 your own box, the operator console served from your own domain over HTTPS,
-nightly database backups, and a ping that alerts you if the server dies.
+nightly database backups, and two alerts: one if the server dies, one if
+someone starts guessing credentials.
 
 **What you need before starting:**
 - A Linux box that stays on (a $5/month VPS is fine; 1 GB RAM is enough).
@@ -355,6 +356,84 @@ echo '*/5 * * * * root curl -fsS -m 10 https://cas.example.org/api/healthz > /de
 Because the ping only fires while the server answers over HTTPS, this catches
 the server crashing, the box dying, DNS/certificate trouble, and lost internet
 — all with zero software to run yourself.
+
+## Step 10 — Alert when someone is guessing credentials
+
+The server already slows down repeated wrong-credential attempts from one IP,
+and every 10th consecutive failure it writes one distinct log line:
+
+```
+{"level":40,"time":...,"casAuthRejectionBurst":{"ip":"...","failures":10,...},"msg":"CAS credential rejection burst detected"}
+```
+
+This step turns that line into an email, reusing the same dead-man's-switch
+service as Step 9 — still zero software to run yourself.
+
+1. In your healthchecks.io account, create a **second, separate check** named
+   e.g. `cas-auth-bursts` (do not reuse the Step 9 check — a burst must not
+   look like downtime). Give it a period of 5 minutes with a 5-minute grace
+   and copy its ping URL (`https://hc-ping.com/SECOND-UUID`).
+
+2. Install a once-a-minute watchdog that scans the service journal for the
+   burst line. On a burst it pings the check's `/fail` URL (immediate "down"
+   email); when the journal is clean it pings normally, which also flips the
+   check back to "up" after an incident:
+
+   ```bash
+   sudo tee /usr/local/sbin/cas-burst-watch.sh > /dev/null <<'EOF'
+   #!/bin/bash
+   # Alert on CAS credential-guessing bursts via a healthchecks.io check.
+   set -uo pipefail
+   PING_URL="https://hc-ping.com/SECOND-UUID"   # <- paste your second check's URL
+
+   # Read the journal fully into memory BEFORE matching. Piping journalctl
+   # straight into `grep -q` lets grep exit on the first match and cut
+   # journalctl off mid-write; under `set -o pipefail` that truncated read
+   # would be misread as "no burst" — a false all-clear during the exact
+   # high-volume flood this alert exists for.
+   # A failed journal read also alerts (never reports clean).
+   if ! recent=$(journalctl -u cas-api -o cat --since "-90 seconds" 2>/dev/null); then
+     curl -fsS -m 10 "$PING_URL/fail" > /dev/null
+     exit 0
+   fi
+
+   if grep 'casAuthRejectionBurst' <<< "$recent" > /dev/null; then
+     curl -fsS -m 10 "$PING_URL/fail" > /dev/null
+   else
+     curl -fsS -m 10 "$PING_URL" > /dev/null
+   fi
+   EOF
+   sudo chmod +x /usr/local/sbin/cas-burst-watch.sh
+   echo '* * * * * root /usr/local/sbin/cas-burst-watch.sh' | sudo tee /etc/cron.d/cas-burst-watch
+   ```
+
+   Why `--since "-90 seconds"` on a once-a-minute cron: a little overlap costs
+   nothing (re-pinging `/fail` while already down sends no extra email), but a
+   gap would silently miss a burst that landed between runs.
+
+**Prove the alert fires (do this once, now):** from any machine, send wrong
+credentials until the burst trips, then watch for the email:
+
+```bash
+for i in $(seq 1 11); do
+  curl -s -o /dev/null https://cas.example.org/api/cas/state \
+    -H "Authorization: Bearer wrong-on-purpose"
+done
+```
+
+The server's own slowdown makes the 11 attempts take about 90 seconds
+(the per-attempt delay doubles each failure — that is the anti-guessing
+defense working, not a problem). Within a couple of minutes after the 10th
+failure you should get the `cas-auth-bursts` email. You can also confirm the
+line itself on the box:
+
+```bash
+journalctl -u cas-api -o cat --since "-10 min" | grep casAuthRejectionBurst
+```
+
+The line records the source IP of the guesser. While the API sits behind the
+Caddy proxy from Step 6, that IP may read as `127.0.0.1` until `trust proxy`
+is configured — the alert still fires either way.
 
 ## Updating to a new version later
 
