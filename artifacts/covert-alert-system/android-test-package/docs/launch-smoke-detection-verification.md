@@ -86,7 +86,7 @@ hardware run. Can the emulator CI job exercise the service and go red on a broke
 BOOT_COMPLETED phase and the PIN/reboot phase):** the job grants CAMERA + RECORD_AUDIO
 (`pm grant`, failing loudly if refused), brings MainActivity back to the foreground
 (the service is a while-in-use camera+microphone FGS, so the app must be
-foreground-eligible when it starts on API 34+), starts the non-exported
+foreground-eligible when it starts on API 34+), <!-- toolreq-gate: allow -- describes Android platform while-in-use FGS start eligibility (begins at API 34), not a declared tool requirement --> starts the non-exported
 EvidenceCaptureService via `am start-foreground-service` from the root shell already
 acquired for the broadcast phase (root is exempt from the API 35 non-exported
 restriction), then polls the device-protected journal (read as root) until every
