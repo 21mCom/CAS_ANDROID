@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, beforeEach, test } from "node:test";
 import app from "../app";
@@ -11,6 +13,7 @@ import {
   casIncidentEvents,
   casIncidents,
   casOutbox,
+  casPushRegistrations,
 } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -21,6 +24,7 @@ import {
   type CasAuthFailureBurst,
   type CasAuthRejection,
 } from "../lib/cas-auth";
+import { resetCasPushTokenCache } from "../lib/cas-push";
 
 // This suite intentionally strings credential rejections together; run the
 // per-IP rejection tarpit (see lib/cas-auth.ts) on a near-zero schedule so
@@ -90,6 +94,7 @@ async function clearCasData() {
   await db.delete(casCapturePolicy);
   await db.delete(casIncidentEvents);
   await db.delete(casOutbox);
+  await db.delete(casPushRegistrations);
   await db.delete(casIncidents);
 }
 
@@ -444,4 +449,184 @@ test("handset evidence endpoints do not depend on CAS_DEVICE_TOKEN at all", asyn
   } finally {
     process.env.CAS_DEVICE_TOKEN = saved;
   }
+});
+
+// --- Responder capture-request push wake -----------------------------------
+
+function registerPushToken(auth: Record<string, string>, token: string) {
+  return fetch(`${baseUrl}/cas/devices/push-token`, {
+    method: "PUT",
+    headers: { ...auth, "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+function createCaptureRequest(incidentId: string, kind = "audio") {
+  return fetch(`${baseUrl}/cas/incidents/${incidentId}/capture-requests`, {
+    method: "POST",
+    headers: { ...AUTH, "content-type": "application/json" },
+    body: JSON.stringify({ kind }),
+  });
+}
+
+const PUSH_ENV_KEYS = [
+  "CAS_FCM_SERVICE_ACCOUNT_JSON",
+  "CAS_FCM_SERVICE_ACCOUNT_FILE",
+  "CAS_FCM_TOKEN_URI",
+  "CAS_FCM_SEND_URL",
+];
+
+/** Run a block with the push env replaced; the real env is restored after. */
+async function withPushEnv(values: Record<string, string | undefined>, run: () => Promise<void>) {
+  const saved = Object.fromEntries(PUSH_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of PUSH_ENV_KEYS) {
+    if (values[key] === undefined) delete process.env[key];
+    else process.env[key] = values[key]!;
+  }
+  resetCasPushTokenCache();
+  try {
+    await run();
+  } finally {
+    for (const key of PUSH_ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key]!;
+    }
+    resetCasPushTokenCache();
+  }
+}
+
+test("push-token registration requires an enrolled credential and upserts per credential", async () => {
+  assert.equal((await registerPushToken({}, "tok")).status, 401);
+  assert.equal((await fetch(`${baseUrl}/cas/devices/push-token`, {
+    method: "PUT",
+    headers: { ...HANDSET, "content-type": "application/json" },
+    body: JSON.stringify({ token: "" }),
+  })).status, 400);
+
+  assert.equal((await registerPushToken(HANDSET, "fcm-token-v1")).status, 200);
+  // Rotation replaces the row instead of accumulating stale tokens.
+  assert.equal((await registerPushToken(HANDSET, "fcm-token-v2")).status, 200);
+  const rows = await db.select().from(casPushRegistrations);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].token, "fcm-token-v2");
+  assert.equal(rows[0].deviceCredentialId, handset.device.id);
+});
+
+test("capture request without push configured journals the polling fallback", async () => {
+  await withPushEnv({}, async () => {
+    const incidentId = await triggerIncident();
+    await putPolicy({ audio: "responder", photo: "off", video: "off", timing: "immediate" });
+    const created = await createCaptureRequest(incidentId);
+    assert.equal(created.status, 201);
+    assert.equal(((await created.json()) as { push: string }).push, "unconfigured");
+    const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+    const event = journal.find((entry) => entry.type === "CAPTURE_PUSH_UNAVAILABLE");
+    assert.ok(event, "journal must record that no push wake was sent");
+    assert.match(event.detail, /next server contact/);
+    // The request still exists for the polling pickup.
+    const pending = await fetch(`${baseUrl}/cas/capture-requests/pending`, { headers: HANDSET });
+    assert.equal((await pending.json() as { items: unknown[] }).items.length, 1);
+  });
+});
+
+test("capture request with push configured sends a high-priority wake to non-revoked handsets only", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const serviceAccount = {
+    project_id: "cas-test-project",
+    client_email: "cas-push@cas-test-project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
+  };
+  const sent: { authorization?: string; body: string }[] = [];
+  const stub: Server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      if (req.url === "/token") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "stub-access-token", expires_in: 3599 }));
+        return;
+      }
+      sent.push({ authorization: req.headers.authorization, body });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ name: "projects/cas-test-project/messages/1" }));
+    });
+  });
+  stub.listen(0, "127.0.0.1");
+  await once(stub, "listening");
+  const stubPort = (stub.address() as AddressInfo).port;
+  try {
+    await withPushEnv({
+      CAS_FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(serviceAccount),
+      CAS_FCM_SERVICE_ACCOUNT_FILE: undefined,
+      CAS_FCM_TOKEN_URI: `http://127.0.0.1:${stubPort}/token`,
+      CAS_FCM_SEND_URL: `http://127.0.0.1:${stubPort}/send`,
+    }, async () => {
+      // A second handset registers, then gets revoked: its token must not
+      // receive the wake — revocation is meant to cut the phone off.
+      const revokedHandset = await enrollHandset("evidence-test-push-revoked");
+      assert.equal((await registerPushToken({ authorization: `Bearer ${revokedHandset.token}` }, "revoked-token")).status, 200);
+      assert.equal((await registerPushToken(HANDSET, "live-token")).status, 200);
+      const revoke = await fetch(`${baseUrl}/cas/devices/${revokedHandset.device.id}/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` },
+      });
+      assert.equal(revoke.status, 200);
+
+      const incidentId = await triggerIncident();
+      await putPolicy({ audio: "responder", photo: "off", video: "off", timing: "immediate" });
+      const createdResponse = await createCaptureRequest(incidentId);
+      assert.equal(createdResponse.status, 201);
+      const created = await createdResponse.json() as { id: string; push: string };
+      assert.equal(created.push, "sent");
+
+      assert.equal(sent.length, 1, "only the live handset's token receives the wake");
+      assert.equal(sent[0].authorization, "Bearer stub-access-token");
+      const message = JSON.parse(sent[0].body).message;
+      assert.equal(message.token, "live-token");
+      assert.equal(message.android.priority, "HIGH");
+      assert.equal(message.data.requestId, created.id);
+      assert.equal(message.data.incidentId, incidentId);
+      assert.equal(message.notification, undefined);
+
+      const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+      const pushEvent = journal.find((entry) => entry.type === "CAPTURE_PUSH_SENT");
+      assert.ok(pushEvent);
+      assert.match(pushEvent.detail, /1 enrolled handset/);
+
+      // The handset honors the request over the push path and says so.
+      const ack = await fetch(`${baseUrl}/cas/capture-requests/${created.id}/ack`, {
+        method: "POST",
+        headers: { ...HANDSET, "content-type": "application/json" },
+        body: JSON.stringify({ outcome: "started", via: "push" }),
+      });
+      assert.equal(ack.status, 200);
+      const request = await db.select().from(casCaptureRequests).where(eq(casCaptureRequests.id, created.id));
+      assert.equal(request[0].via, "push");
+      const after = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+      const started = after.find((entry) => entry.type === "CAPTURE_STARTED");
+      assert.match(started?.detail ?? "", /high-priority push/);
+    });
+  } finally {
+    stub.close();
+    await once(stub, "close");
+  }
+});
+
+test("ack without a via field journals the polling path (older APKs have no push)", async () => {
+  await withPushEnv({}, async () => {
+    const incidentId = await triggerIncident();
+    await putPolicy({ audio: "responder", photo: "off", video: "off", timing: "immediate" });
+    const created = await (await createCaptureRequest(incidentId)).json() as { id: string };
+    const ack = await fetch(`${baseUrl}/cas/capture-requests/${created.id}/ack`, {
+      method: "POST",
+      headers: { ...HANDSET, "content-type": "application/json" },
+      body: JSON.stringify({ outcome: "started" }),
+    });
+    assert.equal(ack.status, 200);
+    const request = await db.select().from(casCaptureRequests).where(eq(casCaptureRequests.id, created.id));
+    assert.equal(request[0].via, "poll");
+    const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+    const started = journal.find((entry) => entry.type === "CAPTURE_STARTED");
+    assert.match(started?.detail ?? "", /polling path/);
+  });
 });

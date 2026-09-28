@@ -17,6 +17,7 @@ object TestStore {
     private const val ENROLLED_DEVICE_TOKEN = "enrolled_device_token"
     private const val DEVICE_CREDENTIAL_PROVISIONED = "device_credential_provisioned"
     private const val CAPTURE_POLICY_JSON = "capture_policy_json"
+    private const val REGISTERED_PUSH_TOKEN = "registered_push_token"
 
     // Only a successfully fetched policy replaces the last known policy;
     // an offline trigger must never silently enable a new capture mode.
@@ -92,6 +93,18 @@ object TestStore {
 
     fun deviceCredentialProvisioned(context: Context): Boolean =
         storage(context).getBoolean(DEVICE_CREDENTIAL_PROVISIONED, false)
+
+    /**
+     * The FCM registration token last successfully registered with the
+     * server — compared against so a resume loop does not re-register (and
+     * re-journal) an unchanged token. Opaque identifier, not a credential;
+     * still never written to the journal or report.
+     */
+    fun setRegisteredPushToken(context: Context, value: String) =
+        storage(context).edit().putString(REGISTERED_PUSH_TOKEN, value.trim()).apply()
+
+    fun registeredPushToken(context: Context): String =
+        storage(context).getString(REGISTERED_PUSH_TOKEN, "").orEmpty()
 
     fun setCoverPackage(context: Context, value: String) =
         storage(context).edit().putString(COVER_PACKAGE, value.trim()).apply()

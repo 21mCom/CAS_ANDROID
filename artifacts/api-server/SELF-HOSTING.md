@@ -126,6 +126,22 @@ CAS_DEVICE_CHANNELS=SMS
 # Generate one: openssl rand -hex 32
 CAS_DEVICE_TOKEN=CHANGE_ME
 
+# --- Optional: instant capture-request wake (push) ---------------------------
+# Responder-requested evidence capture is normally honored when the phone next
+# contacts the server (up to minutes during a live incident, and Android may
+# deny the mic/camera background start while idle). With a Firebase service
+# account configured here, creating a capture request also sends a
+# high-priority push that wakes the phone immediately under the documented
+# background-start exemption; the incident journal records which path honored
+# each request, and polling stays as the fallback whenever push is
+# unconfigured or fails. Without these variables nothing changes.
+# Create a Firebase project, add the Android app (package
+# com.covertalert.pixeltest), and create a service-account key (IAM → Service
+# accounts → Keys). The handset side needs the matching google-services.json
+# at field-build time — see the test package's HANDOFF-TEST-KIT.md.
+# CAS_FCM_SERVICE_ACCOUNT_FILE=/etc/cas/fcm-service-account.json   (recommended)
+# CAS_FCM_SERVICE_ACCOUNT_JSON={"type":"service_account",...}      (inline alternative)
+
 # --- Optional: server-side delivery channels --------------------------------
 # Only set a channel if you want the server (not the phone) to deliver it.
 # Each needs an HTTPS endpoint; tokens optional; recipients optional now that

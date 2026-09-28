@@ -17,6 +17,7 @@ import {
   recordCasCredentialRejection,
   requireCasCredential,
 } from "../lib/cas-auth";
+import { sendCaptureRequestPush } from "../lib/cas-push";
 
 const router: IRouter = Router();
 
@@ -322,7 +323,46 @@ router.post("/cas/incidents/:id/capture-requests", requireCasCredential, async (
       return true;
     });
     if (!created) return res.status(404).json({ error: "No incident with this id" });
-    return res.status(201).json({ id, incidentId, kind, state: "PENDING" });
+
+    // Near-real-time wake: a high-priority FCM message both wakes the idle
+    // phone immediately and grants the background mic/camera start exemption.
+    // Runs after the commit so the request is durable no matter what the
+    // push does; polling pickup stays as the fallback and the journal records
+    // which path was live for this request.
+    const push = await sendCaptureRequestPush({ requestId: id, incidentId, kind });
+    const pushEvent = push.status === "sent"
+      ? {
+          type: "CAPTURE_PUSH_SENT",
+          priority: "P2",
+          detail: `High-priority push wake sent to ${push.delivered} enrolled handset(s)${push.staleRemoved ? ` (${push.staleRemoved} stale registration(s) dropped)` : ""}. If no handset acks, polling pickup remains as fallback.`,
+        }
+      : push.status === "unconfigured"
+        ? {
+            type: "CAPTURE_PUSH_UNAVAILABLE",
+            priority: "P2",
+            detail: "Push wake is not configured on this server (no Firebase service account); the handset will pick the request up on its next server contact. See SELF-HOSTING.md to enable instant wake.",
+          }
+        : push.status === "no-registrations"
+          ? {
+              type: "CAPTURE_PUSH_UNAVAILABLE",
+              priority: "P2",
+              detail: "No enrolled handset has registered a push token, so no wake was sent; the handset will pick the request up on its next server contact.",
+            }
+          : {
+              type: "CAPTURE_PUSH_FAILED",
+              priority: "P1",
+              detail: `Push wake failed (${push.detail}); the handset will still pick the request up on its next server contact.`,
+            };
+    await db.insert(casIncidentEvents).values({
+      id: `${id}-push-${push.status}-${Date.now()}`,
+      incidentId,
+      type: pushEvent.type,
+      priority: pushEvent.priority,
+      detail: pushEvent.detail,
+      createdAt: new Date(),
+    });
+
+    return res.status(201).json({ id, incidentId, kind, state: "PENDING", push: push.status });
   } catch (error) { return next(error); }
 });
 
@@ -359,6 +399,11 @@ const captureAckSchema = z.object({
   // The measured reason a start failed — e.g. Android's background
   // mic/camera start restriction — is recorded verbatim for the handoff docs.
   detail: z.string().trim().min(1).max(500).optional(),
+  // Which wake path brought the request to the handset: "push" (high-priority
+  // FCM) or "poll" (the handset's own server contact). Older APKs omit it;
+  // the journal treats a missing value as the polling path, which is the only
+  // one they have.
+  via: z.enum(["push", "poll"]).optional(),
 });
 
 /**
@@ -385,8 +430,14 @@ router.post("/cas/capture-requests/:id/ack", async (req: Request<{ id: string }>
       if (!request?.id || !request.incidentId || !request.kind || !request.state) return "missing" as const;
       if (request.state !== "PENDING") return "conflict" as const;
       const nextState = parsed.data.outcome === "started" ? "STARTED" : "FAILED";
+      // Older APKs have no push support and omit `via`; their only path is
+      // the polling pickup, so the journal never loses the wake-path record.
+      const via = parsed.data.via ?? "poll";
+      const wakePath = via === "push"
+        ? "woken instantly by a high-priority push message"
+        : "picked up on the handset's own server contact (polling path)";
       await tx.update(casCaptureRequests)
-        .set({ state: nextState, detail: parsed.data.detail ?? null, updatedAt: now })
+        .set({ state: nextState, detail: parsed.data.detail ?? null, via, updatedAt: now })
         .where(eq(casCaptureRequests.id, request.id));
       await tx.insert(casIncidentEvents).values({
         id: `${request.id}-${nextState.toLowerCase()}-${now.getTime()}`,
@@ -394,8 +445,8 @@ router.post("/cas/capture-requests/:id/ack", async (req: Request<{ id: string }>
         type: nextState === "STARTED" ? "CAPTURE_STARTED" : "CAPTURE_FAILED",
         priority: nextState === "STARTED" ? "P2" : "P1",
         detail: nextState === "STARTED"
-          ? `Handset started responder-requested ${request.kind} capture.`
-          : `Handset could not start responder-requested ${request.kind} capture: ${parsed.data.detail ?? "no detail reported"}.`,
+          ? `Handset started responder-requested ${request.kind} capture (${wakePath}).`
+          : `Handset could not start responder-requested ${request.kind} capture (${wakePath}): ${parsed.data.detail ?? "no detail reported"}.`,
         createdAt: now,
       });
       return nextState;

@@ -446,6 +446,11 @@ class MainActivity : Activity() {
 
     private fun retryCaptureWork() {
         // Neither retries nor polling run in the Gate 0A harness path.
+        // Push registration refreshes alongside: once a google-services.json
+        // build has a server URL and an enrolled credential, the handset
+        // registers its FCM token so responder capture requests can wake it
+        // instantly instead of waiting for this polling path.
+        CapturePush.syncRegistration(this)
         try { EvidenceUploader.uploadAll(this) } catch (error: Exception) {
             TestStore.record(this, "EVIDENCE_UPLOAD", mapOf("outcome" to "RETRY_LATER", "detail" to error.toString()))
         }

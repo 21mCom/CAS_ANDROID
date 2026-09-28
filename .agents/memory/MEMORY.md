@@ -3,6 +3,7 @@
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
 - [CAS alert API credential gate](cas-auth.md) — mutations need enrolled per-device tokens; devices must discard the enrollment credential and never auto re-enroll, or revocation is bypassable.
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
+- [CAS push wake](cas-push-wake.md) — FCM high-priority data-only wake for responder capture; Firebase deps unconditional, google-services.json gates the plugin; journal records via=push/poll.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
 - [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown; suites stringing credential 401s must neutralize the per-IP tarpit schedule.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.

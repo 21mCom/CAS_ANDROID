@@ -51,6 +51,18 @@
         <service android:name=".EvidenceCaptureService"
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
+        <!-- Responder-requested capture wake: high-priority data-only FCM
+             messages wake the phone and start the bounded capture service
+             under the documented push exemption instead of waiting for the
+             next check-in. Non-exported, no UI, no alert surface. Builds
+             without google-services.json simply never receive a message and
+             keep the polling path. -->
+        <service android:name=".CapturePushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <activity
             android:name=".MainActivity"
             android:exported="true"

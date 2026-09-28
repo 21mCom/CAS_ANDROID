@@ -88,9 +88,17 @@ later; nothing else changes.
 
 ## T1 — Build and install the app
 
-`scripts\run-mvp-install.cmd` → installs version `0.6.0-capture` (versionCode 5).
+`scripts\run-mvp-install.cmd` → installs version `0.7.0-push` (versionCode 6).
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
-prints `0.6.0-capture`.
+prints `0.7.0-push`.
+
+**Optional — push wake build:** to make responder-requested capture near-real-time
+(T10b), place the Firebase project's `google-services.json` (Android app
+`com.covertalert.pixeltest`) at `app\google-services.json` before building, and
+configure the server with the matching service account (`CAS_FCM_SERVICE_ACCOUNT_*`,
+see SELF-HOSTING.md). Without the file the app builds and runs exactly as before —
+capture requests are honored on the phone's next server contact (polling), which
+remains the fallback in every build.
 
 ## T2 — Real SMS alert with location (phone required)
 
@@ -254,11 +262,36 @@ requests, and the shared device token is not accepted for evidence.
 7. Resolve the incident. Note in the report-back which timing mode caught
    better evidence and how visible each capture start was.
 
+## T10b — Push wake for responder capture requests (phone required, push build)
+
+Proves the high-priority push path: a responder's capture request wakes the
+idle phone immediately instead of waiting for the next check-in. Requires the
+push build (T1 optional step: `google-services.json` in the app) and a server
+with `CAS_FCM_SERVICE_ACCOUNT_*` configured.
+
+1. On the phone, send one alert and leave the app once (so the push token
+   registers). Pass: the on-screen report shows `PUSH_TOKEN_REGISTERED`
+   outcome OK. If it shows `PUSH_UNAVAILABLE`, this build has no Firebase
+   config — run the rest with the polling expectation instead.
+2. Set **Audio** to *Only when a responder asks*. Trigger an alert, lock the
+   phone, and set it down — do NOT touch it again.
+3. From the console incident view, press **Request audio capture**. Pass: the
+   phone starts capturing within seconds while still idle-locked (green mic
+   indicator), the journal shows `CAPTURE_PUSH_SENT` at request time and
+   `CAPTURE_STARTED` recorded *woken instantly by a high-priority push
+   message*, and the clip lands in the panel. No one touched the phone.
+4. **Fallback proof:** on the server, unset `CAS_FCM_SERVICE_ACCOUNT_*` (or
+   revoke network access to FCM) and repeat step 3. Pass: the journal shows
+   `CAPTURE_PUSH_UNAVAILABLE` at request time, the phone honors the request
+   on its next contact (app resume or **Check re-queued deliveries**), and
+   `CAPTURE_STARTED` names the polling path.
+5. Resolve the incident.
+
 ## Report-back template
 
 ```text
 CAS handoff test run — <date> <operator>
-Server URL: <...>   App version: <0.6.0-capture?>
+Server URL: <...>   App version: <0.7.0-push?>
 T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
 T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>
@@ -270,6 +303,7 @@ T7 email sink:       PASS/FAIL — <subject seen>
 T8 failure honesty:  PASS/FAIL — <replay:true seen?>
 T9 no-data fallback: PASS/FAIL/SKIP — <SMS arrived with data off?>
 T10 evidence capture: PASS/FAIL — <which types landed; immediate vs screen-off comparison; any CAPTURE_FAILED detail>
+T10b push wake:        PASS/FAIL/SKIP — <push path honored from idle? fallback polling still works?>
 Console UI check:    incidents page showed all four transport chips with matching states? Y/N
 Blockers/questions:  <...>
 ```

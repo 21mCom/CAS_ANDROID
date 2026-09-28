@@ -18,6 +18,14 @@ committed silently when nothing re-validates the post-rebase tree.
 - After any conflicted completion rebase, run the *full* contract suite and
   a workspace typecheck on the post-rebase state before marking complete —
   they catch the splices. Conflict-marker-only verification does not.
+- A rebase can also report "completed cleanly" and STILL revert files that
+  both sides touched: observed a squash-commit rebase where the replayed
+  snapshot of a shared route file was the task's stale base version —
+  mainline's own newer repairs vanished without a single conflict. Before
+  completing, diff every file you touched against the pre-rebase mainline tip
+  (git log/reflog names it) and confirm none of mainline's changes were lost;
+  rebuild damaged files as "mainline's version + your genuine hunks" (recover
+  your hunks from the pre-rebase tip in the reflog).
 - When reconstructing a mangled file, treat the affected task's own test
   suite on main as the behavioral spec: if it passes against the
   reconstruction, the reconstruction preserves that task's changes.

@@ -203,6 +203,28 @@ export const casCaptureRequests = pgTable("cas_capture_requests", {
   kind: text("kind").notNull(),
   state: text("state").notNull().default("PENDING"),
   detail: text("detail"),
+  // Which wake path honored the request: "push" (high-priority FCM wake) or
+  // "poll" (the handset's next server contact). Null until the handset acks.
+  via: text("via"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * FCM registration tokens for the responder-requested capture wake. The
+ * handset registers (and rotates) its token against its own enrolled device
+ * credential, so a revoked credential's registration stops receiving pushes
+ * the moment revocation lands — the dispatcher joins this table against
+ * cas_device_credentials and skips revoked rows, and the cascade keeps a
+ * deleted credential from leaving a stale token behind. Only the handset's
+ * own credential may write its row; tokens are opaque FCM identifiers, not
+ * credentials, but are never returned by any read endpoint.
+ */
+export const casPushRegistrations = pgTable("cas_push_registrations", {
+  id: text("id").primaryKey(),
+  deviceCredentialId: text("device_credential_id").notNull().unique()
+    .references(() => casDeviceCredentials.id, { onDelete: "cascade" }),
+  token: text("token").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -9,6 +9,7 @@ import {
   casIncidentEvents,
   casIncidents,
   casOutbox,
+  casPushRegistrations,
   casSetupReadiness,
   casTransportCooldowns,
 } from "@workspace/db/schema";
@@ -110,6 +111,44 @@ router.post("/cas/devices/:id/revoke", requireCasEnrollmentCredential, async (re
     if (!record) return res.status(404).json({ error: "Device credential not found" });
     logger.info({ casDeviceId: record.id, label: record.label }, "Revoked CAS device credential");
     return res.json({ id: record.id, revokedAt: record.revokedAt?.toISOString() ?? null });
+  } catch (error) { return next(error); }
+});
+
+const pushTokenSchema = z.object({
+  // FCM registration token for the responder-requested capture wake. Opaque
+  // to the server; rotated freely — the upsert keys on the credential.
+  token: z.string().trim().min(1).max(512),
+});
+
+/**
+ * Registers (or rotates) the calling device's FCM registration token for the
+ * responder-requested capture wake. Any enrolled credential registers its own
+ * token — the handset presents its enrolled device credential after Firebase
+ * hands it a token. Revoking the credential stops pushes to its token on the
+ * very next capture request (the dispatcher skips revoked rows).
+ */
+router.put("/cas/devices/push-token", requireCasCredential, async (req, res, next) => {
+  try {
+    const parsed = pushTokenSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid push registration", issues: parsed.error.issues });
+    }
+    const device = casDeviceFrom(res);
+    const now = new Date();
+    await db.insert(casPushRegistrations)
+      .values({
+        id: `pushreg-${now.getTime()}-${randomUUID()}`,
+        deviceCredentialId: device.id,
+        token: parsed.data.token,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: casPushRegistrations.deviceCredentialId,
+        set: { token: parsed.data.token, updatedAt: now },
+      });
+    logger.info({ casDeviceId: device.id }, "Registered CAS push token");
+    return res.json({ registered: true });
   } catch (error) { return next(error); }
 });
 

@@ -5,10 +5,13 @@ import android.content.Intent
 import org.json.JSONObject
 import java.net.URLEncoder
 
-/** Polling is user-initiated/on-resume only. Android may deny a background
- * mic/camera foreground-service start; report that measured denial to CAS. */
+/** Polling is user-initiated/on-resume only, or woken by a high-priority FCM
+ * message (CapturePushService, [via] = "push"). Android may deny a background
+ * mic/camera foreground-service start; report that measured denial to CAS.
+ * The server journals [via] per request, so the handoff docs can prove which
+ * wake path honored each responder request. */
 object CaptureRequests {
-    fun checkPending(context: Context) {
+    fun checkPending(context: Context, via: String = "poll") {
         val base = TestStore.alertServerUrl(context)
         if (base.isBlank()) return
         // Pickup requires the enrolled credential; the shared device token is
@@ -28,11 +31,11 @@ object CaptureRequests {
             val incident = item.getString("incidentId")
             val kind = item.getString("kind")
             if (kind !in setOf("audio", "photo", "video")) {
-                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to "failed", "detail" to "Invalid kind: $kind"))
-                ack(context, base, id, "failed", "Invalid kind: $kind")
+                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to "failed", "detail" to "Invalid kind: $kind", "via" to via))
+                ack(context, base, id, "failed", "Invalid kind: $kind", via)
                 continue
             }
-            TestStore.record(context, "CAPTURE_REQUEST_RECEIVED", mapOf("id" to id, "kind" to kind, "incidentId" to incident))
+            TestStore.record(context, "CAPTURE_REQUEST_RECEIVED", mapOf("id" to id, "kind" to kind, "incidentId" to incident, "via" to via))
             // The server's pending request is an explicit responder command;
             // the cached policy supplies timing, not an ON_TRIGGER override.
             val timing = CapturePolicy.cached(context).timing.wire
@@ -51,22 +54,22 @@ object CaptureRequests {
             // A failed ack remains pending server-side and can be measured
             // again; never misrepresent a forbidden background start as success.
             try {
-                ack(context, base, id, outcome, failure)
-                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to outcome, "detail" to failure))
+                ack(context, base, id, outcome, failure, via)
+                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to outcome, "detail" to failure, "via" to via))
             } catch (error: Exception) {
-                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to outcome, "detail" to (failure ?: error.toString()), "ackError" to error.toString()))
+                TestStore.record(context, "CAPTURE_REQUEST_ACK", mapOf("id" to id, "outcome" to outcome, "detail" to (failure ?: error.toString()), "ackError" to error.toString(), "via" to via))
             }
         }
     }
 
-    private fun ack(context: Context, base: String, id: String, outcome: String, detail: String?) {
+    private fun ack(context: Context, base: String, id: String, outcome: String, detail: String?, via: String) {
         val encoded = URLEncoder.encode(id, "UTF-8")
         val connection = ConnectionConfig.open(context, base, "/api/cas/capture-requests/$encoded/ack")
         try {
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
-            val body = JSONObject().put("outcome", outcome)
+            val body = JSONObject().put("outcome", outcome).put("via", via)
             if (detail != null) body.put("detail", detail)
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode
