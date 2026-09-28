@@ -13,6 +13,9 @@ on:
       - "lib/db/**"
       - "scripts/run-cas-contract-tests.mjs"
       - "scripts/disposable-review-database.mjs"
+      # The burst-alert log-key drift gate reads this script; an edit to it
+      # must re-run the gate or a weakened check could merge green.
+      - "scripts/check-burst-alert-log-key.sh"
       # The console parity test reads this hook from disk; a console-side type
       # change must re-run the gate or a schema/console drift could merge green.
       - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
@@ -31,6 +34,9 @@ on:
       - "lib/db/**"
       - "scripts/run-cas-contract-tests.mjs"
       - "scripts/disposable-review-database.mjs"
+      # The burst-alert log-key drift gate reads this script; an edit to it
+      # must re-run the gate or a weakened check could merge green.
+      - "scripts/check-burst-alert-log-key.sh"
       # The console parity test reads this hook from disk; a console-side type
       # change must re-run the gate or a schema/console drift could merge green.
       - "artifacts/covert-alert-system/src/hooks/use-field-test.tsx"
@@ -86,3 +92,103 @@ jobs:
         # cluster, pushes the drizzle schema into it, runs every route/lib test
         # under node --test, and tears the cluster down on pass or fail.
         run: pnpm --filter @workspace/api-server test
+
+  burst-alert-log-key:
+    name: Runbook burst-alert match string must match the emitted log key
+    # SELF-HOSTING.md Step 10 tells the operator to grep the journal for a
+    # literal string, and defaultBurstRecorder in cas-auth.ts emits the line
+    # that grep is meant to catch. Nothing else ties the two together, so a
+    # rename on either side compiles fine and the operator finds out the day a
+    # real probing attack goes unalerted. This job runs the drift gate and
+    # then proves both one-sided edits turn it red.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Runbook burst-alert recipe must match the emitted log key
+        run: |
+          set -euo pipefail
+          bash scripts/check-burst-alert-log-key.sh
+
+      - name: A renamed log key in cas-auth.ts must turn the gate red
+        run: |
+          set -euo pipefail
+          # Negative test: rename the emitted key in code WITHOUT touching the
+          # runbook, then require the gate to fail. Only the checkout is
+          # modified; the workflow restores the file afterwards.
+          code="artifacts/api-server/src/lib/cas-auth.ts"
+          grep -q 'casAuthRejectionBurst' "$code"
+          sed -i 's/casAuthRejectionBurst/casAuthBurstRenamed/' "$code"
+          trap 'git checkout -- "$code"' EXIT
+          set +e
+          output="$(bash scripts/check-burst-alert-log-key.sh 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $rc -eq 0 ]]; then
+            echo "The drift gate accepted a renamed burst log key the runbook no longer greps for." >&2
+            exit 1
+          fi
+          grep -q 'BURST_ALERT_LOG_KEY_FAILED' <<<"$output" || {
+            echo "The drift gate failed without reporting the burst-alert mismatch." >&2
+            exit 1
+          }
+          echo "A renamed log key in cas-auth.ts turned the gate red, as required."
+
+      - name: A renamed WATCHDOG-ONLY match string must turn the gate red
+        run: |
+          set -euo pipefail
+          # Negative test: change ONLY the watchdog script's grep, leaving the
+          # manual diagnostic command further down untouched. The gate must
+          # still fail — the manual grep must not be able to satisfy the check
+          # while the alert itself matches a string the server never emits.
+          # Only the checkout is modified; the workflow restores the file.
+          runbook="artifacts/api-server/SELF-HOSTING.md"
+          grep -q "if grep 'casAuthRejectionBurst'" "$runbook"
+          sed -i "s/if grep 'casAuthRejectionBurst'/if grep 'casAuthBurstRenamed'/" "$runbook"
+          grep -q 'casAuthRejectionBurst' "$runbook"  # the manual command still uses the real key
+          trap 'git checkout -- "$runbook"' EXIT
+          set +e
+          output="$(bash scripts/check-burst-alert-log-key.sh 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $rc -eq 0 ]]; then
+            echo "The drift gate accepted a watchdog-only rename because the manual grep still matched." >&2
+            exit 1
+          fi
+          grep -q 'BURST_ALERT_LOG_KEY_FAILED' <<<"$output" || {
+            echo "The drift gate failed without reporting the burst-alert mismatch." >&2
+            exit 1
+          }
+          echo "A watchdog-only rename turned the gate red, as required."
+
+      - name: A REMOVED watchdog grep must turn the gate red
+        run: |
+          set -euo pipefail
+          # Negative test: delete ONLY the watchdog script's grep line, leaving
+          # the manual diagnostic command intact. The gate must still fail —
+          # an alert that no longer greps at all is broken even while the
+          # section still mentions the right key.
+          runbook="artifacts/api-server/SELF-HOSTING.md"
+          grep -q "if grep 'casAuthRejectionBurst'" "$runbook"
+          sed -i "\|if grep 'casAuthRejectionBurst'|d" "$runbook"
+          grep -q 'casAuthRejectionBurst' "$runbook"  # the manual command still uses the real key
+          trap 'git checkout -- "$runbook"' EXIT
+          set +e
+          output="$(bash scripts/check-burst-alert-log-key.sh 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $rc -eq 0 ]]; then
+            echo "The drift gate accepted a watchdog script that no longer greps for anything." >&2
+            exit 1
+          fi
+          grep -q 'BURST_ALERT_LOG_KEY_FAILED' <<<"$output" || {
+            echo "The drift gate failed without reporting the burst-alert mismatch." >&2
+            exit 1
+          }
+          echo "A removed watchdog grep turned the gate red, as required."

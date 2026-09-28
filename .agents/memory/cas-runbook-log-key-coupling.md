@@ -5,13 +5,17 @@ description: SELF-HOSTING.md alerting recipes grep for literal keys/messages emi
 
 The self-hosting runbook (artifacts/api-server/SELF-HOSTING.md) contains copy-pasteable
 alerting recipes that match literal strings in the server's structured logs — e.g. the
-credential-burst watchdog greps the journal for `casAuthRejectionBurst`, the key emitted
-by defaultBurstRecorder in the cas-auth module.
+credential-burst watchdog greps the journal for the key emitted by the burst recorder in
+the cas-auth module.
 
-**Why:** Nothing in CI ties the runbook's match strings to the code that emits them, so a
-rename on either side compiles fine and only fails the day a real operator relies on the
-alert. The project already treats this class of coupling as a drift-gate pattern elsewhere.
+**Why:** A rename on either side compiles and reads fine; the operator finds out the day a
+real attack goes unalerted. When gating this coupling, the check must isolate the *actual
+alerting* grep (the installed watchdog script's match string) and compare it directly
+against the emitted key. Pooling every grep in the runbook section is not enough: the
+manual diagnostic command further down still matches the emitted key while the watchdog's
+own grep drifts or is deleted, and the alert silently dies.
 
-**How to apply:** When changing any log key or message that the runbook matches on, update
-the runbook recipe in the same change; when editing runbook recipes, verify the match
-string against the emitting code (emit the line with NODE_ENV=production and grep it).
+**How to apply:** Change any gated log key/message and its runbook recipe in the same
+commit. When writing drift gates over documentation recipes, extract the load-bearing
+command (the thing that pages someone), not any matching string anywhere in the section,
+and prove it with a negative test that drifts only the load-bearing command.

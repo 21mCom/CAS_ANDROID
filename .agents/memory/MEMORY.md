@@ -34,7 +34,7 @@
 - [CAS console load-failure routing](cas-console-load-failure-routing.md) — load failures route to mismatch / credential-lock / labeled-offline-demo; a cancelled prompt must never show the demo seed.
 - [Fix a risk class at a shared boundary](fix-risk-class-at-shared-boundary.md) — enumerate every caller of the underlying primitive; page-level catches bypass provider-level handling and review rejects partial coverage.
 - [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — closed server-side: the shared device token is retired once any credential row exists, so a revoked handset cannot resume with it.
-- [Runbook alert recipes coupled to log keys](cas-runbook-log-key-coupling.md) — SELF-HOSTING.md grep recipes match literal log keys from code; renaming either side silently breaks operator alerting.
+- [Runbook alert recipes coupled to log keys](cas-runbook-log-key-coupling.md) — runbook grep recipes match literal log keys; a drift gate must isolate the *watchdog* grep, not pool all greps in the section.
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
