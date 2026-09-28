@@ -46,7 +46,7 @@ on:
         default: ""
 
 env:
-  PAT_EXPIRES_AT: "2026-12-16T07:18:47Z" # recorded expiry of the workspace GITHUB_PAT secret
+  PAT_EXPIRES_AT: "2026-12-27T02:43:08Z" # recorded expiry of the workspace GITHUB_PAT secret
   WARN_DAYS: "60"
   SIM_EXPIRES_AT: ${{ github.event.inputs.simulate_expires_at }}
 
