@@ -32,6 +32,7 @@
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.
+- [CI gate red-proof technique](ci-red-proof-technique.md) — throwaway branch from the workspace tip (remote main may lack the job while diverged), push break + revert immediately for parallel runs, keep job logs as evidence, delete branch after.
 - [CAS console read posture](cas-console-read-posture.md) — console GETs are credentialed like mutations; anonymous reads were retired for self-hosting (healthz stays open).
 - [CAS console load-failure routing](cas-console-load-failure-routing.md) — load failures route to mismatch / credential-lock / labeled-offline-demo; a cancelled prompt must never show the demo seed.
 - [Fix a risk class at a shared boundary](fix-risk-class-at-shared-boundary.md) — enumerate every caller of the underlying primitive; page-level catches bypass provider-level handling and review rejects partial coverage.
