@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Gate 0A emulator smoke test: install the debug APK, then exercise every app
 # entry point — MainActivity, TriggerActivity (PROXY_TRIGGER), BootReceiver
-# (BOOT_COMPLETED), and BootReceiver (LOCKED_BOOT_COMPLETED in the real
-# pre-unlock/direct-boot state) — verifying the process survives with no
-# fatal logcat entries.
+# (BOOT_COMPLETED), EvidenceCaptureService (every capture kind must journal
+# CAPTURED on the pinned CI image), and BootReceiver (LOCKED_BOOT_COMPLETED
+# in the real pre-unlock/direct-boot state) — verifying the process survives
+# with no fatal logcat entries.
 #
 # Invoked from .github/workflows/android-test-package-build.yml as a single
 # line because reactivecircus/android-emulator-runner executes each line of
@@ -113,7 +114,151 @@ if [ -n "$crashes" ]; then
   exit 1
 fi
 echo "BootReceiver (BOOT_COMPLETED) check passed: broadcast delivered, process alive (pid $pid), no fatal logcat entries."
-# Fourth entry point: the REAL pre-unlock (direct-boot) path.
+# Fourth entry point: EvidenceCaptureService — the bounded evidence
+# playground (still via Camera2, video via Camera2+MediaRecorder, audio
+# via MediaRecorder, durable staging + upload retry). A runtime regression
+# here — a camera-session misconfiguration that throws on every capture, a
+# MediaRecorder state mistake, a foreground-service-type mismatch —
+# compiles cleanly and would otherwise only surface during a hardware run.
+# The emulator's virtual camera/mic let CI start the service, let it
+# attempt every capture kind, and assert the device journal records
+# CAPTURED for every kind. The pinned CI image (API 35 google_apis,
+# pixel_6, x86_64, with the job's emulator options) demonstrably captures
+# all three kinds — verified locally on the same image, audio included
+# even with -no-audio — so a FAILED here is a real capture regression (the
+# service's per-kind catch turns camera/recorder errors into FAILED
+# events), not emulated-hardware variance. Crashes, hangs, and start
+# failures go red through the fast paths below. One retry of the whole
+# capture cycle with fresh app state absorbs transient emulator
+# codec/camera readiness (seen locally under TCG: MediaRecorder
+# "prepare failed" while OMX was still coming up); a systematic
+# regression fails both attempts and still goes red.
+#
+# Ordering constraints:
+#  - The service is non-exported, so the start needs the root shell
+#    acquired for the BOOT_COMPLETED phase above.
+#  - It is a while-in-use camera+microphone foreground service: on API 34+
+#    the app must be foreground-eligible when the service starts, so
+#    MainActivity is brought back to the front first.
+#  - This phase MUST stay before the PIN-protected reboot phase below:
+#    once the lockscreen PIN is set and the device reboots locked,
+#    camera/mic capture is impossible.
+capture_timeout_s="${CAS_CAPTURE_TIMEOUT_S:-420}"
+capture_poll_s="${CAS_CAPTURE_POLL_S:-10}"
+journal_path="/data/user_de/0/com.covertalert.pixeltest/shared_prefs/gate0a-local-journal.xml"
+capture_attempt=1
+capture_passed=""
+capture_bad=""
+capture_bad_detail=""
+while [ "$capture_attempt" -le 2 ]; do
+  # Wipe app state before EVERY attempt, not just the retry: on a reused
+  # device the journal still holds prior runs' EVIDENCE_CAPTURE events, and
+  # a stale all-CAPTURED journal would green this phase without the service
+  # even running. pm clear also revokes the runtime permissions granted
+  # below, so the grant must stay inside the attempt loop.
+  if [ "$capture_attempt" -eq 2 ]; then
+    echo "Capture attempt 1 did not CAPTURE every kind:$capture_bad_detail"
+    echo "Retrying once with fresh app state — transient emulator codec/camera readiness gets a second chance; a systematic regression fails both attempts."
+  fi
+  adb shell pm clear com.covertalert.pixeltest > /dev/null
+  for perm in android.permission.CAMERA android.permission.RECORD_AUDIO; do
+    if ! adb shell pm grant com.covertalert.pixeltest "$perm"; then
+      echo "::error::pm grant $perm failed — cannot exercise evidence capture."
+      exit 1
+    fi
+  done
+  if ! adb shell am start -W -n com.covertalert.pixeltest/.MainActivity > /dev/null; then
+    echo "::error::am start failed — MainActivity did not relaunch to the foreground before evidence capture."
+    adb logcat -d | tail -200
+    exit 1
+  fi
+  # Re-clear logcat after the relaunch so the fatal check below only sees
+  # output from this attempt's capture.
+  adb logcat -c
+  if ! adb shell am start-foreground-service \
+      -n com.covertalert.pixeltest/.EvidenceCaptureService \
+      --es incident_id ci-emulator-smoke \
+      --esa kinds photo,video,audio; then
+    echo "::error::am start-foreground-service failed — EvidenceCaptureService did not start."
+    adb logcat -d | tail -200
+    exit 1
+  fi
+  # Poll the device-protected journal until every requested kind has an
+  # EVIDENCE_CAPTURE outcome. Bounds are env-overridable so the no-emulator
+  # detection harness (verify-launch-smoke-detection.sh) can run the timeout
+  # path in seconds; CI uses the defaults. 7 minutes covers the worst case:
+  # six 30s audio segments + 20s video + still/video camera setup.
+  elapsed=0
+  capture_done=""
+  missing=""
+  journal=""
+  while [ "$elapsed" -lt "$capture_timeout_s" ]; do
+    # A fatal in the service kills the app process; stop waiting as soon as
+    # one is visible instead of burning the whole timeout. The FATAL block
+    # names its process on the following lines, so another component's crash
+    # cannot false-positive here. A crash is a deterministic defect, so it
+    # goes red immediately — no retry.
+    if adb logcat -d | grep -A2 'FATAL EXCEPTION' | grep -q 'Process: com.covertalert.pixeltest'; then
+      echo "::error::EvidenceCaptureService crashed — FATAL EXCEPTION for com.covertalert.pixeltest during capture."
+      adb logcat -d | grep -B2 -A30 'FATAL EXCEPTION' || true
+      adb logcat -d | tail -200
+      exit 1
+    fi
+    # SharedPreferences XML escapes JSON quotes as &quot;; unescape before
+    # matching (a no-op if the quotes are already literal).
+    journal="$(adb shell cat "$journal_path" 2>/dev/null | sed 's/&quot;/"/g' | tr -d '\n' || true)"
+    # A start failure (missing permission, startForeground throwing, bad FGS
+    # type) is terminal — the service stopped itself, so waiting for
+    # EVIDENCE_CAPTURE outcomes would just burn the whole timeout. Like a
+    # crash this is deterministic, so it goes red immediately — no retry.
+    # The journal is fresh per attempt (pm clear above), so this event can
+    # only come from this attempt.
+    start_failed="$(printf '%s' "$journal" | grep -o '{"type":"CAPTURE_START_FAILED"[^{}]*}' | head -1 || true)"
+    if [ -n "$start_failed" ]; then
+      echo "::error::EvidenceCaptureService failed before any capture: $start_failed"
+      adb logcat -d | tail -200
+      exit 1
+    fi
+    missing=""
+    for kind in photo video audio; do
+      event="$(printf '%s' "$journal" | grep -o "{\"type\":\"EVIDENCE_CAPTURE\"[^{}]*\"kind\":\"$kind\"[^{}]*}" | head -1 || true)"
+      if [ -z "$event" ]; then missing="$missing $kind"; fi
+    done
+    if [ -z "$missing" ]; then capture_done=1; break; fi
+    sleep "$capture_poll_s"
+    elapsed=$((elapsed + capture_poll_s))
+  done
+  if [ -z "$capture_done" ]; then
+    echo "::error::No EVIDENCE_CAPTURE outcome recorded for kind(s):$missing within ${capture_timeout_s}s — the service hung, never ran, or died before journaling."
+    echo "$journal"
+    adb logcat -d | tail -200
+    exit 1
+  fi
+  # Every kind must be CAPTURED. A FAILED — however clean its detail — means
+  # capture is broken on an image where it demonstrably works; collect the
+  # failing kinds and retry once before going red.
+  capture_bad=""
+  capture_bad_detail=""
+  for kind in photo video audio; do
+    event="$(printf '%s' "$journal" | grep -o "{\"type\":\"EVIDENCE_CAPTURE\"[^{}]*\"kind\":\"$kind\"[^{}]*}" | head -1 || true)"
+    if printf '%s' "$event" | grep -q '"outcome":"CAPTURED"'; then
+      echo "  $kind: CAPTURED"
+    else
+      echo "  $kind: not CAPTURED — $event"
+      capture_bad="$capture_bad $kind"
+      capture_bad_detail="$capture_bad_detail [$kind: $event]"
+    fi
+  done
+  if [ -z "$capture_bad" ]; then capture_passed=1; break; fi
+  capture_attempt=$((capture_attempt + 1))
+done
+if [ -z "$capture_passed" ]; then
+  echo "::error::EVIDENCE_CAPTURE still not CAPTURED for kind(s)$capture_bad on the pinned CI image after a fresh-state retry — capture regression:$capture_bad_detail"
+  adb logcat -d | tail -200
+  exit 1
+fi
+echo "EvidenceCaptureService check passed: photo, video, and audio all CAPTURED on the emulator; no fatal logcat entries."
+# Fifth entry point: the REAL pre-unlock (direct-boot) path.
 # BootReceiver is directBootAware and handles LOCKED_BOOT_COMPLETED,
 # delivered by the system BEFORE the user unlocks the device.
 # Injecting that action with `am broadcast` after unlock would NOT
@@ -201,4 +346,4 @@ if ! echo "$journal" | grep -q 'LOCKED_BOOT_COMPLETED'; then
   adb logcat -d | tail -200
   exit 1
 fi
-echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), BootReceiver (BOOT_COMPLETED), and BootReceiver (LOCKED_BOOT_COMPLETED, verified while user 0 locked) all exercised; pre-unlock journal entry present; no fatal logcat entries."
+echo "Smoke test passed: MainActivity, TriggerActivity (PROXY_TRIGGER), BootReceiver (BOOT_COMPLETED), EvidenceCaptureService (photo/video/audio all CAPTURED), and BootReceiver (LOCKED_BOOT_COMPLETED, verified while user 0 locked) all exercised; pre-unlock journal entry present; no fatal logcat entries."

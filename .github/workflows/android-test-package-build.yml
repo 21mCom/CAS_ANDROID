@@ -217,7 +217,7 @@ jobs:
           retention-days: 7
 
   launch-smoke-test:
-    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED + LOCKED_BOOT_COMPLETED
+    name: Boot emulator and launch MainActivity + PROXY_TRIGGER + BOOT_COMPLETED + evidence capture + LOCKED_BOOT_COMPLETED
     needs: assemble-debug
     # ubuntu-latest, not macos: GitHub's macOS runners are Apple Silicon VMs
     # without nested virtualization, so the emulator dies at launch with
@@ -225,7 +225,10 @@ jobs:
     # expose KVM, which the android-emulator-runner docs recommend for
     # hardware-accelerated CI emulators.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 20 -> 30 minutes: the evidence-capture phase adds up to ~4 minutes of
+    # real capture time (six 30s audio segments + 20s video + still/video
+    # camera setup) plus its journal polling on top of the existing phases.
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -264,7 +267,7 @@ jobs:
           name: gate0a-app-debug-apk
           path: apk
 
-      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED and LOCKED_BOOT_COMPLETED
+      - name: Boot emulator, install APK, launch MainActivity and TriggerActivity, send BOOT_COMPLETED, run evidence capture, verify locked boot
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ steps.tool-requirements.outputs.api-level }}

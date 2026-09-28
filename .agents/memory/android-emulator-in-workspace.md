@@ -11,6 +11,11 @@ A full Android emulator CAN run in this workspace. Durable constraints:
 - **Snapshots:** restoring snapshots after TCG boots corrupts system_server; run `-no-snapshot` and wipe userdata between runs.
 - **Networking into the device:** qemu's 10.0.2.2 host alias does NOT reach this container's loopback — use `adb reverse` and have the device talk to 127.0.0.1.
 - **No cellular modem:** the emulated modem never registers here (no `isms` binder service; every `SmsManager` op, including `divideMessage`, throws UnsupportedOperationException) even though telephony features are declared. Feature checks do not predict this. Do not burn cycles trying to make outbound SMS work locally: verify everything except the radio-accept leg here, and let CI/hardware own the SENT assertion. An unfinished-batch state is likewise unreachable locally (divideMessage fails before any send), so it can only be seeded or produced on hardware.
+- **Camera/mic capture DOES work locally (2026-09-27):** the virtual camera and mic capture fine even with `-no-audio` — the evidence-capture phase journaled photo/video/audio all CAPTURED. The older note that the system image + AVD no longer fit the disk quota is stale: everything on the workspace volume fits.
+- **TCG reboot exceeds 5 min:** the smoke script's PIN-protected-reboot phase (`sys.boot_completed` poll, 60×5s) times out locally; phases before it complete normally, so read partial output before concluding a local run "failed". CI (KVM) is unaffected.
+- **TCG codec readiness flakes:** `MediaRecorder: prepare failed` with `MediaRecorderService: OMX service is not available` in logcat is a transient emulator condition (intermittent, ~every other run under TCG), not a product bug. Any capture gate must retry once before going red.
+- **Reused-device journals are stale:** a smoke gate polling a device journal must wipe app state (`pm clear`) before EACH attempt, or it judges the previous run's events — a false-green hole on any non-fresh device.
+- **`pkill -f emulator` self-kills:** the wrapper shell's own command line contains the pattern, so pkill kills the calling task. Kill by exact process name or PID instead.
 
 **Why:** these were each multi-hour dead ends; the recipe is reusable for any future Android verification task.
 

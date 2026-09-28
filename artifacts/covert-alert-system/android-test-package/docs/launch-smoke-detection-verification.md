@@ -73,6 +73,95 @@ End-to-end confirmation on the hosted runner belongs to the first-real-CI-run ta
 4. Revert the throw, re-run, confirm green.
 
 
+## EvidenceCaptureService phase — 2026-09-27
+
+**Question:** the bounded evidence-capture playground (still via Camera2, video via
+Camera2+MediaRecorder, audio via MediaRecorder, durable staging + upload retry) was
+verified only by the APK compile gate. A runtime regression — a camera-session
+misconfiguration that throws on every capture, a MediaRecorder state mistake, a
+foreground-service-type mismatch — compiles cleanly and would only surface during a
+hardware run. Can the emulator CI job exercise the service and go red on a broken one?
+
+**Coverage added (fifth entry point in `emulator-smoke-test.sh`, between the
+BOOT_COMPLETED phase and the PIN/reboot phase):** the job grants CAMERA + RECORD_AUDIO
+(`pm grant`, failing loudly if refused), brings MainActivity back to the foreground
+(the service is a while-in-use camera+microphone FGS, so the app must be
+foreground-eligible when it starts on API 34+), starts the non-exported
+EvidenceCaptureService via `am start-foreground-service` from the root shell already
+acquired for the broadcast phase (root is exempt from the API 35 non-exported
+restriction), then polls the device-protected journal (read as root) until every
+requested kind — photo, video, audio — has an EVIDENCE_CAPTURE outcome, and requires
+each to be `CAPTURED`. A first cut accepted a clean `FAILED` with detail; review
+rejected that because the service's per-kind catch turns ordinary camera/recorder
+regressions into exactly those events, so a capture-everything breakage would have
+shipped green. The pinned CI image demonstrably captures all three kinds (verified
+below, audio included even with `-no-audio`), so a FAILED after retry is red, with the
+journaled detail surfaced for diagnosis. Two safeguards make this precise: the journal
+is wiped via `pm clear` before every attempt (a reused device otherwise serves stale
+outcomes from a prior run — observed live, where attempt 1 judged the previous run's
+events), and the whole capture cycle is retried once with fresh app state so a
+transient emulator codec-readiness flake (observed live: `MediaRecorder: prepare
+failed` while `MediaRecorderService` logged `OMX service is not available` under TCG)
+gets a second chance, while a systematic regression fails both attempts and still goes
+red. Three fast-red paths run during the
+poll: a package-scoped `FATAL EXCEPTION` (process death mid-capture), a journaled
+`CAPTURE_START_FAILED` (terminal — the service stopped itself), and the 7-minute
+timeout naming the missing kinds. Ordering constraint: this phase MUST stay before the
+PIN-protected reboot, because camera/mic capture is impossible while the device is
+locked. The job timeout went 20 → 30 minutes to hold the ~4 minutes of real capture
+time (six 30s audio segments + 20s video + camera setup).
+
+**It caught a real bug on its first live run.** The green verification run went red
+inside the capture phase: `CAPTURE_START_FAILED — java.lang.SecurityException: Neither
+user 10209 nor current process has android.permission.WAKE_LOCK.` The service acquires
+a partial wake lock but the manifest never declared WAKE_LOCK — invisible to the
+compile gate, fatal to every capture on any device. The permission was added; the
+fast-red `CAPTURE_START_FAILED` branch was added to the script at the same time so
+this failure shape goes red in seconds instead of burning the whole capture timeout.
+
+**Real-emulator results (API 35 google_apis x86_64, Pixel 6 profile, TCG — same image
+and emulator options as CI):**
+
+| Run | APK | Result |
+|-----|-----|--------|
+| 1 | pre-fix (no WAKE_LOCK) | **red** — journal recorded `CAPTURE_START_FAILED` (SecurityException: WAKE_LOCK); the poll timed out waiting for outcomes (the fast-red branch did not exist yet) |
+| 2 | healthy (WAKE_LOCK declared) | **green through the capture phase** — `photo: CAPTURED`, `video: CAPTURED`, `audio: CAPTURED`, `EvidenceCaptureService check passed`. (The run then failed the PIN-reboot phase's 5-minute boot poll — a local TCG-slowness limit already documented above, unrelated to capture; CI is KVM-accelerated.) |
+| 3 | deliberate breakage (`throw AssertionError("EVIDENCE-CAPTURE-SELF-CHECK …")` as the first line of `photograph()`, escaping both `catch (Exception)` blocks) | **red, fast** — exit 1 at the poll-loop's first fatal grep: `::error::EvidenceCaptureService crashed — FATAL EXCEPTION for com.covertalert.pixeltest during capture.` with the excerpt showing `java.lang.AssertionError: EVIDENCE-CAPTURE-SELF-CHECK: deliberate breakage for detection verification` at `EvidenceCaptureService.photograph` |
+| 4 | healthy (byte-identical revert of the throw, verified via `git diff`) | **green through the capture phase** — `photo: CAPTURED`, `video: CAPTURED`, `audio: CAPTURED`, `EvidenceCaptureService check passed` (the run then entered the PIN-reboot phase, which cannot finish within its 5-minute poll under TCG locally — see run 2 note) |
+
+Review then rejected the lenient verdict (any `FAILED` with detail passed), because the
+service's per-kind catch turns ordinary camera/recorder regressions into exactly those
+events. The gate was tightened to require `CAPTURED` per kind, and verification
+continued on the strict gate:
+
+| Run | APK | Result |
+|-----|-----|--------|
+| 5 | healthy, strict gate (no retry yet) | **red** — video `FAILED: java.io.IOException: prepare failed.` while logcat showed `MediaRecorderService: OMX service is not available`: a transient TCG codec-readiness flake, not a product bug (runs 2/4 captured video on the same image). Motivated the single fresh-state retry. |
+| 6 | deliberate caught-exception breakage (`throw IOException("EVIDENCE-CAPTURE-SELF-CHECK …")` as the first line of `photograph()` — the per-kind-catch shape the reviewer required as a negative control), strict gate + retry | **red naming photo on both attempts** — attempt 1: `photo: not CAPTURED — …EVIDENCE-CAPTURE-SELF-CHECK…`, video/audio CAPTURED; retry fired; attempt 2 identical; final `::error::…still not CAPTURED for kind(s) photo…` with the self-check detail. Also exposed and fixed a gate bug: the first version of this run judged STALE journal events from run 5 (attempt 1 went "photo: CAPTURED" off a 16-min-old journal) — the phase now `pm clear`s before EVERY attempt so a reused device cannot green the phase without the service running. |
+| 7 | healthy (byte-identical revert, verified via `git diff`), strict gate + retry + journal isolation | **green through the capture phase** — attempt 1 hit the video OMX flake again (`prepare failed`), the retry fired, attempt 2 captured all three kinds: `photo: CAPTURED`, `video: CAPTURED`, `audio: CAPTURED`, `EvidenceCaptureService check passed`. Live proof that the retry absorbs the transient flake without masking persistent regressions. |
+
+**Self-test:** `.github/scripts/verify-launch-smoke-detection.sh` models the new phase
+in its fake adb (`pm grant`, `pm clear` with journal-fixture swap for the retry,
+`am start-foreground-service`, journal fixtures carrying
+EVIDENCE_CAPTURE events; phase numbering is now 1=MainActivity, 2=PROXY_TRIGGER,
+3=BOOT_COMPLETED, 4=evidence capture, 5=locked-boot after reboot) and proves 19/19
+scenarios, including the new ones: `evidence-capture-crash` (FATAL for our process
+mid-capture, red at the poll-loop grep with excerpt), `evidence-capture-missing-outcome`
+(one kind short, red at the timeout naming it), `evidence-capture-failed-goes-red`
+(audio FAILED with detail persisting across the retry — red naming the kind; the
+caught-exception regression shape), `evidence-capture-retry-recovers-green`
+(video FAILED on attempt 1, all CAPTURED after the `pm clear` retry — green; proves
+the retry absorbs emulator flakes without masking persistent regressions),
+`service-start-failure`
+(red at the am error), `pm-grant-failure` (red at the grant error), and
+`capture-start-failed-fast-red` (CAPTURE_START_FAILED in the journal — red in one poll
+iteration with the detail surfaced). Fixtures: `evidence-crash-logcat.txt`,
+`journal-capture-video-flake.xml`,
+`journal-capture-missing-audio.xml`, `journal-capture-clean-failed.xml`,
+`journal-capture-start-failed.xml`; `journal-healthy.xml` and
+`journal-missing-locked-boot.xml` now carry capture events.
+
+
 ## LOCKED_BOOT_COMPLETED (direct-boot) follow-up — 2026-09-15
 
 **Question:** the manifest registers BootReceiver with `directBootAware=true` and an

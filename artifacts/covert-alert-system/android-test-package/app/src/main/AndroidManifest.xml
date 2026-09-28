@@ -29,6 +29,10 @@
     <!-- Evidence-capture playground only: bounded camera recordings in the
          owner-accepted, camera-typed foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Evidence-capture playground only: keep the CPU awake through a bounded
+         screen-off capture without turning the display back on. Without this
+         the partial wake lock throws SecurityException at capture time. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Package visibility: the cover-app picker lists launchable apps,
          which needs this declaration on Android 11+. No third-party package
          queries: no alert path may surface another app's UI, so the app

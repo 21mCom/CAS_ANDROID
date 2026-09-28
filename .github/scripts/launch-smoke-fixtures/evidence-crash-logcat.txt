@@ -1,0 +1,10 @@
+--------- beginning of main
+09-15 10:08:00.100  1560  1580 I ActivityManager: Start proc 2100:com.covertalert.pixeltest/u0a123 for service com.covertalert.pixeltest/.EvidenceCaptureService
+09-15 10:08:01.050  2100  2100 I pixeltest: Late-enabling -Xcheck:jni
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: FATAL EXCEPTION: pool-1-thread-1
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: Process: com.covertalert.pixeltest, PID: 2100
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: java.lang.IllegalStateException: EVIDENCE-CRASH-MARKER
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: at com.covertalert.pixeltest.EvidenceCaptureService.session(EvidenceCaptureService.kt:180)
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: at com.covertalert.pixeltest.EvidenceCaptureService.photograph(EvidenceCaptureService.kt:224)
+09-15 10:08:02.280  2100  2241 E AndroidRuntime: at com.covertalert.pixeltest.EvidenceCaptureService.access$photograph(EvidenceCaptureService.kt:37)
+09-15 10:08:02.480  1560  1580 I ActivityManager: Process com.covertalert.pixeltest (pid 2100) has died: svc SVC
