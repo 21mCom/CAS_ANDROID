@@ -1,3 +1,4 @@
+// hint: Structural and logic conflict. Both design and behavior differ.
 - [CAS persistence](cas-persistence.md) — keep resolved journals inspectable while reusing only non-resolved incidents.
 - [CAS outbox status heartbeat](cas-outbox-status-heartbeat.md) — status counts are DB-wide but the worker heartbeat is process-local; keep registry and worker instrumentation in lockstep.
 - [CAS provider gateway contract](cas-provider-gateway-contract.md) — delivery adapters must require explicit replay confirmation, HTTPS-only endpoints, and never follow redirects.
@@ -40,3 +41,4 @@
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
 - [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after.
+- [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.

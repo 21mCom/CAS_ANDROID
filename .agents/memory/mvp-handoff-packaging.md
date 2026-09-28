@@ -1,0 +1,14 @@
+---
+name: MVP handoff packaging constraints
+description: Rules for building operator-facing ZIP deliverables for the CAS Pixel kit without breaking the CI freshness gate.
+---
+
+Constraints when producing CAS Pixel field/handoff ZIPs:
+
+- The CI `mvp-handoff-freshness` job (windows-test-kit-entrypoints.yml) requires **exactly one** file matching `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in `deliverables/`. Any additional run pack must use a different name pattern or CI fails with "Expected exactly one committed MVP handoff ZIP".
+- The official packager `artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1` is PowerShell-only and also needs `google-services.json`-free tree, the committed `gate0a-run-guide.pdf`, and its three Python gates + the Bash parity gate. On Linux its gates can be run standalone: `.github/scripts/check-tool-requirements-{drift,hardcoded-api-floor,hardcoded-jdk-minimum}.py <staged-kit>` and `scripts/check-tool-requirements-parity.sh --kit-root <staged-kit>` (parity needs pwsh AND its fixtures under `scripts/fixtures/tool-requirements-parity`).
+- Manifest format the freshness comparison expects: `SHA256SUMS.txt` lines `<sha256>  <relative-path>` (forward slashes, LF, sorted by path) covering every payload file plus `PACKAGE-INFO.txt`; `PACKAGE-INFO.txt` carries a content fingerprint derived only from the payload sums (never the clock).
+
+**Why:** the 2026-09-16 hand-built handoff ZIP went stale within hours and a later repack shipped different content under one filename; the gates exist so ZIPs are always scripted, gated outputs.
+
+**How to apply:** for one-off run packs, stage from the leading-edge branch via `git archive <branch> -- <paths>`, run the four gates against the staged copy, generate the manifest in the exact format above, and name the ZIP outside the `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` pattern.
