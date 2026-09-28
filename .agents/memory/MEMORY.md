@@ -32,6 +32,7 @@
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.
 - [CAS console read posture](cas-console-read-posture.md) — console GETs are credentialed like mutations; anonymous reads were retired for self-hosting (healthz stays open).
 - [CAS console load-failure routing](cas-console-load-failure-routing.md) — load failures route to mismatch / credential-lock / labeled-offline-demo; a cancelled prompt must never show the demo seed.
+- [Fix a risk class at a shared boundary](fix-risk-class-at-shared-boundary.md) — enumerate every caller of the underlying primitive; page-level catches bypass provider-level handling and review rejects partial coverage.
 - [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — closed server-side: the shared device token is retired once any credential row exists, so a revoked handset cannot resume with it.
 - [Runbook alert recipes coupled to log keys](cas-runbook-log-key-coupling.md) — SELF-HOSTING.md grep recipes match literal log keys from code; renaming either side silently breaks operator alerting.
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.

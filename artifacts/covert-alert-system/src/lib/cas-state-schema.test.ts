@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
-import { applyLoadFailure, casAuthedFetch, CasCredentialError } from '@/hooks/use-field-test';
+import { applyActionFailure, applyLoadFailure, casAuthedFetch, CasCredentialError, lockOnCredentialFailure } from '@/hooks/use-field-test';
 import { StateResponseError } from '@/components/state-response-error';
 import { ConsoleLocked } from '@/components/console-locked';
 import { OfflineDemoBanner } from '@/components/offline-demo-banner';
@@ -163,6 +163,98 @@ test('load failure routing: only a genuinely unreachable server keeps the demo f
   assert.equal(surfaced, null);
   assert.equal(locked, null);
   assert.equal(demo, true);
+});
+
+test('action failure routing: a mid-session credential failure locks the console instead of only alerting', () => {
+  // An action's reload rejected with CasCredentialError (the credential was
+  // revoked mid-session, e.g. the lost-phone revoke flow) must switch the
+  // console to the locked surface — the last-loaded state is now stale and
+  // must not stay on screen as if live behind only a transient alert.
+  let surfaced: string | null = null;
+  let locked: string | null = null;
+  const reported: unknown[] = [];
+  applyActionFailure(
+    new CasCredentialError('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.'),
+    (message) => { surfaced = message; },
+    (message) => { locked = message; },
+    (error) => { reported.push(error); },
+  );
+  assert.equal(surfaced, null, 'a credential failure is not a response-shape mismatch');
+  assert.match(locked ?? '', /credential was rejected/);
+  assert.equal(reported.length, 0, 'the lock replaces the alert; it does not add one');
+});
+
+test('action failure routing: other action errors keep the existing reporting behavior', () => {
+  let surfaced: string | null = null;
+  let locked: string | null = null;
+  const reported: unknown[] = [];
+  const other = new Error('Re-queue was rejected (409).');
+  applyActionFailure(other, (message) => { surfaced = message; }, (message) => { locked = message; }, (error) => { reported.push(error); });
+  assert.equal(surfaced, null);
+  assert.equal(locked, null, 'a non-credential action error must not lock the console');
+  assert.deepEqual(reported, [other]);
+});
+
+test('action failure routing: a drifted reload raises the mismatch surface like the initial load', () => {
+  let surfaced: string | null = null;
+  let locked: string | null = null;
+  const reported: unknown[] = [];
+  applyActionFailure(new CasStateShapeError('drifted'), (message) => { surfaced = message; }, (message) => { locked = message; }, (error) => { reported.push(error); });
+  assert.equal(surfaced, 'drifted');
+  assert.equal(locked, null);
+  assert.equal(reported.length, 0);
+});
+
+// Promise-returning actions (outbox requeue, capture request, Gate 0A
+// report import) hand their rejections to the calling page for inline
+// display, so a mid-session credential loss on one of them would leave the
+// stale incident view on screen unless the provider locks the console
+// itself, no matter what the caller does with the error.
+
+test('promise-returning actions lock the console when the action fetch discovers the credential is revoked', async () => {
+  let locked: string | null = null;
+  const credentialError = new CasCredentialError('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
+  const action = (async (): Promise<void> => { throw credentialError; })();
+  await lockOnCredentialFailure(action, (message) => { locked = message; }).then(
+    () => assert.fail('the action rejection must still reach the caller'),
+    (error: unknown) => assert.equal(error, credentialError, 'the error is rethrown so the caller\u2019s local reporting still runs'),
+  );
+  assert.match(locked ?? '', /credential was rejected/);
+});
+
+test('promise-returning actions lock the console when the post-action reload discovers the revocation', async () => {
+  // The action's own request can succeed while the credential is revoked
+  // before its state reload returns: the lock must fire for that rejection
+  // too, since the caller sees only one rejected promise either way.
+  let locked: string | null = null;
+  const credentialError = new CasCredentialError('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
+  const action = (async (): Promise<void> => {
+    await Promise.resolve(); // the action request succeeds
+    throw credentialError; // the reload then hits the revoked credential
+  })();
+  await lockOnCredentialFailure(action, (message) => { locked = message; }).then(
+    () => assert.fail('the reload rejection must still reach the caller'),
+    (error: unknown) => assert.equal(error, credentialError),
+  );
+  assert.match(locked ?? '', /credential was rejected/);
+});
+
+test('promise-returning actions never lock on operational rejections, which reach the caller untouched', async () => {
+  let locked: string | null = null;
+  const rejection = new Error('Capture request was rejected (409).');
+  const action = (async (): Promise<void> => { throw rejection; })();
+  await lockOnCredentialFailure(action, (message) => { locked = message; }).then(
+    () => assert.fail('the operational rejection must reach the caller for inline display'),
+    (error: unknown) => assert.equal(error, rejection),
+  );
+  assert.equal(locked, null, 'a non-credential rejection must not lock the console');
+});
+
+test('promise-returning actions return their value and never lock on success', async () => {
+  let locked: string | null = null;
+  const result = await lockOnCredentialFailure(Promise.resolve('ok'), (message) => { locked = message; });
+  assert.equal(result, 'ok');
+  assert.equal(locked, null);
 });
 
 test('cancel prompt -> locked state, not sample incidents', async () => {

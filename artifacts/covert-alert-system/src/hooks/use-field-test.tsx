@@ -162,10 +162,11 @@ type FieldTestContextValue = FieldTestState & {
   /** Retries the state load after a stateIssue; clears it on success. */
   retryStateLoad: () => void;
   /**
-   * Set when the state load failed because this browser has no usable
-   * device credential (enrollment prompt cancelled or credential rejected):
-   * the console locks behind a signed-out surface instead of showing any
-   * incident data — least of all the demo seed.
+   * Set when a state load — or any credentialed action mid-session —
+   * discovers this browser has no usable device credential (enrollment
+   * prompt cancelled, credential rejected, or credential revoked
+   * mid-session): the console locks behind a signed-out surface instead of
+   * showing any incident data — least of all the demo seed.
    */
   authLock: string | null;
   /** Re-opens the enrollment prompt and retries the state load. */
@@ -280,11 +281,12 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
   // A cancelled or rejected credential locks the console (never demo data);
   // only a genuinely unreachable server falls back to the demo seed, and
   // that state is labeled as offline demo data by the shell.
+  const lockForCredential = (message: string) => { setOfflineDemo(false); setAuthLock(message); };
   const routeLoadFailure = (error: unknown) => {
     applyLoadFailure(
       error,
       setStateIssue,
-      (message) => { setOfflineDemo(false); setAuthLock(message); },
+      lockForCredential,
       () => { setAuthLock(null); setState(initialState); setOfflineDemo(true); },
     );
   };
@@ -340,10 +342,12 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
   };
 
   // Any action whose reload hits a drifted server raises the same mismatch
-  // surface as the initial load; credential problems keep their alert.
+  // surface as the initial load; a mid-session credential loss (e.g. the
+  // lost-phone revoke flow) locks the console instead of leaving the
+  // last-loaded — now stale — incident data on screen behind a transient
+  // alert. Other action errors keep their existing alert behavior.
   const handleActionError = (error: unknown) => {
-    if (error instanceof CasStateShapeError) setStateIssue(error.message);
-    else reportAuthError(error);
+    applyActionFailure(error, setStateIssue, lockForCredential, reportAuthError);
   };
 
   const value = useMemo<FieldTestContextValue>(() => ({
@@ -357,7 +361,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         status: observation.result === 'pass' ? 'verified' : observation.result === 'fail' ? 'blocked' : 'partial',
       } : gate),
     })),
-    importGate0AReport: async (reportText) => {
+    importGate0AReport: (reportText) => lockOnCredentialFailure((async () => {
       let report: unknown;
       try {
         report = JSON.parse(reportText);
@@ -400,7 +404,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
       }));
       if (!body.summary) throw new Error('Gate 0A report was accepted without classification.');
       return body.summary;
-    },
+    })(), lockForCredential),
     updateFieldRun: (changes) => setState((current) => ({ ...current, fieldRun: { ...current.fieldRun, ...changes } })),
     finalizeDecision: (decision) => setState((current) => ({
       ...current,
@@ -411,7 +415,11 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     triggerKernel: () => { void casAuthedFetch('/api/cas/incidents/trigger', { method: 'POST' }).then(reload).catch(handleActionError); },
     acknowledgeKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/ack`, { method: 'POST' }).then(reload).catch(handleActionError); },
     resolveKernel: () => { if (state.activeIncident) void casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/resolve`, { method: 'POST' }).then(reload).catch(handleActionError); },
-    requeueOutboxItem: async (id, reason) => {
+    // Promise-returning actions hand operational rejections to their caller
+    // for inline display, but a credential failure — from the action's own
+    // fetch or from its reload — must lock the console no matter how the
+    // caller handles the error, or the stale incident data stays on screen.
+    requeueOutboxItem: (id, reason) => lockOnCredentialFailure((async () => {
       const response = await casAuthedFetch(`/api/cas/outbox/${id}/requeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reason ? { reason } : {}) });
       if (!response.ok) {
         // Surface the server's rejection (e.g. a note that looks like a
@@ -420,8 +428,8 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         throw new Error(body.error || `Re-queue was rejected (${response.status}).`);
       }
       await reload();
-    },
-    requestCapture: async (kind) => {
+    })(), lockForCredential),
+    requestCapture: (kind) => lockOnCredentialFailure((async () => {
       if (!state.activeIncident) throw new Error('No active incident to capture evidence for.');
       const response = await casAuthedFetch(`/api/cas/incidents/${state.activeIncident.id}/capture-requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) });
       if (!response.ok) {
@@ -431,7 +439,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         throw new Error(body.error || `Capture request was rejected (${response.status}).`);
       }
       await reload();
-    },
+    })(), lockForCredential),
     resetDemo: () => { void reload().catch(handleActionError); },
     stateIssue,
     retryStateLoad: () => { void reload().catch(routeLoadFailure); },
@@ -533,6 +541,49 @@ export function applyLoadFailure(
   if (error instanceof CasStateShapeError) raiseMismatch(error.message);
   else if (error instanceof CasCredentialError) lockForCredential(error.message);
   else fallBackToDemo();
+}
+
+/**
+ * Decides what the console shows when an action's state reload fails
+ * mid-session. A drifted response raises the mismatch surface exactly like
+ * the initial load. A credential failure (the enrolled credential was
+ * revoked or is gone — e.g. the lost-phone revoke flow) locks the console
+ * behind the same signed-out surface as a failed first load: the
+ * last-loaded incident data is now unverifiable and must not stay on
+ * screen as if current behind only a transient alert. Every other action
+ * error keeps the pre-existing reporting behavior.
+ */
+export function applyActionFailure(
+  error: unknown,
+  raiseMismatch: (message: string) => void,
+  lockForCredential: (message: string) => void,
+  reportOther: (error: unknown) => void,
+): void {
+  if (error instanceof CasStateShapeError) raiseMismatch(error.message);
+  else if (error instanceof CasCredentialError) lockForCredential(error.message);
+  else reportOther(error);
+}
+
+/**
+ * Promise-returning actions (outbox requeue, capture request, Gate 0A
+ * report import) hand operational rejections to their caller for inline
+ * display — but a credential failure means the credential was revoked or
+ * lost mid-session, and the console must lock no matter how the caller
+ * handles the error, so the last-loaded incident data cannot stay on
+ * screen as if current behind an inline message. The error is rethrown so
+ * the caller's local reporting still runs (it is simply invisible behind
+ * the locked surface).
+ */
+export async function lockOnCredentialFailure<T>(
+  action: Promise<T>,
+  lockForCredential: (message: string) => void,
+): Promise<T> {
+  try {
+    return await action;
+  } catch (error) {
+    if (error instanceof CasCredentialError) lockForCredential(error.message);
+    throw error;
+  }
 }
 
 /**
