@@ -35,6 +35,11 @@
       "path": "lib/db/src/schema/cas.ts",
       "by": "72e31a5",
       "reason": "Deliberate repair of merge damage: c64d7b4 duplicated the drizzle-orm/pg-core import line in this file, breaking the workspace typecheck; 72e31a5 restores the clean 480d3f7 blob (verified: workspace typecheck green, api-server suite 22/22)."
+    },
+    {
+      "path": "lib/db/src/schema/cas.ts",
+      "by": "5de7e4d",
+      "reason": "Same deliberate repair as the 4374bcd/72e31a5 entries: the history unification rebase re-attributed the revert of c64d7b4's duplicate drizzle-orm import to this rebased SHA. HEAD blob still equals the clean 480d3f7 restore (all tables present, single import)."
     }
   ]
 }
