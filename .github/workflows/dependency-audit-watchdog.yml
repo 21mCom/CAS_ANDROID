@@ -1,0 +1,113 @@
+name: Dependency vulnerability audit watchdog
+
+# Why this exists:
+# Dependency advisories are disclosed continuously, but the repo only learned
+# about them when someone happened to open the Dependabot dashboard and ran a
+# manual sweep (9 high-severity fixes on 2026-09-28, then 2 moderate + 1 low
+# the same day). Between sweeps, new advisories sit unnoticed. This job runs
+# `pnpm audit --audit-level=moderate` against the committed lockfile every day
+# and turns red where the team already looks: the Actions list.
+#
+# Trigger design (mirrors pat-expiry-watchdog.yml / secret-scanning-watchdog.yml):
+# - push: every push runs this check, so a newly disclosed advisory surfaces
+#   at the next push even if the cron hasn't fired. A push CAN go red for an
+#   advisory unrelated to that push — that is the accepted design shared with
+#   the other watchdogs: the fix is fast (see below) and the alternative is
+#   shipping known-vulnerable dependencies silently.
+# - schedule: a daily cron catches the "no pushes happening" case. GitHub
+#   disables scheduled workflows after 60 days of repository inactivity, so a
+#   silent repo eventually silences this signal too — the same accepted
+#   limitation the other watchdogs document.
+#
+# Fixing a red run: bump the vulnerable dependency (or add/adjust a scoped
+# entry in the `overrides:` section of pnpm-workspace.yaml — see the existing
+# `ajv>fast-uri`, `minimatch>brace-expansion`, `orval>js-yaml`,
+# `postcss>nanoid`, and `express>qs` entries for the established pattern,
+# each commented with its GHSA ids), commit the regenerated pnpm-lock.yaml,
+# and push. After the fix lands, GitHub's Dependabot list clears itself; the
+# last sweep's experience was that manual alert resolution is not needed.
+#
+# Testing: dispatch manually with simulate_advisories set to a positive
+# integer to prove the red path without a real advisory.
+
+on:
+  push:
+  schedule:
+    - cron: "53 7 * * *" # daily, offset from the PAT watchdog (17 7 * * *) and secret-scanning watchdog (42 7 * * *)
+  workflow_dispatch:
+    inputs:
+      simulate_advisories:
+        description: "Pretend this many advisories were found, to test the failure path (e.g. 2). Empty = run the real audit."
+        required: false
+        default: ""
+
+env:
+  SIM_ADVISORIES: ${{ github.event.inputs.simulate_advisories }}
+
+jobs:
+  audit:
+    name: Fail when pnpm audit reports moderate-or-higher advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fail when the audit finds advisories
+        run: |
+          set -euo pipefail
+          if [ -n "$SIM_ADVISORIES" ]; then
+            if ! [[ "$SIM_ADVISORIES" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::simulate_advisories must be a positive integer, got '${SIM_ADVISORIES}'. Leave it empty to run the real audit."
+              exit 1
+            fi
+            echo "SIMULATED: pretending ${SIM_ADVISORIES} advisory(ies) at moderate-or-higher severity."
+            echo "::error::${SIM_ADVISORIES} SIMULATED advisor(ies) — the real failure path would list them above and point here. Fix a REAL red run by bumping the dependency or adding a scoped entry to the overrides: section of pnpm-workspace.yaml (see the ajv>fast-uri, minimatch>brace-expansion, orval>js-yaml, postcss>nanoid, express>qs entries there for the pattern), then commit the regenerated pnpm-lock.yaml."
+            exit 1
+          fi
+
+          set +e
+          json=$(pnpm audit --audit-level=moderate --json 2>audit-stderr.txt)
+          status=$?
+          set -e
+
+          if ! printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
+            # pnpm audit itself failed (registry unreachable, lockfile
+            # unreadable, ...) — an unknown advisory state must never look
+            # green, so this fails red like the other watchdogs do.
+            echo "::error::pnpm audit did not produce JSON (exit ${status}) — the dependency advisory state is UNKNOWN, so this run cannot pass. Likely a registry/network outage or a corrupt lockfile; stderr follows."
+            cat audit-stderr.txt
+            exit 1
+          fi
+
+          # pnpm 10's --json output lists advisories of EVERY severity and can
+          # exit nonzero on low-only findings — --audit-level=moderate does not
+          # filter the JSON. The threshold is therefore enforced here: only
+          # moderate/high/critical advisories turn this job red; a low-only
+          # result is green. pnpm's own exit code is intentionally ignored once
+          # valid JSON exists.
+          total=$(printf '%s' "$json" | jq '.advisories | length')
+          count=$(printf '%s' "$json" | jq '[.advisories | to_entries[] | select(.value.severity as $s | ["moderate","high","critical"] | index($s))] | length')
+          if [ "$count" -eq 0 ]; then
+            echo "OK: no advisories at moderate-or-higher severity (${total} advisory(ies) below the threshold are logged but do not fail this job)."
+            printf '%s' "$json" | jq -r '.advisories | to_entries[] | select(.value.severity == "low") | "below threshold: \(.value.module_name) [low] \(.value.title) — \(.value.url)"'
+            exit 0
+          fi
+
+          echo "pnpm audit reports ${count} advisor(ies) at moderate-or-higher severity (${total} total including below-threshold):"
+          printf '%s' "$json" | jq -r '.advisories | to_entries[] | select(.value.severity as $s | ["moderate","high","critical"] | index($s)) | "- \(.value.module_name) [\(.value.severity)] \(.value.title) — \(.value.url) (vulnerable: \(.value.vulnerable_versions); patched: \(.value.patched_versions))"'
+          echo "::error::${count} dependency advisor(ies) at moderate-or-higher severity (listed above). Fix by bumping the dependency or adding a scoped entry to the overrides: section of pnpm-workspace.yaml — the existing ajv>fast-uri, minimatch>brace-expansion, orval>js-yaml, postcss>nanoid, and express>qs entries show the pattern (scoped override + GHSA comment). Then commit the regenerated pnpm-lock.yaml and push; Dependabot's alert list clears itself once the fix is on main."
+          exit 1
