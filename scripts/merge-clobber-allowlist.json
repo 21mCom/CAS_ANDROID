@@ -1,10 +1,16 @@
 {
   "_doc": "Exclusions for scripts/check-merge-clobber.mjs. Use this file for deliberate reverts/break-proofs whose commit message cannot carry the [no-clobber-check] marker (e.g. already-landed history). commits: sha prefix (>=7 chars) -> reason, skips that commit in both checks. paths: glob -> reason, always ignores matching paths. reversions: suppress a specific A->B->A blob reversion; path is a glob, by is the reverting commit's sha prefix.",
   "commits": {
-    "559bf4c": "Deliberate add-then-remove scratch pair with 0536cd8 (.push-files.txt push scratch); nothing was meant to survive to HEAD."
+    "559bf4c": "Deliberate add-then-remove scratch pair with 0536cd8 (.push-files.txt push scratch); nothing was meant to survive to HEAD.",
+    "8a09f04": "Deliberately superseded by 47044d0 in the same task: code review required the watchdog to stop referencing the push-capable PAT, so 47044d0 rewrote the rotation note and auth comment lines 8a09f04 had added."
   },
   "paths": {},
   "reversions": [
+    {
+      "path": "lib/db/src/schema/cas.ts",
+      "by": "4374bcd",
+      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+    },
     {
       "path": "artifacts/api-server/src/routes/cas.ts",
       "by": "2fa9c1b",

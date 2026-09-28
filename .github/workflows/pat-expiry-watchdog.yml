@@ -24,10 +24,17 @@ name: Push-token expiry watchdog
 #
 # How to rotate when this goes red:
 #   1. In GitHub, create a fresh fine-grained PAT scoped to ONLY this repo
-#      (21mCom/CAS_ANDROID) with Contents, Actions, and Workflows: Read and
-#      write. Pick the longest expiration GitHub allows.
+#      (21mCom/CAS_ANDROID) with the SAME permissions the current token
+#      carries: Administration, Contents, Actions, Workflows, and Secrets:
+#      Read and write, plus Secret scanning alerts: Read and write (needed
+#      for the alert-check curl used by agent sessions). Pick the longest
+#      expiration GitHub allows.
 #   2. In the Replit workspace, replace the GITHUB_PAT secret with the new
-#      token (agent sessions can do this via the secrets flow).
+#      token (agent sessions can do this via the secrets flow). NOTE: the
+#      secret-scanning watchdog does NOT use this token — it has its own
+#      dedicated read-only token in the CAS_ALERT_SCAN_PAT repo secret, with
+#      its own expiry; see secret-scanning-watchdog.yml's header for its
+#      rotation.
 #   3. Verify with a test push or a workflow_dispatch using the new token.
 #   4. Read the new expiry from the github-authentication-token-expiration
 #      response header on any authenticated api.github.com call, then update

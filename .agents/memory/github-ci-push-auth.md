@@ -3,7 +3,7 @@ name: GitHub CI push auth (PAT rotation)
 description: Current GITHUB_PAT expiry, the push/dispatch commands that work, and the failure modes of every alternative credential for 21mCom/CAS_ANDROID.
 ---
 
-The workspace pushes and dispatches to GitHub repo `21mCom/CAS_ANDROID` using the `GITHUB_PAT` secret (fine-grained PAT, repo-only, Contents/Actions/Workflows read+write).
+The workspace pushes and dispatches to GitHub repo `21mCom/CAS_ANDROID` using the `GITHUB_PAT` secret (fine-grained PAT, repo-only, Administration/Contents/Actions/Workflows/Secrets read+write, Secret scanning alerts read+write).
 
 - **Current token expiry: 2026-12-27 02:43:08 UTC** (rotated 2026-09-27; previous token expired 2026-12-16 07:18:47 UTC). Check without printing the token: `curl -s -o /dev/null -D - -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/repos/21mCom/CAS_ANDROID | grep -i github-authentication-token-expiration`.
 - Push (token never prints): `GIT_ASKPASS= GIT_TERMINAL_PROMPT=0 git push "https://x-access-token:${GITHUB_PAT}@github.com/21mCom/CAS_ANDROID.git" main:main`. A Basic `http.extraHeader` also works; Bearer `http.extraHeader` does NOT.
