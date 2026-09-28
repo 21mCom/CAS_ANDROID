@@ -51,7 +51,15 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Stale-snapshot merges have silently reverted other tasks' committed work
+  several times (see `.agents/memory/concurrent-task-merge-clobber.md`).
+  Post-merge hygiene: `node scripts/check-merge-clobber.mjs` (also wired into
+  `scripts/post-merge.sh`, window 40) flags files whose blob reverted A→B→A
+  and commits whose added lines are mostly gone at HEAD, tracing removals via
+  `git log -S`. Deliberate reverts/break-proofs stay actionable-silent: put
+  `[no-clobber-check]` in the commit message or extend
+  `scripts/merge-clobber-allowlist.json`. Self-test:
+  `pnpm --filter @workspace/scripts run test:merge-clobber`.
 
 ## Pointers
 

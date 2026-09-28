@@ -1,0 +1,12 @@
+{
+  "_doc": "Exclusions for scripts/check-merge-clobber.mjs. Use this file for deliberate reverts/break-proofs whose commit message cannot carry the [no-clobber-check] marker (e.g. already-landed history). commits: sha prefix (>=7 chars) -> reason, skips that commit in both checks. paths: glob -> reason, always ignores matching paths. reversions: suppress a specific A->B->A blob reversion; path is a glob, by is the reverting commit's sha prefix.",
+  "commits": {},
+  "paths": {},
+  "reversions": [
+    {
+      "path": "artifacts/api-server/src/routes/cas.ts",
+      "by": "2fa9c1b",
+      "reason": "Deliberate canonical-restore of the clobbered route handlers, verified green (114/114 contract suite) on the final rebased tree; HEAD cas.ts has since absorbed later verified repairs."
+    }
+  ]
+}
