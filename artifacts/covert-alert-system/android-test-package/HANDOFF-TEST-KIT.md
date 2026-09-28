@@ -295,6 +295,9 @@ Server URL: <...>   App version: <0.7.0-push?>
 T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
 T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>
+T2b outdoors:        PASS/FAIL — <accuracy radius ±Nm; fix age; distance link-vs-true position; incident id>
+T2b indoors:         PASS/FAIL — <which behavior: coarser fix (radius/age) / +last-known (age) / no-fix sentence; alert left within ~8s?; incident id>
+T2b location-off (opt.): PASS/FAIL/SKIP — <alert left immediately? SMS + console both said no fix captured?>
 T3 SMS dead-letter:  PASS/FAIL — <journal sequence seen>
 T4 WhatsApp sink:      PASS/FAIL — <messaging_product/idempotency key seen>
 T5 WhatsApp off-phone: PASS/FAIL — <409 seen? pending list SMS-only?>
