@@ -257,6 +257,22 @@ exit 2
 EOF
 chmod +x "$BIN_DIR/adb"
 
+# Fake sleep. The extracted smoke script sleeps 8s per entry-point check (and
+# 5s around the reboot); across ~19 scenarios that real-time waiting blows
+# past the workflow's 5-minute timeout. The capture poll's timeout logic is
+# arithmetic (elapsed += CAS_CAPTURE_POLL_S per iteration, bounded by
+# CAS_CAPTURE_TIMEOUT_S), NOT wall-clock — run_scenario sets those to 6s/1s —
+# so compressing actual sleep preserves the simulated elapsed-time checks
+# while keeping the whole self-test in seconds. A tiny real delay keeps
+# output ordering realistic.
+cat > "$BIN_DIR/sleep" <<'EOF'
+#!/usr/bin/env bash
+# Compressed stand-in: cap every sleep at 0.05s of real time (see above).
+command -v /usr/bin/sleep > /dev/null 2>&1 && /usr/bin/sleep 0.05
+exit 0
+EOF
+chmod +x "$BIN_DIR/sleep"
+
 # ---------------------------------------------------------------------------
 # Scenario runner.
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ on:
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - ".github/scripts/verify-receipt-durability-kill.sh"
+      - ".github/scripts/verify-pushless-capture-flow.sh"
       - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
@@ -29,6 +30,7 @@ on:
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
       - ".github/scripts/verify-receipt-durability-kill.sh"
+      - ".github/scripts/verify-pushless-capture-flow.sh"
       - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
@@ -559,3 +561,151 @@ jobs:
           # the committed harness owns its own strict mode, starts the
           # receipt-gate proxy on the host, and wires adb reverse itself.
           script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-receipt-durability-kill.sh
+
+  pushless-capture-flow-test:
+    name: Prove the default (push-less) field kit launches and honors capture requests via polling
+    needs: assemble-debug
+    # Same runner story as the sibling emulator jobs: macOS runners are Apple
+    # Silicon VMs without nested virtualization (emulator dies with
+    # "HVF error: HV_UNSUPPORTED"), so this boots on ubuntu-latest with KVM.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      # Throwaway credentials for the ephemeral CI database, same pattern as
+      # the sms-receipt-flow job — not real secrets, the database dies with
+      # the runner. The harness exchanges CAS_FLOW_ALERT_TOKEN for a
+      # per-device enrolled credential before driving any mutation.
+      CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+      CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+      CAS_FLOW_API_PORT: "5055"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The property under test is the DEFAULT field build: google-services.json
+      # is gitignored (deployment-specific), so a checked-out tree never has it
+      # and the google-services plugin stays unapplied. Assert it loudly here
+      # so a force-added json cannot turn this job into a push-enabled run that
+      # silently stops covering the push-less path.
+      - name: Assert this build has no Firebase configuration
+        run: |
+          set -euo pipefail
+          json="artifacts/covert-alert-system/android-test-package/app/google-services.json"
+          if [ -f "$json" ]; then
+            echo "::error::$json is present in the checkout — this job must exercise the push-less default build."
+            exit 1
+          fi
+          echo "No google-services.json in the checkout: the APK under test is the push-less default build."
+
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
+
+      # No android-actions/setup-android step, same reasoning as the sibling
+      # jobs (removed 'tools' package in the SDK repository). The preinstalled
+      # SDK plus android-emulator-runner's own SDK management are sufficient.
+
+      - name: Set up pnpm and Node
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: gate0a-app-debug-apk
+          path: apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Start a disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          # Same throwaway-cluster pattern as the sms-receipt-flow job:
+          # explicit socket dir + bootstrap role, non-default port to avoid
+          # the preinstalled-but-stopped postgresql-16 cluster on 5432.
+          if ! ls /usr/lib/postgresql/*/bin/initdb > /dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql
+          fi
+          pgbin="$(dirname "$(ls /usr/lib/postgresql/*/bin/initdb | sort -V | tail -1)")"
+          pgdata="$RUNNER_TEMP/cas-pushless-pg"
+          "$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null
+          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 55432" -w start > /dev/null
+          "$pgbin/createdb" -h 127.0.0.1 -p 55432 -U runner cas_pushless
+          echo "DATABASE_URL=postgresql://runner@127.0.0.1:55432/cas_pushless" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies and push the schema
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --filter @workspace/api-server...
+          pnpm --filter @workspace/db run push-force
+
+      # No CAS_FCM_SERVICE_ACCOUNT_JSON here on purpose: the server must also
+      # run push-less so it journals CAPTURE_PUSH_UNAVAILABLE and the polling
+      # path is the only wake path the harness can observe.
+      - name: Start the dev API in device-delivery mode
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/api-server run build
+          PORT=${{ env.CAS_FLOW_API_PORT }} NODE_ENV=development \
+            CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \
+            CAS_ALERT_TOKEN="$CAS_FLOW_ALERT_TOKEN" \
+            DATABASE_URL="$DATABASE_URL" \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-pushless-api.log 2>&1 &
+          up=""
+          for i in $(seq 1 45); do
+            if curl -s "http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}/api/cas/state" > /dev/null 2>&1; then up=1; break; fi
+            sleep 2
+          done
+          if [ -z "$up" ]; then
+            echo "::error::dev API never came up"
+            tail -50 /tmp/cas-pushless-api.log || true
+            exit 1
+          fi
+          echo "dev API is up on port ${{ env.CAS_FLOW_API_PORT }} (CAS_SMS_DELIVERY_MODE=device)"
+
+      - name: Boot emulator and prove push-less launch + polling capture pickup
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          CAS_FLOW_API_HOST: http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}
+        with:
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
+          target: google_apis
+          # google_apis images are rootable, which the harness needs to read
+          # the device-protected journal (adb root) — same as the siblings.
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # Same single-line, dash-safe pattern as the sibling emulator jobs:
+          # android-emulator-runner executes `script:` via /usr/bin/sh (dash
+          # on ubuntu-latest), so the committed harness owns its own strict
+          # mode and wires adb reverse itself.
+          script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-pushless-capture-flow.sh
