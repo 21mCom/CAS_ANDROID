@@ -7,6 +7,8 @@ A full Android emulator CAN run in this workspace. Durable constraints:
 
 - **Storage:** the overlay home + /tmp share a small quota; the workspace volume is large — put SDK/AVD/Gradle state and logs there. Under quota pressure JVMs die with SIGBUS in hsperfdata; set `_JAVA_OPTIONS=-XX:-UsePerfData`.
 - **No KVM:** boot with `-no-accel` (x86_64 works under TCG); cold boot takes minutes and post-boot package scanning lags, so retry installs/launches rather than failing fast.
+- **Boot-complete ≠ install-ready:** `sys.boot_completed=1` flips before the system providers are installed; `adb install` then dies with `IllegalStateException: Cannot access system provider: 'settings'` or StorageManager/PackageManagerInternal NPEs, and freshly launched activities can be lost to system_server restarts. Gate harnesses on `settings get global device_provisioned` answering AND `init.svc.bootanim=stopped`, retry `adb install` (3×/10s), and expect the first post-boot launch to need a retry.
+- **Process lifetime:** daemons started with plain `nohup … &` from a ShellExec call do not survive the call — run the emulator and any drill driver as `run_in_background` tasks, and drive the whole drill from ONE long-lived background task so its adb server isn't reaped mid-run.
 - **GUI libs:** the emulator binary needs libX11 from the nix store via `LD_LIBRARY_PATH`; run headless with `-no-window`.
 - **Snapshots:** restoring snapshots after TCG boots corrupts system_server; run `-no-snapshot` and wipe userdata between runs.
 - **Networking into the device:** qemu's 10.0.2.2 host alias does NOT reach this container's loopback — use `adb reverse` and have the device talk to 127.0.0.1.

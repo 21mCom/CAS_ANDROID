@@ -45,11 +45,17 @@
 #   CAS_FLOW_APK           path to the built app-debug.apk
 #   CAS_FLOW_API_HOST      API base URL from the host, e.g. http://127.0.0.1:5055
 #                          (must run with CAS_SMS_DELIVERY_MODE=device)
-#   CAS_FLOW_DEVICE_TOKEN  shared handset credential (matches CAS_DEVICE_TOKEN)
 #   CAS_FLOW_ALERT_TOKEN   enrollment credential (matches CAS_ALERT_TOKEN);
-#                          exchanged once below for a per-device token that
-#                          authorizes the host's incident/outbox mutations (the
-#                          handset performs the same exchange itself)
+#                          exchanged once below for a per-device enrolled token.
+#                          That enrolled token authorizes the host's
+#                          incident/outbox mutations AND is provisioned into
+#                          the seeded app state (scenarios B/C) — the retired
+#                          shared device token (CAS_DEVICE_TOKEN) is rejected
+#                          by the server once any device is enrolled, so
+#                          seeding it would prove a credential path that no
+#                          longer exists in the field. The handset app performs
+#                          the same enrollment exchange itself (phase 0 /
+#                          scenario A drive the real path through alertToken).
 # Optional env:
 #   CAS_FLOW_TIMEOUT_S     per-phase wait budget (default: 240; the result
 #                          watchdog alone needs 45s plus TCG-emulator slack)
@@ -62,7 +68,7 @@ PROXY_SCRIPT="$(dirname "$0")/cas-receipt-gate-proxy.py"
 BLOCK_FLAG="$(mktemp -u /tmp/cas-receipt-block.XXXXXX)"
 HANG_FLAG="$(mktemp -u /tmp/cas-receipt-hang.XXXXXX)"
 
-for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_DEVICE_TOKEN CAS_FLOW_ALERT_TOKEN; do
+for var in CAS_FLOW_APK CAS_FLOW_API_HOST CAS_FLOW_ALERT_TOKEN; do
   if [ -z "${!var:-}" ]; then
     echo "::error::Required environment variable $var is not set."
     exit 1
@@ -192,7 +198,7 @@ wait_event_beyond() { # baseline BRE-pattern timeout-s [poll-s]
 }
 
 sms_item_state() { # incident-id -> state
-  curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r --arg id "$1" \
+  curl -s -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/state" | jq -r --arg id "$1" \
     '.activeIncident.outbox // [] | map(select(.id == ($id + "-sms"))) | .[0].state // "MISSING"'
 }
 
@@ -209,7 +215,7 @@ sms_item_state() { # incident-id -> state
 #     start_flow would already be the new incident and the wait would time
 #     out.
 current_incident() {
-  curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r '.activeIncident.id // empty'
+  curl -s -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/state" | jq -r '.activeIncident.id // empty'
 }
 
 wait_new_incident() { # baseline-incident-id
@@ -224,7 +230,7 @@ wait_new_incident() { # baseline-incident-id
 
 resolve_active() {
   local id
-  id="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" | jq -r '.activeIncident.id // empty')"
+  id="$(curl -s -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/state" | jq -r '.activeIncident.id // empty')"
   if [ -n "$id" ]; then
     curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/ack" > /dev/null || true
     curl -s -X POST -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" "$CAS_FLOW_API_HOST/api/cas/incidents/$id/resolve" > /dev/null || true
@@ -337,7 +343,19 @@ PROXY_PID=$!
 sleep 1
 kill -0 "$PROXY_PID" 2>/dev/null || fail "receipt-gate proxy failed to start on :$PROXY_PORT"
 for i in $(seq 1 36); do adb shell pm path android > /dev/null 2>&1 && break; sleep 5; done
-adb install -r -g "$CAS_FLOW_APK" || fail "adb install failed"
+# The install can be lost when the freshly booted system_server restarts
+# mid-install on TCG emulators (DeadSystemException from PackageManager);
+# retry like verify-sms-flow.sh does, but still fail loudly when it never
+# sticks.
+install_ok=0
+install_out=""
+for attempt in 1 2 3; do
+  install_out="$(adb install -r -g "$CAS_FLOW_APK" 2>&1)" && { install_ok=1; break; }
+  echo "adb install attempt $attempt failed: $install_out — retrying in 10s"
+  sleep 10
+done
+[ "$install_ok" = 1 ] || fail "adb install failed after 3 attempts: $install_out"
+echo "$install_out"
 # SmsFlowActivity is non-exported; only root may start it on API 35 (google_apis
 # images are rootable). adb root restarts adbd and drops reverse tunnels, so it
 # runs before any adb reverse below.
@@ -353,10 +371,13 @@ echo "== Phase 0: real send on this AVD must DIVIDE_FAILED-finalize immediately 
 resolve_active
 reverse_up || fail "adb reverse failed"
 prev_incident="$(current_incident)"
+# No deviceToken extra: the shared token is retired server-side once any
+# device is enrolled. The app enrolls itself from the alertToken extra (the
+# enrollment credential) and caches its own per-device credential — the same
+# path a field handset takes.
 start_flow \
   --es mode alert \
   --es serverUrl "$CAS_FLOW_API_DEVICE" \
-  --es deviceToken "$CAS_FLOW_DEVICE_TOKEN" \
   --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
   --es responders "+15550100" || fail "am start of SmsFlowActivity failed"
 probe_incident="$(wait_new_incident "$prev_incident")" || fail "trigger never created an incident."
@@ -393,7 +414,6 @@ prev_incident="$(current_incident)"
 start_flow \
   --es mode alert \
   --es serverUrl "$CAS_FLOW_API_DEVICE" \
-  --es deviceToken "$CAS_FLOW_DEVICE_TOKEN" \
   --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
   --es responders "+15550100" || fail "am start of SmsFlowActivity failed"
 incident_a="$(wait_new_incident "$prev_incident")" || fail "trigger never ran."

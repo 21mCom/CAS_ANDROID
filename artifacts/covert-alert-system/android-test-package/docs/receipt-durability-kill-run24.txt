@@ -1,0 +1,33 @@
+== waiting for emulator boot ==
+boot_completed=1 (after up to 20 min of polling)
+== waiting for system providers to settle ==
+providers_ready=1 (device_provisioned=1 bootanim=stopped)
+== Build the production-encoder seed generator ==
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+== Install, proxy, and prepare ==
+receipt-gate proxy :6099 -> :5099, flag /tmp/cas-receipt-block.OCEUJZ
+Performing Streamed Install
+Success
+== Phase 0: real send on this AVD must DIVIDE_FAILED-finalize immediately ==
+resolved prior active incident sim-1790561805304-c5c9208c-779e-43df-9085-0aa0cd8be7df
+phase 0 OK: production code cannot leave an unfinished batch on this AVD (DIVIDE_FAILED finalizes in-line; sim-1790562001898-cad89bb0-0c58-4894-a7ea-4a45709eb592 DEAD_LETTER).
+== Scenario A: force-stop with the receipt POST in flight ==
+resolved prior active incident sim-1790562001898-cad89bb0-0c58-4894-a7ea-4a45709eb592
+force-stopped com.covertalert.pixeltest with its receipt POST still hanging in the proxy
+kill landed with sim-1790562032911-5e66c9a0-4044-4417-96ae-228c030e6809's receipt POST on the wire; console QUEUED; sim-1790562032911-5e66c9a0-4044-4417-96ae-228c030e6809's pending receipt durable
+offline resume retried and kept the receipt; console still QUEUED
+SCENARIO A PASSED: sim-1790562032911-5e66c9a0-4044-4417-96ae-228c030e6809 — force-stop with the receipt POST in flight, honest offline retry while blocked, receipt delivered after data returned, console QUEUED -> DEAD_LETTER, store drained. NO synthetic state.
+== Scenario B: unfinished batch at kill -> recovery + watchdog ==
+resolved prior active incident sim-1790562032911-5e66c9a0-4044-4417-96ae-228c030e6809
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+seeded the unfinished-batch record via the production encoder (only state this AVD cannot produce — see phase 0)
+SCENARIO B PASSED: sim-1790562142998-70a94504-1c24-4448-b520-40d22a12d40f — SMS_BATCH_RECOVERY + watchdog finalize, receipt REPORTED, console QUEUED -> DEAD_LETTER, store drained.
+== Scenario C (supplementary): seeded success receipt -> retry lands SENT ==
+resolved prior active incident sim-1790562142998-70a94504-1c24-4448-b520-40d22a12d40f
+Picked up _JAVA_OPTIONS: -XX:-UsePerfData
+SCENARIO C PASSED: sim-1790562238607-4bc85db1-cc4a-4534-8d17-346290c8217c — retried success receipt moved the console QUEUED -> SENT, store drained.
+Receipt-durability kill proof passed: scenario A via the real send path with no synthetic state; scenarios B/C with the seeded records this modem-less AVD cannot produce (hardware owns the full-fidelity run).
+HARNESS_EXIT=0 (run24, 2026-09-28)
