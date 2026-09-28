@@ -279,6 +279,12 @@ launch_main() {
 # Writes a durable record into the app's real SharedPreferences (run-as: app
 # uid, correct SELinux context) while the app is force-stopped. Used only
 # where phase 0 proved this AVD cannot produce the state itself.
+# The seeded prefs mirror a provisioned handset: the enrolled per-device
+# credential plus the sticky provisioned flag, and NEITHER the enrollment
+# credential (a real handset discards it after provisioning) nor the retired
+# shared device token (the server rejects it once any credential row exists —
+# which the enrollment above already created — so seeding it would strand the
+# resumed app's receipt POSTs on a 401).
 seed_durable() { # key json
   local tmp
   tmp="$(mktemp)"
@@ -286,8 +292,8 @@ seed_durable() { # key json
     echo "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>"
     echo '<map>'
     printf '    <string name="alert_server_url">%s</string>\n' "$CAS_FLOW_API_DEVICE"
-    printf '    <string name="device_access_token">%s</string>\n' "$CAS_FLOW_DEVICE_TOKEN"
-    printf '    <string name="alert_token">%s</string>\n' "$CAS_FLOW_ALERT_TOKEN"
+    printf '    <string name="enrolled_device_token">%s</string>\n' "$CAS_FLOW_ENROLLED_TOKEN"
+    printf '    <boolean name="device_credential_provisioned" value="true" />\n'
     printf '    <string name="sms_responders">+15550100</string>\n'
     printf '    <string name="%s">%s</string>\n' "$1" "$(sed -e 's/&/\&amp;/g' -e 's/"/\&quot;/g' <<< "$2")"
     echo '</map>'

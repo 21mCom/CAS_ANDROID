@@ -9,6 +9,8 @@ on:
       - ".github/scripts/check-revocation-boundary.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
+      - ".github/scripts/verify-receipt-durability-kill.sh"
+      - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
@@ -26,6 +28,8 @@ on:
       - ".github/scripts/check-revocation-boundary.sh"
       - ".github/scripts/emulator-smoke-test.sh"
       - ".github/scripts/verify-sms-flow.sh"
+      - ".github/scripts/verify-receipt-durability-kill.sh"
+      - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
@@ -418,3 +422,137 @@ jobs:
           # script runs under bash and owns its own strict mode plus the
           # APK-missing preflight.
           script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-sms-flow.sh
+
+  receipt-durability-kill-test:
+    name: Kill the handset mid-receipt and prove the receipt still lands
+    needs: assemble-debug
+    # Same runner story as the sms-receipt-flow job above: macOS runners are
+    # Apple Silicon VMs without nested virtualization (emulator dies with
+    # "HVF error: HV_UNSUPPORTED"), so this boots on ubuntu-latest with KVM.
+    runs-on: ubuntu-latest
+    # More phases than the sms-flow job (environment probe + kill/resume
+    # scenario A + seeded scenarios B/C, each with its own wait budget), so
+    # this gets a wider timeout than the 35 minutes sms-receipt-flow uses.
+    timeout-minutes: 45
+    env:
+      # Throwaway credentials for the ephemeral CI database, same pattern as
+      # the sms-receipt-flow job — not real secrets, the database dies with
+      # the runner. The harness exchanges CAS_FLOW_ALERT_TOKEN for a
+      # per-device enrolled credential before driving any mutation.
+      CAS_FLOW_DEVICE_TOKEN: emulator-flow-token
+      CAS_FLOW_ALERT_TOKEN: emulator-flow-alert-token
+      CAS_FLOW_API_PORT: "5055"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "jdk=$(jq -er '.jdk.minimumMajor' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.tool-requirements.outputs.jdk }}
+
+      # No android-actions/setup-android step, same reasoning as the sibling
+      # jobs (removed 'tools' package in the SDK repository). The kill harness
+      # additionally needs java on PATH to compile the production-encoder seed
+      # fixture generator — the setup-java step above covers that.
+
+      - name: Set up pnpm and Node
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: gate0a-app-debug-apk
+          path: apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Start a disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          # Same throwaway-cluster pattern as the sms-receipt-flow job:
+          # explicit socket dir + bootstrap role, non-default port to avoid
+          # the preinstalled-but-stopped postgresql-16 cluster on 5432.
+          if ! ls /usr/lib/postgresql/*/bin/initdb > /dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql
+          fi
+          pgbin="$(dirname "$(ls /usr/lib/postgresql/*/bin/initdb | sort -V | tail -1)")"
+          pgdata="$RUNNER_TEMP/cas-kill-pg"
+          "$pgbin/initdb" --no-locale --encoding=UTF8 --auth=trust --username runner -D "$pgdata" > /dev/null
+          "$pgbin/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -k $pgdata -p 55432" -w start > /dev/null
+          "$pgbin/createdb" -h 127.0.0.1 -p 55432 -U runner cas_kill
+          echo "DATABASE_URL=postgresql://runner@127.0.0.1:55432/cas_kill" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies and push the schema
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --filter @workspace/api-server...
+          pnpm --filter @workspace/db run push-force
+
+      - name: Start the dev API in device-delivery mode
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/api-server run build
+          PORT=${{ env.CAS_FLOW_API_PORT }} NODE_ENV=development \
+            CAS_SMS_DELIVERY_MODE=device CAS_DEVICE_TOKEN="$CAS_FLOW_DEVICE_TOKEN" \
+            CAS_ALERT_TOKEN="$CAS_FLOW_ALERT_TOKEN" \
+            DATABASE_URL="$DATABASE_URL" \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/cas-kill-api.log 2>&1 &
+          up=""
+          for i in $(seq 1 45); do
+            if curl -s "http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}/api/cas/state" > /dev/null 2>&1; then up=1; break; fi
+            sleep 2
+          done
+          if [ -z "$up" ]; then
+            echo "::error::dev API never came up"
+            tail -50 /tmp/cas-kill-api.log || true
+            exit 1
+          fi
+          echo "dev API is up on port ${{ env.CAS_FLOW_API_PORT }} (CAS_SMS_DELIVERY_MODE=device)"
+
+      - name: Boot emulator and prove a kill mid-receipt still lands the receipt
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          CAS_FLOW_API_HOST: http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}
+        with:
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
+          target: google_apis
+          # google_apis images are rootable, which the harness needs: it
+          # force-stops the app and seeds durable records via run-as, and it
+          # starts the non-exported SmsFlowActivity (adb root, API 35).
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # Same single-line, dash-safe pattern as the sibling emulator jobs:
+          # the committed harness owns its own strict mode, starts the
+          # receipt-gate proxy on the host, and wires adb reverse itself.
+          script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-receipt-durability-kill.sh
