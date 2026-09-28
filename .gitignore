@@ -63,6 +63,10 @@ scripts/.cache/
 
 # Local Android toolchain + emulator state (task verification rigs)
 /android/
+/.android-sdk/
+/.android-avd/
+/.gradle-dist/
+/.gradle-home/
 
 # Field-build-only Firebase config for the capture-request push wake
 # (deployment-specific; see app/build.gradle.kts) — never committed.
