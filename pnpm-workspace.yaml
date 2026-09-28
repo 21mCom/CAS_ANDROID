@@ -157,7 +157,9 @@ overrides:
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-"
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
-  esbuild: "0.27.3"
+  # GHSA-g7r4-m6w7-qqqr (low, dev-server-only file read) — pinned for drizzle-kit
+  # via the tsx shim above; >=0.28.1 clears the advisory.
+  esbuild: "^0.28.1"
   # Security fixes for Dependabot high-severity alerts (2026-09-28). All are
   # transitive-only deps, so they are bumped here via scoped overrides:
   # - ajv>fast-uri: GHSA-7p8r-x3mc-p8w7, GHSA-5jgf-p345-68v8, GHSA-f65p-4m7j-42xc, GHSA-fph4-wmhf-6fwf, GHSA-jqff-g426-hqxp (>=3.1.6)
@@ -168,3 +170,7 @@ overrides:
   "minimatch>brace-expansion": "^5.0.9"
   "orval>js-yaml": "^4.3.2"
   "postcss>nanoid": "^3.3.18"
+  # Moderate alerts (2026-09-28):
+  # - express>qs: GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g (>=6.16.0). express
+  #   5.x declares qs with a ^ range, so the scoped override resolves cleanly.
+  "express>qs": "^6.16.0"
