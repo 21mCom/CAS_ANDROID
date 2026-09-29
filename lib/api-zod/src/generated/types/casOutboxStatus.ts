@@ -10,7 +10,7 @@ import type { CasOutboxStatusLastDeliveryError } from './casOutboxStatusLastDeli
 import type { CasOutboxStatusWorker } from './casOutboxStatusWorker';
 
 export interface CasOutboxStatus {
-  /** Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER). */
+  /** Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN). */
   counts: CasOutboxStatusCounts;
   oldestPendingAt: Date | null;
   lastDeliveryError: CasOutboxStatusLastDeliveryError;

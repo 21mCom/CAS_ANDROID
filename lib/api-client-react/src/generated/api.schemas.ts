@@ -31,7 +31,7 @@ export interface CasState {
 }
 
 /**
- * Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+ * Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN).
  */
 export type CasOutboxStatusCounts = {[key: string]: number};
 
@@ -40,7 +40,7 @@ export type CasOutboxStatusLastDeliveryError = { [key: string]: unknown } | null
 export type CasOutboxStatusWorker = { [key: string]: unknown } | null;
 
 export interface CasOutboxStatus {
-  /** Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER). */
+  /** Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN). */
   counts: CasOutboxStatusCounts;
   oldestPendingAt: string | null;
   lastDeliveryError: CasOutboxStatusLastDeliveryError;

@@ -13,7 +13,7 @@ import { outboxPollFailure, requestOutboxStatus } from '@/hooks/use-outbox-statu
 
 function validStatus() {
   return {
-    counts: { QUEUED: 1, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 0 },
+    counts: { QUEUED: 1, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 0, WITHDRAWN: 0 },
     oldestPendingAt: '2026-09-27T14:08:12.000Z',
     lastDeliveryError: { transport: 'SMS', state: 'FAILED', attempts: 3, message: 'provider timeout' },
     smsDeliveryMode: 'gateway',

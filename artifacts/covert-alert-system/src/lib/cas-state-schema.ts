@@ -74,7 +74,7 @@ const kernelEventSchema = z.object({
 const outboxItemSchema = z.object({
   id: z.string(),
   transport: z.enum(['SMS', 'XMPP', 'WHATSAPP', 'EMAIL']),
-  state: z.enum(['QUEUED', 'PROCESSING', 'FAILED', 'SENT', 'DEAD_LETTER']),
+  state: z.enum(['QUEUED', 'PROCESSING', 'FAILED', 'SENT', 'DEAD_LETTER', 'WITHDRAWN']),
   priority: z.enum(['P1', 'P2']),
   attempts: z.number().int(),
   lastError: z.string().nullable(),

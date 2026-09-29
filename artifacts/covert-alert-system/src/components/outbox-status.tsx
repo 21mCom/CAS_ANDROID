@@ -89,6 +89,7 @@ export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
     { key: 'FAILED', label: 'Retrying', tone: 'text-[#a06712]' },
     { key: 'SENT', label: 'Sent', tone: 'text-[#236047]' },
     { key: 'DEAD_LETTER', label: 'Dead letter', tone: counts && counts.DEAD_LETTER > 0 ? 'font-bold text-[#914136]' : 'text-[#687271]' },
+    { key: 'WITHDRAWN', label: 'Withdrawn', tone: 'text-[#687271]' },
   ];
 
   return (

@@ -29,3 +29,8 @@ committed silently when nothing re-validates the post-rebase tree.
 - When reconstructing a mangled file, treat the affected task's own test
   suite on main as the behavioral spec: if it passes against the
   reconstruction, the reconstruction preserves that task's changes.
+- Recovery recipe for a mangled completion commit: reset --hard to the fresh
+  mainline tip, `git checkout <pre-rebase-tip> -- <files>` for files the
+  concurrent work never touched, and re-merge your hunks onto overlap files
+  with `git diff <tip>^ <tip> -- <file> | git apply --3way`. Audit the result
+  with an untruncated git status for swept-up stray files before recommitting.

@@ -2648,6 +2648,7 @@ test("outbox status reports an empty pipeline with no worker heartbeat", async (
     FAILED: 0,
     SENT: 0,
     DEAD_LETTER: 0,
+    WITHDRAWN: 0,
   });
   assert.equal(body.oldestPendingAt, null);
   assert.equal(body.lastDeliveryError, null);
@@ -2804,6 +2805,180 @@ test("device-pending lists only handset-awaiting SMS items and refuses gateway m
     const after = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as { items: unknown[] };
     assert.equal(after.items.length, 0);
   });
+});
+
+test("resolving an incident withdraws unsent outbox items, and neither the worker nor pickup ever hands them out again", async () => {
+  // Gateway mode (suite default): the trigger queues SMS and XMPP items.
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // Deliver one item for real first: SENT history must survive the resolve.
+  const firstRun = await processCasOutbox({ workerId: "withdraw-setup-worker", maxItems: 1, send: async () => {} });
+  assert.equal(firstRun.sent, 1);
+
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(ack.status, 200);
+  const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(resolve.status, 200);
+
+  const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+  assert.equal(rows.length, 2);
+  const sentRow = rows.find((row) => row.state === "SENT");
+  const withdrawnRow = rows.find((row) => row.state === "WITHDRAWN");
+  assert.ok(sentRow, "the delivered item must stay SENT — history stays honest");
+  assert.ok(withdrawnRow, "the unsent item must be WITHDRAWN");
+  assert.equal(withdrawnRow.claimedBy, null);
+
+  // The withdrawal is journaled on the incident, naming the transport.
+  const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  const withdrawals = events.filter((event) => event.type === "DELIVERY_WITHDRAWN");
+  assert.equal(withdrawals.length, 1);
+  assert.match(withdrawals[0].detail ?? "", new RegExp(`${withdrawnRow.transport} delivery withdrawn`));
+
+  // The claim loop never hands the withdrawn item to a sender again.
+  const sentTransports: string[] = [];
+  const secondRun = await processCasOutbox({
+    workerId: "withdraw-check-worker",
+    maxItems: 10,
+    send: async (item) => { sentTransports.push(item.transport); },
+  });
+  assert.equal(secondRun.claimed, 0);
+  assert.deepEqual(sentTransports, []);
+
+  // The status counts surface the withdrawn item to the console.
+  const status = await (await fetch(`${baseUrl}/cas/outbox/status`, { headers: AUTH_HEADERS })).json() as { counts: Record<string, number> };
+  assert.equal(status.counts.WITHDRAWN, 1);
+  assert.equal(status.counts.SENT, 1);
+});
+
+test("device pickup stops handing out items once the incident is resolved, and a racing receipt still records the truth", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(trigger.status, 201);
+    const { id } = (await trigger.json()) as { id: string };
+
+    // The handset would have seen the SMS item before the resolve.
+    const before = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as { items: Array<{ id: string }> };
+    assert.deepEqual(before.items.map((item) => item.id), [`${id}-sms`]);
+
+    const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(ack.status, 200);
+    const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(resolve.status, 200);
+
+    // Pickup hands out nothing for the resolved incident.
+    const after = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as { items: unknown[] };
+    assert.equal(after.items.length, 0);
+
+    const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+    for (const row of rows) assert.equal(row.state, "WITHDRAWN");
+
+    // A handset that already had the batch and really sent it: the receipt
+    // still records the truthful outcome instead of 409ing forever.
+    const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: true }] }),
+    });
+    assert.equal(receipt.status, 200);
+    assert.deepEqual(await receipt.json(), { id, state: "SENT" });
+    const smsAfter = (await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id)))
+      .find((row) => row.transport === "SMS");
+    assert.equal(smsAfter?.state, "SENT");
+    assert.equal(smsAfter?.deliveredTo, "handset-sim");
+  });
+});
+
+test("a failure receipt for a withdrawn item is journaled but never rescheduled", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+    const { id } = (await trigger.json()) as { id: string };
+    await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+    const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(resolve.status, 200);
+
+    const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: false, error: "radio off" }] }),
+    });
+    // 200 (not 409) so the handset drops the receipt instead of retrying it forever.
+    assert.equal(receipt.status, 200);
+    assert.deepEqual(await receipt.json(), { id, state: "WITHDRAWN" });
+
+    const sms = (await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id)))
+      .find((row) => row.transport === "SMS");
+    assert.equal(sms?.state, "WITHDRAWN");
+
+    // The stand-down withdrawals (SMS + XMPP) plus the journaled failure report.
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    assert.equal(events.filter((event) => event.type === "DELIVERY_WITHDRAWN").length, 3);
+
+    const after = await (await fetch(`${baseUrl}/cas/outbox/device-pending`, { headers: deviceAuth })).json() as { items: unknown[] };
+    assert.equal(after.items.length, 0);
+  });
+});
+
+test("a delivery cannot be re-queued once its incident is resolved", async () => {
+  await withSmsDeliveryMode("device", async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+    const { id } = (await trigger.json()) as { id: string };
+    await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+
+    // Dead-letter the SMS item before the resolve.
+    const receipt = await fetch(`${baseUrl}/cas/incidents/${id}/sms-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...deviceAuth },
+      body: JSON.stringify({ results: [{ recipient: "+1555000111", ok: false, error: "no SIM" }] }),
+    });
+    assert.equal(receipt.status, 200);
+    assert.deepEqual(await receipt.json(), { id, state: "DEAD_LETTER" });
+
+    const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(resolve.status, 200);
+
+    const requeue = await fetch(`${baseUrl}/cas/outbox/${id}-sms/requeue`, { method: "POST", headers: AUTH_HEADERS });
+    assert.equal(requeue.status, 409);
+    const body = (await requeue.json()) as { error: string };
+    assert.match(body.error, /resolved/);
+
+    const sms = (await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id)))
+      .find((row) => row.transport === "SMS");
+    assert.equal(sms?.state, "DEAD_LETTER");
+  });
+});
+
+test("a provider acceptance racing the resolve is reconciled and journaled, not silently lost", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+  await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+
+  // The provider accepts while the operator resolves the incident mid-send:
+  // the claim is PROCESSING when the withdrawal lands on it.
+  const run = await processCasOutbox({
+    workerId: "race-worker",
+    maxItems: 1,
+    send: async () => {
+      const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+      assert.equal(resolve.status, 200);
+    },
+  });
+
+  // The acceptance is real and cannot be unsent: the item records SENT with
+  // a journal note, not a silent LOST behind a "will not be delivered" chip.
+  assert.equal(run.sent, 1);
+  const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+  const raced = rows.find((row) => row.state === "SENT");
+  const withdrawn = rows.find((row) => row.state === "WITHDRAWN");
+  assert.ok(raced, "the provider-accepted item must reconcile to SENT");
+  assert.ok(withdrawn, "the never-contacted item must stay WITHDRAWN");
+  const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  const reconciliations = events.filter(
+    (event) => event.type === "DELIVERY_REPORTED" && event.detail?.includes("withdrawn"),
+  );
+  assert.equal(reconciliations.length, 1);
 });
 
 test("an all-ok device receipt marks the SMS item SENT, journals it, and replays safely", async () => {

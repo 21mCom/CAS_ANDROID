@@ -28,6 +28,7 @@ const outboxStateCountsSchema = z.object({
   FAILED: z.number().int(),
   SENT: z.number().int(),
   DEAD_LETTER: z.number().int(),
+  WITHDRAWN: z.number().int(),
 }).strict();
 
 const workerHeartbeatSchema = z.object({

@@ -9,6 +9,7 @@ export type OutboxStateCounts = {
   FAILED: number;
   SENT: number;
   DEAD_LETTER: number;
+  WITHDRAWN: number;
 };
 
 export type OutboxWorkerHeartbeat = {

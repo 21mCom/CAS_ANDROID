@@ -191,7 +191,7 @@ export const RequeueCasOutboxItemResponse = zod.unknown()
  * @summary Read outbox pipeline health
  */
 export const GetCasOutboxStatusResponse = zod.object({
-  "counts": zod.record(zod.string(), zod.number()).describe('Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).'),
+  "counts": zod.record(zod.string(), zod.number()).describe('Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN).'),
   "oldestPendingAt": zod.coerce.date().nullable(),
   "lastDeliveryError": zod.record(zod.string(), zod.unknown()).nullable(),
   "worker": zod.record(zod.string(), zod.unknown()).nullable()

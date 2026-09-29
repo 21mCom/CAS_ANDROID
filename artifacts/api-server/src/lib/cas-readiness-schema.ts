@@ -102,7 +102,8 @@ export const outboxItemSchema = z.object({
   transport: z.enum(["SMS", "XMPP", "WHATSAPP", "EMAIL"]),
   // LOST is only an ephemeral worker-result label, never a persisted outbox
   // state, so it is deliberately absent here and in the console union.
-  state: z.enum(["QUEUED", "PROCESSING", "FAILED", "SENT", "DEAD_LETTER"]),
+  // WITHDRAWN is set when an incident is resolved with the delivery unsent.
+  state: z.enum(["QUEUED", "PROCESSING", "FAILED", "SENT", "DEAD_LETTER", "WITHDRAWN"]),
   priority: z.enum(["P1", "P2"]),
   attempts: z.number().int(),
   lastError: z.string().nullable(),

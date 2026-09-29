@@ -7,6 +7,6 @@
  */
 
 /**
- * Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+ * Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN).
  */
 export type CasOutboxStatusCounts = {[key: string]: number};

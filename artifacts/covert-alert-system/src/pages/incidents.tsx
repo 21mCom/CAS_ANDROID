@@ -16,6 +16,7 @@ const isHandsetDelivery = (item: OutboxItem) => item.state === 'SENT' && item.de
 
 function outboxChipTitle(item: OutboxItem): string | undefined {
   if (item.state === 'DEAD_LETTER') return `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}`;
+  if (item.state === 'WITHDRAWN') return 'Withdrawn when the incident was resolved, before it was sent — it will not be delivered.';
   if (isSimulatedDelivery(item)) return 'Accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real provider was contacted and no responder received anything.';
   if (isHandsetDelivery(item)) return 'Sent by the handset directly over its own SIM (device-direct mode; no gateway involved).';
   if (item.state === 'SENT' && item.deliveredTo) return `Delivery accepted by ${item.deliveredTo}`;
@@ -25,6 +26,7 @@ function outboxChipTitle(item: OutboxItem): string | undefined {
 function outboxChipLabel(item: OutboxItem): string {
   if (isSimulatedDelivery(item)) return 'SIMULATED — test inbox';
   if (item.state === 'DEAD_LETTER') return `DEAD LETTER · abandoned after ${item.attempts} attempts`;
+  if (item.state === 'WITHDRAWN') return 'WITHDRAWN · incident resolved';
   return item.state;
 }
 
@@ -32,6 +34,7 @@ function outboxChipClass(item: OutboxItem): string {
   if (item.state === 'DEAD_LETTER') return 'border-[#914136] bg-[#914136]/10 font-bold text-[#914136]';
   if (isSimulatedDelivery(item)) return 'border-[#a06712] bg-[#fff8e7] font-bold text-[#a06712]';
   if (item.state === 'FAILED') return 'border-[#a06712] bg-[#fbfbf7] text-[#a06712]';
+  if (item.state === 'WITHDRAWN') return 'border-[#c6cbc3] bg-[#f4f2e9] text-[#687271] line-through';
   return 'border-[#c6cbc3] bg-[#fbfbf7] text-[#687271]';
 }
 

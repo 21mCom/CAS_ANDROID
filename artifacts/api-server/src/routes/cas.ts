@@ -302,7 +302,7 @@ function shapeIncident(
       // inbox — simulated) or the provider identity. Null for device-direct
       // deliveries and unsent items.
       deliveredTo: item.deliveredTo,
-      terminal: item.state === "SENT" || item.state === "DEAD_LETTER",
+      terminal: item.state === "SENT" || item.state === "DEAD_LETTER" || item.state === "WITHDRAWN",
     })),
   };
 }
@@ -399,6 +399,7 @@ router.get("/cas/outbox/status", requireCasCredential, async (_req, res, next) =
       FAILED: 0,
       SENT: 0,
       DEAD_LETTER: 0,
+      WITHDRAWN: 0,
     };
     for (const row of countRows) {
       counts[row.state] = (counts[row.state] ?? 0) + row.count;
@@ -540,6 +541,11 @@ router.get("/cas/outbox/device-pending", async (req, res, next) => {
           AND (
             ${casOutbox.state} = 'QUEUED'
             OR (${casOutbox.state} = 'FAILED' AND ${casOutbox.nextAttemptAt} <= ${now})
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM cas_incidents
+            WHERE cas_incidents.id = ${casOutbox.incidentId}
+              AND cas_incidents.status = 'RESOLVED'
           )`,
       )
       .orderBy(asc(casOutbox.createdAt))
@@ -732,6 +738,46 @@ async function handleDeviceReceipt(
         | undefined;
       if (!item?.id || !item.state) return "missing" as const;
       if (item.state === "SENT") return "already-sent" as const;
+      // A withdrawn item can still get a receipt: the handset picked it up
+      // before the incident was resolved. The report is the truth about what
+      // the SIM did, so record it — a 409 (transient) would make the handset
+      // retry a receipt that can never change anything, and a 410 would
+      // discard an actual send. A successful report flips the item to SENT;
+      // a failure report is journaled but the item stays WITHDRAWN (the
+      // incident is resolved, nobody will re-queue it).
+      if (item.state === "WITHDRAWN") {
+        if (failed.length === 0) {
+          await tx
+            .update(casOutbox)
+            .set({
+              state: "SENT",
+              claimedBy: null,
+              claimedAt: null,
+              lastError: null,
+              sentAt: now,
+              deliveredTo: HANDSET_SIM_DELIVERED_TO,
+            })
+            .where(eq(casOutbox.id, item.id));
+          await tx.insert(casIncidentEvents).values({
+            id: `${item.id}-device-delivered-${now.getTime()}`,
+            incidentId,
+            type: "DELIVERY_REPORTED",
+            priority: "P1",
+            detail: `Handset confirmed it sent the SMS alert directly to ${total} responder(s) over its own SIM. It had picked the item up before the incident was resolved and the delivery withdrawn, so the send still went out.${receiptAttribution}`,
+            createdAt: now,
+          });
+          return "sent-after-withdrawal" as const;
+        }
+        await tx.insert(casIncidentEvents).values({
+          id: `${item.id}-device-failed-${now.getTime()}`,
+          incidentId,
+          type: "DELIVERY_WITHDRAWN",
+          priority: "P1",
+          detail: `Handset reported it could not send the SMS alert to ${failed.length} of ${total} responder(s): ${failureSummary}. The incident was already resolved and the delivery withdrawn, so no retry will be scheduled.${receiptAttribution}`,
+          createdAt: now,
+        });
+        return "withdrawn-failed" as const;
+      }
       if (item.state !== "QUEUED" && item.state !== "FAILED") {
         return "conflict" as const;
       }
@@ -812,7 +858,12 @@ async function handleDeviceReceipt(
     if (result === "conflict") {
       return res.status(409).json({ error: `${channel} outbox item is being delivered or was abandoned; re-queue it before the handset retries` });
     }
-    return res.json({ id: incidentId, state: result === "sent" ? "SENT" : "DEAD_LETTER" });
+    if (result === "withdrawn-failed") {
+      // 200 so the handset drops the receipt: the incident is resolved and
+      // the withdrawal is journaled; there is nothing to retry against.
+      return res.json({ id: incidentId, state: "WITHDRAWN" });
+    }
+    return res.json({ id: incidentId, state: result === "sent" || result === "sent-after-withdrawal" ? "SENT" : "DEAD_LETTER" });
   } catch (error) { return next(error); }
 }
 
@@ -1125,6 +1176,41 @@ async function appendTransition(id: string, from: string, to: string, type: stri
     if (!rows[0] || rows[0].status !== from) return false;
     await tx.update(casIncidents).set({ status: to, updatedAt: now }).where(eq(casIncidents.id, id));
     await tx.insert(casIncidentEvents).values({ id: `${id}-${type.toLowerCase()}-${now.getTime()}`, incidentId: id, type, priority: "P1", detail: attributed, createdAt: now });
+    if (to === "RESOLVED") {
+      // Stand-down: an operator who resolves the incident expects the system
+      // to stop delivering for it, so every unsent item (QUEUED, claimed-but-
+      // unfinished PROCESSING, retryable FAILED) is withdrawn in the same
+      // transaction. SENT and DEAD_LETTER rows are untouched — history stays
+      // honest about what already went out or was abandoned.
+      //
+      // Race safety: the worker's completion updates are guarded by
+      // state='PROCESSING' AND claimedBy=<worker>, so a delivery that finishes
+      // after this withdrawal cannot flip the row to SENT/FAILED; it records
+      // LOST instead. A provider contacted just before the withdrawal may
+      // still have accepted the message — that send cannot be unsent, and the
+      // record deliberately shows the stand-down decision rather than
+      // pretending it was never made. Device-direct items the handset already
+      // picked up can still be reported via the receipt endpoint, which
+      // records the truthful outcome on the withdrawn item.
+      const withdrawn = await tx
+        .update(casOutbox)
+        .set({ state: "WITHDRAWN", claimedBy: null, claimedAt: null })
+        .where(
+          sql`${casOutbox.incidentId} = ${id}
+            AND ${casOutbox.state} IN ('QUEUED', 'PROCESSING', 'FAILED')`,
+        )
+        .returning({ id: casOutbox.id, transport: casOutbox.transport, priority: casOutbox.priority });
+      for (const item of withdrawn) {
+        await tx.insert(casIncidentEvents).values({
+          id: `${item.id}-withdrawn-${now.getTime()}`,
+          incidentId: id,
+          type: "DELIVERY_WITHDRAWN",
+          priority: item.priority,
+          detail: `${item.transport} delivery withdrawn when the incident was resolved, before it was sent; it will not be delivered. Withdrawn by ${deviceAttribution(res)}.`,
+          createdAt: now,
+        });
+      }
+    }
     return true;
   });
   if (!result) return res.status(409).json({ error: `Incident is not ${from}` });
@@ -1178,6 +1264,16 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
       const item = rows[0];
       if (!item) return "missing" as const;
       if (item.state !== "DEAD_LETTER") return "conflict" as const;
+      // A resolved incident stands down: re-queueing one of its abandoned
+      // deliveries would re-arm a message for an incident the operator has
+      // already closed (and the claim/pickup queries would rightly never
+      // hand it out, leaving a silently stuck QUEUED row).
+      const [incident] = await tx
+        .select({ status: casIncidents.status })
+        .from(casIncidents)
+        .where(eq(casIncidents.id, item.incidentId))
+        .limit(1);
+      if (incident?.status === "RESOLVED") return "resolved" as const;
       await tx.update(casOutbox).set({
         state: "QUEUED",
         attempts: 0,
@@ -1206,6 +1302,7 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
       return "requeued" as const;
     });
     if (result === "missing") return res.status(404).json({ error: "Outbox item not found" });
+    if (result === "resolved") return res.status(409).json({ error: "The incident is resolved; its deliveries stand down and cannot be re-queued" });
     if (result === "conflict") return res.status(409).json({ error: "Only a DEAD_LETTER delivery can be re-queued" });
     return res.json({ id, state: "QUEUED" });
   } catch (error) { return next(error); }
@@ -1456,7 +1553,41 @@ async function markCasOutboxItemSent(
           AND ${casOutbox.claimedBy} = ${workerId}`,
       )
       .returning({ id: casOutbox.id });
-    if (!updated) return undefined;
+    if (!updated) {
+      // Race: the incident was resolved while the provider call was in
+      // flight and the withdrawal won the row. The provider still accepted
+      // the message — that send cannot be unsent — so, exactly like a
+      // handset receipt landing on a withdrawn item, record the truthful
+      // outcome instead of leaving a WITHDRAWN row whose chip claims the
+      // alert "will not be delivered".
+      const [reconciled] = await tx
+        .update(casOutbox)
+        .set({
+          state: "SENT",
+          claimedBy: null,
+          claimedAt: null,
+          lastError: null,
+          sentAt: now,
+          deliveredTo,
+        })
+        .where(
+          sql`${casOutbox.id} = ${item.id}
+            AND ${casOutbox.state} = 'WITHDRAWN'`,
+        )
+        .returning({ id: casOutbox.id });
+      if (!reconciled) return undefined;
+      await tx.insert(casIncidentEvents).values({
+        id: `${item.id}-sent-after-withdrawal-${now.getTime()}`,
+        incidentId: item.incidentId,
+        type: deliveredTo === DEV_SINK_DELIVERED_TO ? "DELIVERY_SIMULATED" : "DELIVERY_REPORTED",
+        priority: item.priority,
+        detail: deliveredTo === DEV_SINK_DELIVERED_TO
+          ? `${item.transport} alert was accepted by the built-in dev provider sink (test inbox) — simulated delivery: no responder received anything — just as the incident was being resolved; the delivery had been withdrawn, but the acceptance had already happened, so the record shows what actually happened.`
+          : `${item.transport} alert was accepted by ${deliveredTo ?? "the configured provider"} just as the incident was being resolved; the delivery had been withdrawn, but the send had already gone out, so the record shows what actually happened.`,
+        createdAt: now,
+      });
+      return reconciled;
+    }
 
     if (deliveredTo === DEV_SINK_DELIVERED_TO) {
       await tx.insert(casIncidentEvents).values({
@@ -1564,6 +1695,11 @@ export async function claimCasOutboxItem(workerId: string, now: Date) {
           state = 'PROCESSING'
           AND claimed_at < ${staleBefore}
         )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM cas_incidents
+        WHERE cas_incidents.id = cas_outbox.incident_id
+          AND cas_incidents.status = 'RESOLVED'
       )
       AND transport NOT IN (
         SELECT transport

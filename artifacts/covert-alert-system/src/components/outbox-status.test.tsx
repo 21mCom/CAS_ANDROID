@@ -10,7 +10,7 @@ const NOW = new Date('2026-09-15T12:00:00.000Z').getTime();
 
 function statusWith(overrides: Partial<OutboxStatus>): OutboxStatus {
   return {
-    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 0 },
+    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 0, WITHDRAWN: 0 },
     oldestPendingAt: null,
     lastDeliveryError: null,
     smsDeliveryMode: 'gateway',
@@ -56,7 +56,7 @@ function renderPanel(status: OutboxStatus | null, unreachable = false, mismatch:
 
 test('a dead-lettered delivery raises the red abandoned warning with the provider error', () => {
   const html = renderPanel(statusWith({
-    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 1 },
+    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 1, WITHDRAWN: 0 },
     lastDeliveryError: {
       transport: 'SMS',
       state: 'DEAD_LETTER',
@@ -79,7 +79,7 @@ test('a dead-lettered delivery raises the red abandoned warning with the provide
 
 test('plural dead-letter count reads correctly', () => {
   const html = renderPanel(statusWith({
-    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 3 },
+    counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 3, WITHDRAWN: 0 },
     lastDeliveryError: {
       transport: 'XMPP',
       state: 'DEAD_LETTER',
@@ -120,7 +120,7 @@ test('a drifted status response raises the red mismatch warning and withholds pi
 
 test('a drifted status response outranks every other pipeline signal', () => {
   const warnings = deriveOutboxWarnings({
-    status: statusWith({ counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 2 } }),
+    status: statusWith({ counts: { QUEUED: 0, PROCESSING: 0, FAILED: 0, SENT: 4, DEAD_LETTER: 2, WITHDRAWN: 0 } }),
     unreachable: true,
     mismatch: 'drifted',
     nowMs: NOW,

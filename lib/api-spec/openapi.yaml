@@ -150,7 +150,7 @@ paths:
         "200": { description: Delivery re-queued }
         "400": { description: Invalid or unsafe re-queue note }
         "404": { description: Outbox item not found }
-        "409": { description: Only a DEAD_LETTER delivery can be re-queued }
+        "409": { description: "Only a DEAD_LETTER delivery can be re-queued, and never for a resolved incident" }
   /cas/outbox/status:
     get:
       operationId: getCasOutboxStatus
@@ -266,7 +266,7 @@ components:
       properties:
         counts:
           type: object
-          description: Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER).
+          description: Outbox item counts keyed by state (QUEUED, PROCESSING, FAILED, SENT, DEAD_LETTER, WITHDRAWN).
           additionalProperties: { type: number }
         oldestPendingAt: { type: string, format: date-time, nullable: true }
         lastDeliveryError: { type: object, nullable: true, additionalProperties: true }
