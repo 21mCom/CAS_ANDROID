@@ -303,11 +303,28 @@ if [ -z "$booted" ]; then
   exit 1
 fi
 # adbd may drop root across the reboot; re-acquire it before
-# reading /data/user_de below.
-adb root
-adb wait-for-device
-if ! adb shell id | grep -q "uid=0"; then
-  echo "::error::adb root did not yield a root shell after reboot — cannot read device-protected storage for the delivery-evidence check."
+# reading /data/user_de below. The adbd connection can also still be
+# settling right after the PIN-protected reboot: a real GitHub run
+# (36327062669) failed here with `adb: unable to connect for root:
+# closed` after every app-level check had already passed, while the
+# identical script went green on the next run (36328969126) with no
+# changes. Retry the root re-acquire on a bounded wait instead of
+# aborting on the first closed connection; a persistent failure (e.g.
+# someone switches the job to a non-rootable image) still goes red,
+# just after the bound instead of on the first attempt.
+rooted=""
+for i in $(seq 1 12); do
+  adb root || true
+  adb wait-for-device
+  if adb shell id 2>/dev/null | grep -q "uid=0"; then
+    rooted=1
+    break
+  fi
+  echo "Post-reboot adb root attempt $i of 12 did not yield a root shell yet — waiting 5s for adbd to settle (a transient closed connection right after the PIN-protected reboot is the known flake here)."
+  sleep 5
+done
+if [ -z "$rooted" ]; then
+  echo "::error::adb root did not yield a root shell after reboot within 12 attempts (~60s) — cannot read device-protected storage for the delivery-evidence check."
   exit 1
 fi
 # Explicitly assert the precondition that makes this phase

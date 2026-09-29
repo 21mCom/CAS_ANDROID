@@ -107,6 +107,14 @@ done
 #                            as after a successful `adb root` on the rootable
 #                            google_apis image; set to 2000 to model a
 #                            non-rootable image where adbd stays as shell)
+#   SMOKE_ROOT_CLOSED_AFTER_REBOOT
+#                            number of post-reboot `adb root` attempts that
+#                            fail with `adb: unable to connect for root:
+#                            closed` (the transient adbd disconnect observed
+#                            on real CI right after the PIN-protected reboot)
+#                            before the connection recovers; while the window
+#                            is open `adb shell id` fails the same way.
+#                            Default 0 = root re-acquires immediately.
 # ---------------------------------------------------------------------------
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
@@ -120,6 +128,21 @@ case "${1:-}" in
     exit 0
     ;;
   root)
+    # Model the transient post-reboot adbd disconnect observed on real CI
+    # (`adb: unable to connect for root: closed` right after the
+    # PIN-protected reboot): the first SMOKE_ROOT_CLOSED_AFTER_REBOOT
+    # post-reboot root attempts fail with that error, then the connection
+    # recovers. Default 0 = root succeeds on the first attempt.
+    if [ -f "$SMOKE_STATE.rebooted" ]; then
+      calls=0
+      [ -f "$SMOKE_STATE.rootcalls" ] && calls=$(cat "$SMOKE_STATE.rootcalls")
+      calls=$((calls + 1))
+      echo "$calls" > "$SMOKE_STATE.rootcalls"
+      if [ "$calls" -le "${SMOKE_ROOT_CLOSED_AFTER_REBOOT:-0}" ]; then
+        echo "adb: unable to connect for root: closed" >&2
+        exit 1
+      fi
+    fi
     echo "restarting adbd as root"
     exit 0
     ;;
@@ -202,6 +225,18 @@ case "${1:-}" in
         exit 0
         ;;
       id)
+        # While the post-reboot adbd connection is still in the closed
+        # window (see the root case above), the id probe fails the same
+        # way the real flake did — the script's retry loop must treat a
+        # failed probe as "not rooted yet", not as a fatal error.
+        if [ -f "$SMOKE_STATE.rebooted" ]; then
+          calls=0
+          [ -f "$SMOKE_STATE.rootcalls" ] && calls=$(cat "$SMOKE_STATE.rootcalls")
+          if [ "$calls" -le "${SMOKE_ROOT_CLOSED_AFTER_REBOOT:-0}" ]; then
+            echo "error: closed" >&2
+            exit 1
+          fi
+        fi
         uid="${SMOKE_SHELL_UID:-0}"
         if [ "$uid" = "0" ]; then
           echo "uid=0(root) gid=0(root) groups=0(root)"
@@ -473,6 +508,25 @@ SMOKE_JOURNAL_FIXTURE="$FIXTURES/journal-capture-video-flake.xml" \
 SMOKE_JOURNAL_FIXTURE_AFTER_CLEAR="$FIXTURES/journal-healthy.xml" \
   run_scenario "evidence-capture-retry-recovers-green" 0 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "" "" "" \
   "video: not CAPTURED" "Retrying once with fresh app state" "Smoke test passed"
+
+# 20. The post-reboot `adb root` re-acquire hits the transient adbd
+#     disconnect observed on real CI (`adb: unable to connect for root:
+#     closed`, run 36327062669 — the identical script went green on the
+#     next run, 36328969126) but the connection recovers within the retry
+#     bound -> job must stay GREEN, with the retry visible in the log.
+#     Without the retry loop this scenario goes red at the post-reboot
+#     root-shell check on the first closed connection.
+SMOKE_ROOT_CLOSED_AFTER_REBOOT=2 \
+  run_scenario "post-reboot-adb-root-flake-recovers" 0 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "" "" "" \
+  "Post-reboot adb root attempt" "Smoke test passed"
+
+# 21. The post-reboot `adb root` NEVER recovers (e.g. the job was switched
+#     to a non-rootable image, or adbd is genuinely down) -> the retry loop
+#     must exhaust its bound and the job must still go RED at the explicit
+#     root-shell check, not hang forever or silently pass.
+SMOKE_ROOT_CLOSED_AFTER_REBOOT=99 \
+  run_scenario "post-reboot-adb-root-persistent-failure" 1 0 "2100" "$FIXTURES/healthy-logcat.txt" "" "" "" "" \
+  "adb root did not yield a root shell after reboot"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then
