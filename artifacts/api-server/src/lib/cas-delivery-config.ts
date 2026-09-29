@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   casMessageTemplates,
@@ -6,7 +5,6 @@ import {
   type CasResponder,
 } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
-import { maskRecipient } from "./cas-device-delivery";
 import {
   GATEWAY_TRANSPORTS,
   emailChannelConfigured,
@@ -24,9 +22,11 @@ import { DEFAULT_TEMPLATE_BODY, type CasTemplateChannel } from "./cas-message-te
  * the console without editing secrets or redeploying.
  *
  * Backward compatibility contract: the CAS_*_RECIPIENTS environment lists are
- * the seed and the fallback. The first time the config is read they are
- * copied into cas_responders (deterministic ids, only into a completely empty
- * table, so operator edits are never overwritten). Trigger fan-out and
+ * the delivery fallback only. They are NEVER copied into cas_responders —
+ * an earlier migration seed did that on first console read and silently
+ * created ENABLED responders holding real addresses, so every incident
+ * (test or real) delivered to them. Responder rows are now created only by
+ * an authenticated operator action in the console. Trigger fan-out and
  * delivery treat "no responder rows at all" as "use the env lists", so a
  * deployment that never opens the console behaves exactly as before.
  */
@@ -45,43 +45,6 @@ export function responderAddressFor(
           ? responder.emailAddress
           : responder.xmppAddress;
   return address && address.trim().length > 0 ? address : null;
-}
-
-/**
- * Copies the CAS_*_RECIPIENTS environment lists into cas_responders on first
- * run so nothing is lost when configuration moves to the console. Only seeds
- * into a completely empty table: once any responder row exists (seeded or
- * operator-created), the DB is the configuration and the env lists are
- * ignored. Returns true when rows were seeded.
- */
-export async function ensureCasRespondersSeeded(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    // Serialize concurrent first runs (console load + a trigger arriving at
-    // once) so the emptiness check and the insert are atomic.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('cas:responder-seed', 0))`);
-    const existing = await tx.select({ id: casResponders.id }).from(casResponders).limit(1);
-    if (existing.length > 0) return false;
-    const seeds: Array<typeof casResponders.$inferInsert> = [];
-    for (const transport of GATEWAY_TRANSPORTS) {
-      readProviderRecipients(env, transport).forEach((address, index) => {
-        seeds.push({
-          id: `seed-${transport.toLowerCase()}-${index + 1}`,
-          name: `Seeded ${transport} recipient ${maskRecipient(address)}`,
-          enabled: true,
-          smsNumber: transport === "SMS" ? address : null,
-          whatsappNumber: transport === "WHATSAPP" ? address : null,
-          emailAddress: transport === "EMAIL" ? address : null,
-          xmppAddress: transport === "XMPP" ? address : null,
-        });
-      });
-    }
-    if (seeds.length > 0) {
-      await tx.insert(casResponders).values(seeds).onConflictDoNothing();
-    }
-    return seeds.length > 0;
-  });
 }
 
 export async function listCasResponders(): Promise<CasResponder[]> {

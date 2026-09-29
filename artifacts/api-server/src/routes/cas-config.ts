@@ -5,10 +5,7 @@ import { db } from "@workspace/db";
 import { casMessageTemplates, casResponders } from "@workspace/db/schema";
 import { z } from "zod";
 import { requireCasCredential } from "../lib/cas-auth";
-import {
-  ensureCasRespondersSeeded,
-  listCasResponders,
-} from "../lib/cas-delivery-config";
+import { listCasResponders } from "../lib/cas-delivery-config";
 import {
   CAS_TEMPLATE_CHANNELS,
   DEFAULT_TEMPLATE_BODY,
@@ -37,11 +34,11 @@ import { CasProviderError } from "../lib/cas-provider-error";
  * alert says). Every route is credential-gated — responder addresses are
  * personal data and template wording shapes every future alert.
  *
- * Backward compatibility: the CAS_*_RECIPIENTS environment lists seed the
- * responders table on first read (ensureCasRespondersSeeded only ever writes
- * into a completely empty table) and remain the fan-out fallback while no
- * responder rows exist, so a deployment that never opens these pages behaves
- * exactly as before.
+ * Backward compatibility: the CAS_*_RECIPIENTS environment lists remain the
+ * fan-out fallback while no responder rows exist, so a deployment that never
+ * opens these pages behaves exactly as before. They are never copied into
+ * the responders table — an earlier first-read seed created ENABLED rows
+ * holding real addresses without any operator action, so it was removed.
  */
 
 const router: IRouter = Router();
@@ -110,14 +107,15 @@ function shapeResponder(row: typeof casResponders.$inferSelect) {
   };
 }
 
-// Lists the responder circle, seeding from the CAS_*_RECIPIENTS environment
-// lists on first run so the current setup is never lost when configuration
-// moves to the console.
+// Lists the responder circle. Rows are only ever created by an authenticated
+// POST below — the environment recipient lists are a delivery-time fallback
+// (see cas-delivery-config.ts), never a source of responder rows. The
+// `seeded` field stays in the response shape (the console schema requires
+// it) and is always false now that first-read env seeding is retired.
 router.get("/cas/config/responders", requireCasCredential, async (_req, res, next) => {
   try {
-    const seeded = await ensureCasRespondersSeeded();
     const rows = await listCasResponders();
-    return res.json({ seeded, responders: rows.map(shapeResponder) });
+    return res.json({ seeded: false, responders: rows.map(shapeResponder) });
   } catch (error) { return next(error); }
 });
 
