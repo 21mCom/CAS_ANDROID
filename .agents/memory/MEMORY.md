@@ -6,7 +6,7 @@
 - [CAS device-direct delivery](cas-device-direct-sms.md) — handset delivers device channels itself; receipts are the only transitions; trigger queues only channels that can actually deliver.
 - [CAS push wake](cas-push-wake.md) — FCM high-priority data-only wake for responder capture; Firebase deps unconditional, google-services.json gates the plugin; journal records via=push/poll.
 - [Generated database artifacts](generated-db-artifacts.md) — refresh generated declarations before diagnosing dependent package schema export errors.
-- [CAS test harness](cas-test-harness.md) — multi-process integration tests need tolerant startup polling and awaited child shutdown; suites stringing credential 401s must neutralize the per-IP tarpit schedule.
+- [CAS test harness](cas-test-harness.md) — suites need tolerant startup polling, awaited shutdown, explicit server/pool teardown, and tarpit neutralization when stringing 401s.
 - [Disposable review database](disposable-review-db.md) — isolated PostgreSQL runs need explicit socket and bootstrap-role settings in restricted workspaces.
 - [Gate 0A hardware access](gate0a-hardware-access.md) — physical Pixel validation needs a hardware-run workstation; the normal workspace has no SDK or device endpoint.
 - [OpenAPI integer compatibility](openapi-zod-integer-compatibility.md) — generated Zod currently cannot consume OpenAPI integer fields without server-side integer enforcement.
@@ -42,7 +42,7 @@
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
 - [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after.
-- [CAS sink drill environment](cas-sink-drill-environment.md) — workspace SMTP secrets route T7 over real email; sink drills need a standalone no-SMTP instance with its own sink URLs and CAS_EMAIL_FROM, main workflow stopped.
+- [CAS sink drill environment](cas-sink-drill-environment.md) — workspace SMTP secrets route T7 over real email; run sink drills on a standalone no-SMTP instance, never the live workspace.
 - [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.
 - [WriteFile NUL-escape trap](writefile-nul-escape-trap.md) — `\0` escapes become literal NUL bytes; file turns "binary" and later exact-match edits fail invisibly.
 - [Async finalize vs summary status races](cas-status-line-finalize-races.md) — check-and-post of final-vs-interim status must be one UI-thread op; invalidate attempt ownership on every tap, incl. preflight early-returns.

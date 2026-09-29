@@ -33,6 +33,16 @@
          screen-off capture without turning the display back on. Without this
          the partial wake lock throws SecurityException at capture time. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- One-tap self-update only: lets the operator's Download & install tap
+         hand a SHA-256-verified APK to PackageInstaller, which shows Android's
+         own install confirmation (the one tap). Android still requires the
+         per-app "install unknown apps" grant and rejects cross-key updates.
+         Never used by any alert path. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- One-tap self-update only: reading whether the current connection is
+         metered, so an update download over mobile data always asks first.
+         Without this declaration ConnectivityManager throws SecurityException. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Package visibility: the cover-app picker lists launchable apps,
          which needs this declaration on Android 11+. No third-party package
          queries: no alert path may surface another app's UI, so the app
@@ -95,6 +105,13 @@
                 <action android:name="com.covertalert.pixeltest.action.SMS_SENT" />
             </intent-filter>
         </receiver>
+        <!-- One-tap self-update only: receives the PackageInstaller commit
+             result for an update the operator explicitly downloaded and
+             verified; the only UI it can surface is the system's own install
+             confirmation. Non-exported, explicit in-app broadcasts only. -->
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false" />
         <receiver
             android:name=".BootReceiver"
             android:directBootAware="true"

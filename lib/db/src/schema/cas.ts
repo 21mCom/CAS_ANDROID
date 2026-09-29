@@ -289,3 +289,30 @@ export const casEvidence = pgTable("cas_evidence", {
   data: bytea("data").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One published kit build for the handset's one-tap self-update flow. The
+ * operator publishes a signed APK here (enrollment credential); the handset
+ * reads the manifest, downloads the APK over HTTPS, verifies the SHA-256 in
+ * this row against the downloaded bytes before any install handoff, and
+ * Android itself enforces the pinned signing key on top. Bytes live in the
+ * row (same rationale as cas_evidence: small, bounded, and inspectable in
+ * one place with no extra file service). The hash is computed by the server
+ * from the uploaded bytes — the operator never supplies it — so the manifest
+ * can never drift from the bytes it pins. Publishing is append-only and
+ * versionCode is strictly monotonic: an already-published build can never be
+ * silently swapped, and Android cannot downgrade anyway.
+ */
+export const casAppUpdates = pgTable("cas_app_updates", {
+  id: text("id").primaryKey(),
+  packageName: text("package_name").notNull(),
+  versionCode: integer("version_code").notNull().unique(),
+  versionName: text("version_name").notNull(),
+  sha256: text("sha256").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  data: bytea("data").notNull(),
+  // Attribution for the publish: the enrolled credential that uploaded.
+  uploadedByDeviceId: text("uploaded_by_device_id"),
+  uploadedByLabel: text("uploaded_by_label"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

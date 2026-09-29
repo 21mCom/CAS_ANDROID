@@ -17,6 +17,8 @@ on:
       - "scripts/receipt-durability/**"
       - "scripts/test-alert-location.sh"
       - "scripts/alert-location/**"
+      - "scripts/test-update-check.sh"
+      - "scripts/update-check/**"
       # The sms-receipt-flow job gates the handset-facing API contract too, so
       # API server and schema changes must trigger this workflow.
       - "artifacts/api-server/**"
@@ -37,6 +39,8 @@ on:
       - "scripts/receipt-durability/**"
       - "scripts/test-alert-location.sh"
       - "scripts/alert-location/**"
+      - "scripts/test-update-check.sh"
+      - "scripts/update-check/**"
       - "artifacts/api-server/**"
       - "lib/db/**"
   workflow_dispatch:
@@ -83,6 +87,28 @@ jobs:
       # (accuracy + age always travel with the coordinates) without a device.
       - name: Run alert location harness
         run: scripts/test-alert-location.sh
+
+  update-check:
+    name: Update-check harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Same pinned-toolchain pattern as the other harnesses; proves the
+      # self-update channel's pins (strict manifest parse, versionCode-only
+      # newer-wins, size + SHA-256 verification before any install handoff)
+      # without a device.
+      - name: Run update-check harness
+        run: scripts/test-update-check.sh
 
   assemble-debug:
     name: Compile Gate 0A debug APK

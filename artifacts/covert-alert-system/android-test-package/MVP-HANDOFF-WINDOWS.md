@@ -140,11 +140,46 @@ The physical Gate 0A run on 2026-09-14 passed 219/219 checks. Its `report.json`
 1. Open the console **Gates** page.
 2. Import `report.json` as a file (do not paste it as text).
 3. Review the imported evidence and record the Gate 0A observation.
+## Updating the app in the field (one tap)
+
+New kit builds no longer need the Windows machine or a USB cable. The phone
+updates itself from the alert server:
+
+1. On the phone, the app checks for an update every time it opens (only once
+   an alert server is saved and the handset has enrolled — Gate 0A harness
+   runs stay fully offline). The **App updates** line under the buttons shows
+   the result; nothing downloads by itself.
+2. When a newer build is published, the line says so and **Download & install
+   update** becomes tappable. On Wi-Fi the download starts on that tap; on
+   mobile data the phone asks first and shows the size.
+3. The download is verified byte-for-byte against the server's SHA-256 pin —
+   a corrupted or swapped file is deleted and never installed.
+4. Android shows one system confirmation prompt. Confirm it and the update
+   installs. Android itself rejects the update if it is not signed with the
+   same pinned release key as the installed build.
+
+First time only: if Android has not yet allowed this app to install updates,
+the status line says so — open **Settings → Apps → CAS Pixel Gate 0A →
+Install unknown apps** and allow it once (or from a workstation:
+`adb shell appops set com.covertalert.pixeltest REQUEST_INSTALL_PACKAGES allow`),
+then tap Download & install again.
+
+Every step is journaled on the phone (`UPDATE_CHECK`, `UPDATE_DOWNLOAD`,
+`UPDATE_INSTALL`) and visible via **Copy debug journal**.
+
+The operator publishes a build with one `curl` against the alert server —
+see "Publishing one-tap phone updates" in `artifacts/api-server/SELF-HOSTING.md`.
+The phone flow is identical against the Replit dev URL.
+
 ## Troubleshooting
 
 | Symptom | Action |
 | --- | --- |
 | `INSTALL MVP` script says Gradle or adb not found | Run `scripts\run-windows-preflight.cmd` and fix the BLOCKED line |
+| App updates line says "no published build" | Normal until the operator publishes the first APK to the server |
+| App updates line says "HTTP 401 credential revoked" | The handset's credential was revoked — re-enter the enrollment credential (Step 5) and send one alert to re-enroll |
+| Install says Android has not allowed installs | Grant "Install unknown apps" for the app once (see the update section above) |
+| Update fails with "SHA-256 mismatch" | The download did not match the server's pin — retry; if it repeats, re-publish the build (the server recomputes the pin) |
 | Script says zero or multiple devices | Keep only the Pixel 11 attached; approve the RSA prompt on the phone |
 | `MVP_ALERT_OUTCOME` = FAILED, "must start with https://" | Fix the server URL and save again |
 | FAILED with a timeout or "Request failed" | Check phone internet; confirm the CAS workspace/app is running; confirm the URL |

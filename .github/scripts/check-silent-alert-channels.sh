@@ -13,6 +13,11 @@
 # camera app or showing a preview — so the only on-screen trace is the
 # owner-accepted OS recording indicator.
 #
+# One sanctioned exception, outside every alert path: the one-tap self-update
+# flow (UpdateInstallReceiver) may surface the SYSTEM'S OWN PackageInstaller
+# confirmation when the owner taps Download & install — Android requires that
+# prompt for sideloaded updates; the app never starts an app-chosen activity.
+#
 # This script fails the build if any of that creeps back in. It is a static
 # scan of the app sources — deterministic, no emulator needed.
 
@@ -39,19 +44,33 @@ if grep -rnE 'ACTION_VIEW|ACTION_SEND|ACTION_SENDTO|setPackage\(' "$APP_SRC" --i
   fail "third-party UI intent primitive (ACTION_VIEW/ACTION_SEND/setPackage) found in app sources."
 fi
 
-# 3. startActivity is allow-listed to exactly two sites:
+# 3. startActivity is allow-listed to exactly three sites:
 #      - TriggerActivity.kt: launches the configured cover app (the one
 #        permitted visible surface, and it is operator-chosen, never
 #        alert-shaped).
 #      - MainActivity.kt: starts its own internal proxy activity
 #        (IntentFactory.proxy()), which is part of this app, not a
 #        third-party UI.
+#      - UpdateInstallReceiver.kt: starts ONLY the system's own install
+#        confirmation that PackageInstaller hands back as EXTRA_INTENT (the
+#        sanctioned one-tap update prompt; no app-chosen activity, and the
+#        flow begins at the operator's explicit Download & install tap).
 violations="$(grep -rn 'startActivity' "$APP_SRC" --include='*.kt' --include='*.java' \
   | grep -v 'TriggerActivity.kt' \
-  | grep -v 'MainActivity.kt.*IntentFactory\.proxy()' || true)"
+  | grep -v 'MainActivity.kt.*IntentFactory\.proxy()' \
+  | grep -v 'UpdateInstallReceiver.kt' || true)"
 if [ -n "$violations" ]; then
   echo "$violations"
-  fail "startActivity outside the allow-listed sites (TriggerActivity cover launch, MainActivity internal proxy)."
+  fail "startActivity outside the allow-listed sites (TriggerActivity cover launch, MainActivity internal proxy, UpdateInstallReceiver system install confirmation)."
+fi
+
+# The receiver's one sanctioned surface: every startActivity in it must be the
+# PackageInstaller confirmation handoff (the EXTRA_INTENT the OS fills in),
+# never an app-chosen intent.
+receiver="$APP_SRC/main/java/com/covertalert/pixeltest/UpdateInstallReceiver.kt"
+if [ -f "$receiver" ] \
+  && grep -n 'startActivity' "$receiver" | grep -v 'startActivity(confirm)'; then
+  fail "UpdateInstallReceiver starts an activity other than the system's own install confirmation (EXTRA_INTENT)."
 fi
 
 # MainActivity may only start the internal proxy — no other startActivity call.

@@ -1,7 +1,14 @@
 ---
 name: CAS test harness
-description: Multi-process API integration tests need generous startup polling and awaited child shutdown.
+description: Multi-process API integration tests need generous startup polling, awaited child shutdown, and explicit server/pool teardown per suite.
 ---
+
+Every route-suite test file must end with `after(async () => { ...; server.close(); await once(server, "close"); await pool.end(); })` (see cas.test.ts). Without it the `tsx --test` process can linger after the last assertion, and a `pnpm run test` chain looks hung for tens of minutes with no output.
+
+**Why:** a new suite missing the teardown made the contract-test chain stall silently; standalone reruns of both the new suite and the "hung" following suite passed in seconds.
+
+**How to apply:** when adding a `src/routes/*.test.ts` suite, copy cas.test.ts's listen/close scaffolding verbatim, register the suite in the `test:direct` &&-chain, and give it a top-of-file `process.env.CAS_ALERT_TOKEN ??=` plus an enrolled suite credential.
+
 
 Multi-process CAS tests must allow for cold API startup and await spawned process exits during cleanup.
 

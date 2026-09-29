@@ -530,6 +530,49 @@ sudo systemctl reload caddy
 curl -s https://cas.example.org/api/healthz   # confirm it's back
 ```
 
+## Publishing one-tap phone updates
+
+The phone can update itself: it polls a manifest on your server when the app
+opens, downloads the newer APK over HTTPS, verifies it byte-for-byte against
+the manifest's SHA-256 pin, and hands the verified file to Android's
+installer — the phone's owner confirms one system prompt. (Fully silent
+updates are impossible without Play or device-owner mode; one tap is the
+floor.) Android independently rejects any APK not signed with the kit's
+pinned release key, so a cross-key or tampered upload can never install.
+
+Publish a build with the enrollment credential (one `curl`, any machine that
+can reach the server):
+
+```bash
+set -a; source /etc/cas/cas.env; set +a   # provides CAS_ALERT_TOKEN
+curl -fsS -X POST \
+  -H "Authorization: Bearer $CAS_ALERT_TOKEN" \
+  -H "Content-Type: application/vnd.android.package-archive" \
+  --data-binary @app/build/outputs/apk/debug/app-debug.apk \
+  "https://cas.example.org/api/cas/app-updates?versionCode=8&versionName=0.8.1"
+```
+
+Rules the server enforces:
+
+- `versionCode` must strictly increase with every publish — a re-publish or
+  downgrade is refused (409), so an already-published build can never be
+  silently swapped. Bump `versionCode`/`versionName` in the kit's
+  `app/build.gradle.kts` before building the APK you publish.
+- The SHA-256 and size in the manifest are computed by the server from the
+  uploaded bytes; the publisher never supplies them, so the pin cannot drift
+  from the file it pins.
+- Manifest and download are gated on an enrolled device credential — a
+  revoked phone loses update access with everything else.
+- Only the newest build is served (`GET /api/cas/app-updates/manifest` and
+  `/api/cas/app-updates/latest.apk`). Until the first publish both answer
+  404 and phones quietly report "no published build".
+
+The phone side is automatic once the handset has enrolled (Step 7): on app
+open it checks the manifest, shows an "update available" line, and downloads
+only after the owner taps **Download & install update** (on mobile data it
+asks first). Android shows exactly one confirmation prompt; the journal on
+the phone records `UPDATE_CHECK` / `UPDATE_DOWNLOAD` / `UPDATE_INSTALL`.
+
 ## Troubleshooting
 
 | Symptom | Where to look |

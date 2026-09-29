@@ -31,6 +31,11 @@ class MainActivity : Activity() {
     private lateinit var alertStatus: TextView
     private var alertStatusDefaultColor = 0
     @Volatile private var alertInFlight = false
+    private lateinit var updateStatus: TextView
+    private lateinit var installUpdateButton: Button
+    // The published build waiting for the owner's download tap; set only by a
+    // verified manifest that names this package and a newer versionCode.
+    @Volatile private var pendingUpdate: UpdateCheck.Manifest? = null
 
     private val smsPermissionGranted: Boolean
         get() = checkSelfPermission(android.Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
@@ -70,7 +75,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nGate 0A runs stay local-only: no SMS, network, location, evidence capture, or production behavior.\nMVP mode (below) is the only networked path: one POST to the CAS alert server, then this handset texts responders directly from its own SIM (no gateway)."
+            text = "Physical target: Pixel 11 · stock Android · API 35+\nEmulator baseline: Pixel 8a · API 35\n${environmentLabel()}\nGate 0A runs stay local-only: no SMS, network, location, evidence capture, or production behavior.\nThe only networked paths are MVP mode (one POST to the CAS alert server, then this handset texts responders directly from its own SIM — no gateway) and the app-update check below, which stays silent until a server and an enrolled credential exist."
             textSize = 13f
         })
         root.addView(coverStatus, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 20 })
@@ -208,6 +213,23 @@ class MainActivity : Activity() {
         root.addView(button("Send MVP alert now") { sendMvpAlert() })
         root.addView(alertStatus)
         root.addView(button("Check re-queued deliveries") { checkRequeued() })
+        // One-tap self-update. Quiet by construction: the check runs on app
+        // open only once a server and an enrolled credential exist (Gate 0A
+        // harness runs stay local-only) and never while an alert is in
+        // flight; it reports into this status line, never a popup. Nothing
+        // auto-downloads — a metered link asks for explicit consent first —
+        // and the only system UI the flow raises is Android's own install
+        // confirmation (the one tap).
+        updateStatus = TextView(this).apply {
+            textSize = 13f
+            setPadding(0, 24, 0, 4)
+        }
+        root.addView(updateStatus)
+        root.addView(button("Check for updates") { runUpdateCheck(manual = true) })
+        installUpdateButton = button("Download & install update") { startUpdateDownload() }
+        installUpdateButton.isEnabled = false
+        root.addView(installUpdateButton)
+        refreshUpdateStatus("not checked yet")
         root.addView(button("Request pinned proxy shortcut") {
             val manager = getSystemService<android.content.pm.ShortcutManager>()
             if (manager == null || !manager.isRequestPinShortcutSupported) {
@@ -266,6 +288,7 @@ class MainActivity : Activity() {
         }
         refreshCoverStatus()
         refreshReport()
+        maybeAutoCheckUpdates()
     }
 
     override fun onDestroy() {
@@ -565,6 +588,91 @@ class MainActivity : Activity() {
             alertStatus.text = text
             alertStatus.setTextColor(color ?: alertStatusDefaultColor)
         }
+    }
+
+    /** Quiet one-line update state; the no-screen-flash rule bars popups here. */
+    private fun refreshUpdateStatus(state: String) {
+        if (!::updateStatus.isInitialized) return
+        val info = packageManager.getPackageInfo(packageName, 0)
+        updateStatus.text = "App updates: this build ${info.versionName} (${info.longVersionCode}) — $state"
+    }
+
+    private fun maybeAutoCheckUpdates() {
+        // Gate 0A harness runs stay local-only: with no configured server or
+        // no enrolled credential there is no update source and nothing here
+        // touches the network. Never during an alert attempt either — the
+        // sender's attention belongs to the alert.
+        if (!UpdateManager.configured(this) || alertInFlight) return
+        runUpdateCheck(manual = false)
+    }
+
+    private fun runUpdateCheck(manual: Boolean) {
+        val baseUrl = TestStore.alertServerUrl(this)
+        if (!UpdateManager.configured(this)) {
+            if (manual) refreshUpdateStatus("no update source: save an alert server and enroll this handset (first alert) first")
+            return
+        }
+        refreshUpdateStatus("checking…")
+        Thread {
+            val result = UpdateManager.checkNow(this, baseUrl)
+            TestStore.record(this, "UPDATE_CHECK", mapOf(
+                "outcome" to result.outcome.name,
+                "manual" to manual,
+                "detail" to result.detail,
+            ))
+            runOnUiThread {
+                pendingUpdate = result.manifest
+                if (::installUpdateButton.isInitialized) installUpdateButton.isEnabled = result.manifest != null
+                refreshUpdateStatus(result.detail)
+                refreshReport()
+            }
+        }.start()
+    }
+
+    private fun startUpdateDownload() {
+        val manifest = pendingUpdate ?: return
+        // Mobile-data consent: an update may cross a metered link only after
+        // the owner explicitly accepts the size — never silently.
+        if (UpdateManager.isMetered(this)) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Download update over mobile data?")
+                .setMessage("${manifest.versionName} (build ${manifest.versionCode}) is ${"%.1f".format(manifest.sizeBytes / 1_048_576f)} MB and the current connection is metered.")
+                .setPositiveButton("Download") { _, _ -> downloadAndInstall(manifest) }
+                .setNegativeButton("Not now", null)
+                .show()
+        } else {
+            downloadAndInstall(manifest)
+        }
+    }
+
+    private fun downloadAndInstall(manifest: UpdateCheck.Manifest) {
+        installUpdateButton.isEnabled = false
+        refreshUpdateStatus("downloading ${manifest.versionName} (build ${manifest.versionCode})…")
+        Thread {
+            val result = UpdateManager.download(this, TestStore.alertServerUrl(this), manifest)
+            TestStore.record(this, "UPDATE_DOWNLOAD", mapOf(
+                "outcome" to if (result.ok) "VERIFIED" else "FAILED",
+                "versionCode" to manifest.versionCode,
+                "detail" to result.detail,
+            ))
+            if (!result.ok || result.file == null) {
+                // A failed pin (size/SHA-256 mismatch) lands here with the
+                // file already deleted — nothing unverified can install.
+                runOnUiThread {
+                    installUpdateButton.isEnabled = pendingUpdate != null
+                    refreshUpdateStatus("download failed: ${result.detail}")
+                    refreshReport()
+                }
+                return@Thread
+            }
+            val handoff = UpdateManager.install(this, result.file)
+            TestStore.record(this, "UPDATE_INSTALL_HANDOFF", mapOf("detail" to handoff))
+            runOnUiThread {
+                installUpdateButton.isEnabled = pendingUpdate != null
+                refreshUpdateStatus(handoff)
+                refreshReport()
+            }
+        }.start()
     }
 
     private fun checkRequeued() {
