@@ -11,9 +11,13 @@ const EVIDENCE_KIND_ICONS = { audio: Mic, photo: Camera, video: Video } as const
 /** True when the delivery was accepted by the built-in dev provider sink, not a real provider. */
 const isSimulatedDelivery = (item: OutboxItem) => item.state === 'SENT' && item.deliveredTo === 'dev-sink';
 
+/** True when the handset sent the alert itself over its own SIM (device-direct mode), not via a gateway. */
+const isHandsetDelivery = (item: OutboxItem) => item.state === 'SENT' && item.deliveredTo === 'handset-sim';
+
 function outboxChipTitle(item: OutboxItem): string | undefined {
   if (item.state === 'DEAD_LETTER') return `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}`;
   if (isSimulatedDelivery(item)) return 'Accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real provider was contacted and no responder received anything.';
+  if (isHandsetDelivery(item)) return 'Sent by the handset directly over its own SIM (device-direct mode; no gateway involved).';
   if (item.state === 'SENT' && item.deliveredTo) return `Delivery accepted by ${item.deliveredTo}`;
   return undefined;
 }

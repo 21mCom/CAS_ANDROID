@@ -659,6 +659,14 @@ const deviceReceiptSchema = z.object({
  *     transition the re-queued item, no matter when its batch was
  *     finalized.
  */
+/**
+ * deliveredTo value recorded when the handset itself sent the alert over its
+ * own SIM (device-direct mode). There is no gateway endpoint to name, so the
+ * marker lets the console chip say where the alert went, the same way a
+ * provider host or the dev sink does for gateway deliveries.
+ */
+export const HANDSET_SIM_DELIVERED_TO = "handset-sim";
+
 async function handleDeviceReceipt(
   req: Request<{ id: string }>,
   res: Response,
@@ -739,7 +747,17 @@ async function handleDeviceReceipt(
       if (failed.length === 0) {
         await tx
           .update(casOutbox)
-          .set({ state: "SENT", claimedBy: null, claimedAt: null, lastError: null, sentAt: now })
+          .set({
+            state: "SENT",
+            claimedBy: null,
+            claimedAt: null,
+            lastError: null,
+            sentAt: now,
+            // Device-direct delivery was accepted by the handset itself, not
+            // a gateway endpoint — record that so the console chip can say
+            // where the alert went, like gateway deliveries do.
+            deliveredTo: HANDSET_SIM_DELIVERED_TO,
+          })
           .where(eq(casOutbox.id, item.id));
         await tx.insert(casIncidentEvents).values({
           id: `${item.id}-device-delivered-${now.getTime()}`,

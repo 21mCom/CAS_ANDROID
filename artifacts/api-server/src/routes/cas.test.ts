@@ -28,6 +28,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { loadConsoleMirrors } from "../lib/cas-console-mirror";
 import {
   DELIVERY_LEASE_MS,
+  HANDSET_SIM_DELIVERED_TO,
   MAX_DELIVERY_ATTEMPTS,
   claimCasOutboxItem,
   processCasOutbox,
@@ -2698,6 +2699,9 @@ test("an all-ok device receipt marks the SMS item SENT, journals it, and replays
     assert.equal(row.state, "SENT");
     assert.ok(row.sentAt);
     assert.equal(row.lastError, null);
+    // Device-direct delivery records where the alert went, like gateway
+    // deliveries do: the handset's own SIM, not a provider endpoint.
+    assert.equal(row.deliveredTo, HANDSET_SIM_DELIVERED_TO);
 
     const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
     const reported = events.filter((event) => event.type === "DELIVERY_REPORTED");
@@ -2867,6 +2871,8 @@ test("the device-direct recovery loop: failed receipt, re-queue, handset pickup,
 
     const [row] = await db.select().from(casOutbox).where(eq(casOutbox.id, `${id}-sms`));
     assert.equal(row.state, "SENT");
+    // The recovery loop's successful re-send also records where it went.
+    assert.equal(row.deliveredTo, HANDSET_SIM_DELIVERED_TO);
     const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
     const types = events.map((event) => event.type);
     assert.ok(types.includes("DELIVERY_ABANDONED"));
