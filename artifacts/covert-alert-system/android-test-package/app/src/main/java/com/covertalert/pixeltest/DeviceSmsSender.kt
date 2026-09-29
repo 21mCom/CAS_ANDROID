@@ -142,18 +142,25 @@ object DeviceSmsSender {
         // is genuinely nothing to send. (An over-long single part may still
         // be rejected by the radio; that rejection is reported honestly via
         // the normal per-part result path, which beats certain silence.)
+        // Blank bodies are rejected BEFORE division: divideMessage can return
+        // a part for whitespace-only text, and an empty alert must report
+        // DIVIDE_FAILED for every responder — never dispatch dead air.
         var divideError: String? = null
-        val sharedParts = runCatching { sms.divideMessage(body) }
-            .onFailure { divideError = it.message ?: it.javaClass.simpleName }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() }
-            ?: body.takeIf { it.isNotBlank() }?.let { singlePart ->
-                TestStore.record(context, "SMS_DIVIDE_FALLBACK", mapOf(
-                    "reason" to (divideError ?: "divideMessage returned no parts"),
-                    "bodyChars" to singlePart.length,
-                ))
-                listOf(singlePart)
-            }
+        val sharedParts = if (body.isBlank()) {
+            null
+        } else {
+            runCatching { sms.divideMessage(body) }
+                .onFailure { divideError = it.message ?: it.javaClass.simpleName }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?: run {
+                    TestStore.record(context, "SMS_DIVIDE_FALLBACK", mapOf(
+                        "reason" to (divideError ?: "divideMessage returned no parts"),
+                        "bodyChars" to body.length,
+                    ))
+                    listOf(body)
+                }
+        }
         // Compute the FULL roster before persisting or sending anything: the
         // durable record must cover every responder, so a process death
         // mid-dispatch can never finalize a partially attempted roster into
@@ -204,6 +211,14 @@ object DeviceSmsSender {
                 recordImmediateFailure(appContext, store, batch, recipient, "ILLEGAL_DESTINATION_ADDRESS")
             } catch (error: SecurityException) {
                 recordImmediateFailure(appContext, store, batch, recipient, "PERMISSION_DENIED")
+            } catch (error: RuntimeException) {
+                // Some SmsManager implementations throw other unchecked
+                // exceptions (e.g. UnsupportedOperationException on a
+                // modem-less emulator). A persisted batch whose send call
+                // escaped uncaught would surface no outcome at all and wait
+                // for the watchdog instead of reporting an immediate, named
+                // failure — and the caller would think dispatch happened.
+                recordImmediateFailure(appContext, store, batch, recipient, "SEND_FAILED:${error.javaClass.simpleName}")
             }
         }
 

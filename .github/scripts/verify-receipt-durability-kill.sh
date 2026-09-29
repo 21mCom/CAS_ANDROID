@@ -6,9 +6,12 @@
 # primary scenario.
 #
 # Phase 0 (environment probe, machine-checked): a real alert send on this
-#   workspace's modem-less AVD must finalize DIVIDE_FAILED within milliseconds
-#   (SmsManager.divideMessage throws "Sms is not supported"), i.e. production
-#   code CANNOT leave an unfinished batch here. This probe is why Scenario B
+#   workspace's modem-less AVD must finalize with a NAMED failure within
+#   milliseconds — SmsManager.divideMessage throws "Sms is not supported",
+#   the non-blank body falls back to a single-part send (journaled as
+#   SMS_DIVIDE_FALLBACK), and the radio-less send call then fails immediately
+#   as SEND_FAILED:<exception> — i.e. production code CANNOT leave an
+#   unfinished batch here. This probe is why Scenario B
 #   below uses a seeded durable record while Scenario A does not.
 #
 # Scenario A (PRIMARY, zero synthetic state, deterministic): all device
@@ -367,7 +370,7 @@ unblock_receipts
 
 # --- Phase 0: environment probe ------------------------------------------------
 
-echo "== Phase 0: real send on this AVD must DIVIDE_FAILED-finalize immediately =="
+echo "== Phase 0: real send on this AVD must fail fast with a named failure (divide fallback -> SEND_FAILED) =="
 resolve_active
 reverse_up || fail "adb reverse failed"
 prev_incident="$(current_incident)"
@@ -383,8 +386,12 @@ start_flow \
 probe_incident="$(wait_new_incident "$prev_incident")" || fail "trigger never created an incident."
 send_line="$(wait_journal_match "SMS_SEND_OUTCOME[^}]*$probe_incident[^}]*" "$TIMEOUT_S")" \
   || fail "send never finalized on the environment probe."
-grep -q "DIVIDE_FAILED" <<< "$send_line" \
-  || fail "expected DIVIDE_FAILED on this modem-less AVD — if the radio works here, re-derive scenario B without seeding."
+grep -q "SEND_FAILED:" <<< "$send_line" \
+  || fail "expected an immediate SEND_FAILED:<exception> on this modem-less AVD (divideMessage throws, single-part fallback reaches a radio-less send) — if the radio works here, re-derive scenario B without seeding."
+# The fallback must have fired first: it is what turns the modem-less AVD's
+# divideMessage failure into a send attempt at all.
+wait_journal_match "SMS_DIVIDE_FALLBACK" "$TIMEOUT_S" > /dev/null \
+  || fail "SMS_DIVIDE_FALLBACK was not journaled on this modem-less AVD — divideMessage no longer fails here; re-derive the probe."
 # The flow activity finishes right after the send, and on this emulator the
 # now-empty process is sometimes reaped before the receipt's HTTP response is
 # journaled — the server logs show the receipt POST accepted with a 200 while
