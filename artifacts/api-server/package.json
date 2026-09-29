@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../scripts/run-cas-contract-tests.mjs",
     "test:review-db-cleanup": "node ../../scripts/test-review-database-cleanup.mjs",
-    "test:direct": "tsx --test src/routes/cas.test.ts && tsx --test src/routes/cas-evidence.test.ts && tsx --test src/lib/cas-push.test.ts && tsx --test src/lib/cas-outbox-worker.test.ts && tsx --test src/lib/cas-readiness-schema.test.ts src/lib/cas-outbox-config-schema.test.ts && tsx --test scripts/validate-gate0a-report.test.ts scripts/audit-journal-secrets.test.ts && tsx --test src/routes/cas-config.test.ts && tsx --test src/lib/cas-smtp.test.ts && tsx --test src/lib/cas-email-accounts.test.ts",
+    "test:direct": "tsx --test src/routes/cas.test.ts && tsx --test src/routes/cas-evidence.test.ts && tsx --test src/lib/cas-push.test.ts && tsx --test src/lib/cas-outbox-worker.test.ts && tsx --test src/lib/cas-readiness-schema.test.ts src/lib/cas-outbox-config-schema.test.ts && tsx --test scripts/validate-gate0a-report.test.ts scripts/audit-journal-secrets.test.ts && tsx --test src/routes/cas-config.test.ts && tsx --test src/lib/cas-smtp.test.ts && tsx --test src/lib/cas-email-accounts.test.ts && tsx --test src/lib/cas-email-health-worker.test.ts",
     "validate:gate0a-report": "tsx scripts/validate-gate0a-report.ts",
     "audit:journal-secrets": "tsx scripts/audit-journal-secrets.ts"
   },

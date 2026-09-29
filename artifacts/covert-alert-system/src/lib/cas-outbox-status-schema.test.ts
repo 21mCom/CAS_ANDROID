@@ -31,8 +31,40 @@ function validStatus() {
       lastError: null,
       stoppedAt: null,
     },
+    email: null,
   };
 }
+
+function validEmailHealth() {
+  return {
+    probeIntervalMs: 604_800_000,
+    startedAt: '2026-09-27T14:00:00.000Z',
+    state: 'failed',
+    target: 'environment',
+    lastProbeAt: '2026-09-27T14:08:10.000Z',
+    lastOkAt: '2026-09-20T14:08:10.000Z',
+    lastFailure: { classification: 'authentication', message: 'SMTP auth rejected (535)', at: '2026-09-27T14:08:10.000Z' },
+    note: null,
+    stoppedAt: null,
+  };
+}
+
+test('a failed mailbox probe health block parses through unchanged', () => {
+  const status = { ...validStatus(), email: validEmailHealth() };
+  assert.deepEqual(parseCasOutboxStatusResponse(status), status);
+});
+
+test('a probe state the console was not built against is rejected as drift', () => {
+  const status = { ...validStatus(), email: { ...validEmailHealth(), state: 'deceased' } };
+  assert.throws(
+    () => parseCasOutboxStatusResponse(status),
+    (error: unknown) => {
+      assert.ok(error instanceof CasStateShapeError);
+      assert.match(error.message, /email\.state/);
+      return true;
+    },
+  );
+});
 
 test('a status response matching the contract parses through unchanged', () => {
   const status = validStatus();

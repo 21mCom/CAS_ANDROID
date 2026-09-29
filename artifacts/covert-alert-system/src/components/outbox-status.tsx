@@ -117,6 +117,17 @@ export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
                   ? 'Delivery status endpoint unreachable.'
                   : 'No worker heartbeat recorded by this server yet.'}
           </p>
+          {status?.email && (
+            <p className="mt-1 text-xs leading-5 text-[#687271]" data-testid="outbox-email-health">
+              {status.email.state === 'ok' && status.email.lastProbeAt
+                ? `Email mailbox login checked ${ageLabel(status.email.lastProbeAt, nowMs)} — healthy · re-checks every ${Math.max(1, Math.round(status.email.probeIntervalMs / 86_400_000))}d`
+                : status.email.state === 'failed' && status.email.lastProbeAt
+                  ? `Email mailbox login check failed ${ageLabel(status.email.lastProbeAt, nowMs)}`
+                  : status.email.state === 'skipped'
+                    ? `Email mailbox probe: ${status.email.note ?? 'not applicable'}`
+                    : 'Email mailbox probe scheduled — first login check pending.'}
+            </p>
+          )}
         </div>
         <div className="w-full max-w-xl space-y-2" data-testid="outbox-status-warnings">
           {warnings.length === 0 ? (

@@ -24,6 +24,24 @@ export type OutboxWorkerHeartbeat = {
   stoppedAt: string | null;
 };
 
+/**
+ * The email channel's mailbox probe health. The mailbox app password can
+ * silently rot; the server probes it (AUTH only, nothing sent) on a slow
+ * schedule and this is the last outcome. Null when the server's probe
+ * worker has not started.
+ */
+export type EmailChannelHealth = {
+  probeIntervalMs: number;
+  startedAt: string;
+  state: 'pending' | 'ok' | 'failed' | 'skipped';
+  target: 'console' | 'environment' | 'none';
+  lastProbeAt: string | null;
+  lastOkAt: string | null;
+  lastFailure: { classification: string; message: string; at: string } | null;
+  note: string | null;
+  stoppedAt: string | null;
+};
+
 export type OutboxStatus = {
   counts: OutboxStateCounts;
   oldestPendingAt: string | null;
@@ -35,6 +53,7 @@ export type OutboxStatus = {
   /** False while the handset endpoints are closed (CAS_DEVICE_TOKEN unset). */
   deviceAuthConfigured: boolean;
   worker: OutboxWorkerHeartbeat | null;
+  email: EmailChannelHealth | null;
 };
 
 /**

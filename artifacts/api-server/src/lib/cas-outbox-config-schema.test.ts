@@ -59,6 +59,7 @@ function parseSource(filePath: string): ParsedSource {
 const casRoute = parseSource(path.resolve(libDir, "../routes/cas.ts"));
 const casConfigRoute = parseSource(path.resolve(libDir, "../routes/cas-config.ts"));
 const heartbeatLib = parseSource(path.resolve(libDir, "cas-outbox-status.ts"));
+const emailHealthLib = parseSource(path.resolve(libDir, "cas-email-health.ts"));
 const deviceDeliveryLib = parseSource(path.resolve(libDir, "cas-device-delivery.ts"));
 const templateLib = parseSource(path.resolve(libDir, "cas-message-template.ts"));
 
@@ -595,6 +596,38 @@ test("server DeviceChannel union matches the console deviceChannels literal", ()
     sorted(typeAliasStringLiterals(deviceDeliveryLib, "DeviceChannel")),
     sorted([zodArrayLiteralMember(outboxMirror, "casOutboxStatusResponseSchema", "deviceChannels")]),
     "DeviceChannel and the console deviceChannels literal disagree; change both sides together",
+  );
+});
+
+test("email channel health interface fields match the console email schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(interfaceMemberNames(emailHealthLib, "CasEmailChannelHealth")),
+    sorted(zodObjectKeys(outboxMirror, "emailChannelHealthSchema")),
+    "CasEmailChannelHealth and emailChannelHealthSchema disagree; change both sides together (lib/cas-email-health.ts and covert-alert-system/src/lib/cas-outbox-status-schema.ts)",
+  );
+});
+
+test("email health lastFailure fields match the console lastFailure schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(interfaceInlineTypeMembers(emailHealthLib, "CasEmailChannelHealth", "lastFailure")),
+    sorted(zodNestedObjectKeys(outboxMirror, "emailChannelHealthSchema", "lastFailure")),
+    "the CasEmailChannelHealth lastFailure shape and the console mirror disagree; change both sides together",
+  );
+});
+
+test("server CasEmailProbeState union matches the console email state enum", () => {
+  assert.deepEqual(
+    sorted(typeAliasStringLiterals(emailHealthLib, "CasEmailProbeState")),
+    sorted(zodEnumOptions(outboxMirror, "emailChannelHealthSchema", "state")),
+    "CasEmailProbeState and the console email state enum disagree; change both sides together",
+  );
+});
+
+test("server CasEmailProbeTarget union matches the console email target enum", () => {
+  assert.deepEqual(
+    sorted(typeAliasStringLiterals(emailHealthLib, "CasEmailProbeTarget")),
+    sorted(zodEnumOptions(outboxMirror, "emailChannelHealthSchema", "target")),
+    "CasEmailProbeTarget and the console email target enum disagree; change both sides together",
   );
 });
 

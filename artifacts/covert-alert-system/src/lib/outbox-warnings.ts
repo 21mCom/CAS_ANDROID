@@ -36,7 +36,7 @@ export function deriveOutboxWarnings({ status, unreachable, mismatch, nowMs }: {
   if (!status) return [];
 
   const warnings: OutboxWarning[] = [];
-  const { counts, oldestPendingAt, worker, lastDeliveryError } = status;
+  const { counts, oldestPendingAt, worker, lastDeliveryError, email } = status;
   const pending = counts.QUEUED + counts.PROCESSING + counts.FAILED;
 
   if (counts.DEAD_LETTER > 0) {
@@ -63,6 +63,42 @@ export function deriveOutboxWarnings({ status, unreachable, mismatch, nowMs }: {
     }
     if (worker.lastError) {
       warnings.push({ severity: 'caution', message: `Last worker tick error ${outboxAgeLabel(worker.lastError.at, nowMs)}: ${worker.lastError.message}` });
+    }
+  }
+
+  // Email channel: the mailbox app password can silently rot, so the server
+  // probes it (AUTH only — nothing is sent) on a slow schedule. A failed
+  // probe is the early warning that would otherwise arrive as a
+  // dead-lettered alert during a real incident.
+  if (email) {
+    if (email.state === 'failed') {
+      const failure = email.lastFailure;
+      const when = email.lastProbeAt ? ` ${outboxAgeLabel(email.lastProbeAt, nowMs)}` : '';
+      // Authentication/not-configured/rejected mean the mailbox itself is
+      // refusing — no retry will fix those; the rest may be transient.
+      const permanent =
+        failure !== null &&
+        (failure.classification === 'authentication' ||
+          failure.classification === 'not-configured' ||
+          failure.classification === 'rejected');
+      warnings.push(
+        permanent
+          ? {
+              severity: 'danger',
+              message: `The email alert mailbox failed its scheduled login check${when}: ${failure?.message ?? 'credentials refused'}. Email alerts will not go out until the mailbox is fixed — check the Email delivery page or the CAS_EMAIL_SMTP_* settings.`,
+            }
+          : {
+              severity: 'caution',
+              message: `The email alert mailbox could not be reached for its scheduled login check${when}: ${failure?.message ?? 'probe failed'}. If this persists, email alerts may not go out.`,
+            },
+      );
+    } else if (email.stoppedAt) {
+      warnings.push({ severity: 'caution', message: `The email mailbox probe stopped ${outboxAgeLabel(email.stoppedAt, nowMs)}; a dead mailbox would go unnoticed until an alert fails.` });
+    } else if (email.state !== 'pending') {
+      const lastProbe = email.lastProbeAt ?? email.startedAt;
+      if (nowMs - new Date(lastProbe).getTime() > email.probeIntervalMs * 1.5) {
+        warnings.push({ severity: 'caution', message: `The email mailbox login check is overdue (last ran ${outboxAgeLabel(lastProbe, nowMs)}); a dead mailbox would go unnoticed.` });
+      }
     }
   }
   return warnings;

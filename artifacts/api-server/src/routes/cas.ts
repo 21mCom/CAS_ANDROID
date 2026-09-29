@@ -29,6 +29,7 @@ import {
   type CasIncidentLocation,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
+import { getCasEmailChannelHealth } from "../lib/cas-email-health";
 import { deviceAccessToken, deviceChannels, maskRecipient, smsDeliveryMode, type DeviceChannel } from "../lib/cas-device-delivery";
 import { deliverableGatewayTransports, resolveDbRecipients, resolveTemplateBody } from "../lib/cas-delivery-config";
 import { renderTemplate } from "../lib/cas-message-template";
@@ -417,6 +418,11 @@ router.get("/cas/outbox/status", requireCasCredential, async (_req, res, next) =
       // arrive until CAS_DEVICE_TOKEN is set and entered on the handset.
       deviceAuthConfigured: deviceAccessToken() !== undefined,
       worker: getCasOutboxWorkerHeartbeat(),
+      // Mailbox probe health: the email channel's app password can silently
+      // rot, so the probe worker's last AUTH-only check ships here and the
+      // console warns while a dead mailbox is still harmless. Null when the
+      // probe worker has not started (e.g. a bare test server).
+      email: getCasEmailChannelHealth(),
     });
   } catch (error) { return next(error); }
 });

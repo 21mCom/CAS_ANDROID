@@ -6,7 +6,8 @@ import type { OutboxStatus } from '@/hooks/use-outbox-status';
  * Console-side mirror of the API's GET /api/cas/outbox/status response
  * contract (artifacts/api-server/src/routes/cas.ts — the route assembles
  * counts, oldestPendingAt, lastDeliveryError, smsDeliveryMode,
- * deviceChannels, deviceAuthConfigured, and the worker heartbeat). The
+ * deviceChannels, deviceAuthConfigured, the worker heartbeat, and the
+ * email-channel mailbox probe health). The
  * polling hook used to blind-cast the body (`await response.json() as
  * OutboxStatus`), so a drifted server (stale deployment, mixed
  * environments) silently rendered wrong pipeline health — the exact signal
@@ -50,6 +51,22 @@ const workerHeartbeatSchema = z.object({
   stoppedAt: z.string().nullable(),
 }).strict();
 
+export const emailChannelHealthSchema = z.object({
+  probeIntervalMs: z.number(),
+  startedAt: z.string(),
+  state: z.enum(['pending', 'ok', 'failed', 'skipped']),
+  target: z.enum(['console', 'environment', 'none']),
+  lastProbeAt: z.string().nullable(),
+  lastOkAt: z.string().nullable(),
+  lastFailure: z.object({
+    classification: z.string(),
+    message: z.string(),
+    at: z.string(),
+  }).strict().nullable(),
+  note: z.string().nullable(),
+  stoppedAt: z.string().nullable(),
+}).strict();
+
 export const casOutboxStatusResponseSchema = z.object({
   counts: outboxStateCountsSchema,
   oldestPendingAt: z.string().nullable(),
@@ -64,6 +81,7 @@ export const casOutboxStatusResponseSchema = z.object({
   deviceChannels: z.array(z.literal('SMS')),
   deviceAuthConfigured: z.boolean(),
   worker: workerHeartbeatSchema.nullable(),
+  email: emailChannelHealthSchema.nullable(),
 }).strict();
 
 export type CasOutboxStatusRemote = z.infer<typeof casOutboxStatusResponseSchema>;

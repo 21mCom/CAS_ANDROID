@@ -28,6 +28,22 @@ function statusWith(overrides: Partial<OutboxStatus>): OutboxStatus {
       lastError: null,
       stoppedAt: null,
     },
+    email: null,
+    ...overrides,
+  };
+}
+
+function emailHealth(overrides: Partial<NonNullable<OutboxStatus['email']>>): NonNullable<OutboxStatus['email']> {
+  return {
+    probeIntervalMs: 7 * 24 * 60 * 60 * 1000,
+    startedAt: new Date(NOW - 86_400_000).toISOString(),
+    state: 'ok',
+    target: 'environment',
+    lastProbeAt: new Date(NOW - 3_600_000).toISOString(),
+    lastOkAt: new Date(NOW - 3_600_000).toISOString(),
+    lastFailure: null,
+    note: null,
+    stoppedAt: null,
     ...overrides,
   };
 }
@@ -110,4 +126,70 @@ test('a drifted status response outranks every other pipeline signal', () => {
     nowMs: NOW,
   });
   assert.deepEqual(warnings, [{ severity: 'danger', message: 'drifted' }]);
+});
+
+test('a mailbox that refused its app password raises the red email warning before any real alert', () => {
+  const html = renderPanel(statusWith({
+    email: emailHealth({
+      state: 'failed',
+      lastOkAt: new Date(NOW - 8 * 86_400_000).toISOString(),
+      lastProbeAt: new Date(NOW - 3_600_000).toISOString(),
+      lastFailure: {
+        classification: 'authentication',
+        message: 'SMTP auth rejected (535) — the mailbox refused these credentials',
+        at: new Date(NOW - 3_600_000).toISOString(),
+      },
+    }),
+  }));
+
+  // The red alarm a responder must never miss: the mailbox is dead NOW,
+  // discovered by the probe rather than by a dead-lettered real alert.
+  assert.match(html, /data-testid="outbox-status-warning-danger"/);
+  assert.match(html, /email alert mailbox failed its scheduled login check/);
+  assert.match(html, /the mailbox refused these credentials/);
+  assert.match(html, /Email alerts will not go out/);
+  // The panel's probe line says when the check ran.
+  assert.match(html, /data-testid="outbox-email-health"/);
+  assert.match(html, /Email mailbox login check failed/);
+  assert.doesNotMatch(html, /outbox-status-healthy/);
+});
+
+test('a transient probe failure raises only a caution, not the red alarm', () => {
+  const html = renderPanel(statusWith({
+    email: emailHealth({
+      state: 'failed',
+      lastFailure: {
+        classification: 'socket-timeout',
+        message: 'SMTP server did not answer within 10000ms',
+        at: new Date(NOW - 3_600_000).toISOString(),
+      },
+    }),
+  }));
+
+  assert.match(html, /data-testid="outbox-status-warning-caution"/);
+  assert.match(html, /could not be reached for its scheduled login check/);
+  assert.doesNotMatch(html, /outbox-status-warning-danger/);
+});
+
+test('a healthy mailbox probe stays quiet and the panel shows the check cadence', () => {
+  const html = renderPanel(statusWith({ email: emailHealth({}) }));
+
+  assert.match(html, /data-testid="outbox-status-healthy"/);
+  assert.match(html, /data-testid="outbox-email-health"/);
+  assert.match(html, /Email mailbox login checked .* — healthy/);
+  assert.doesNotMatch(html, /mailbox failed its scheduled login check/);
+});
+
+test('a stopped probe worker warns that mailbox rot would go unnoticed', () => {
+  const warnings = deriveOutboxWarnings({
+    status: statusWith({
+      email: emailHealth({ stoppedAt: new Date(NOW - 30_000).toISOString() }),
+    }),
+    unreachable: false,
+    mismatch: null,
+    nowMs: NOW,
+  });
+  assert.ok(warnings.some((warning) =>
+    warning.severity === 'caution' && /email mailbox probe stopped/.test(warning.message),
+  ));
 });

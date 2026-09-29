@@ -1,5 +1,6 @@
 import app from "./app";
 import { startCasOutboxWorker } from "./lib/cas-outbox-worker";
+import { startCasEmailHealthWorker } from "./lib/cas-email-health-worker";
 import { deviceAccessToken, deviceChannels, smsDeliveryMode } from "./lib/cas-device-delivery";
 import { logger } from "./lib/logger";
 
@@ -62,6 +63,10 @@ if (process.env.CAS_ALERT_TOKEN === undefined) {
   );
 }
 const outboxWorker = startCasOutboxWorker();
+// Probe the alert mailbox's credentials on a slow schedule (weekly + once
+// shortly after boot) so a revoked/expired app password surfaces as a
+// console warning instead of a dead-lettered alert during a real incident.
+const emailHealthWorker = startCasEmailHealthWorker();
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
@@ -69,6 +74,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   logger.info({ signal }, "Shutting down");
   await outboxWorker.stop();
+  await emailHealthWorker.stop();
   server.close((err) => {
     if (err) {
       logger.error({ err }, "Error closing server");
