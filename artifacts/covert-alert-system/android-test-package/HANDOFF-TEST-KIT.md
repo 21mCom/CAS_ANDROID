@@ -365,4 +365,10 @@ Blockers/questions:  <...>
 ```
 
 Paste the filled template plus any failing command output back to the
-workspace chat.
+workspace chat. If an alert send or capture misbehaved, also tap **Copy
+debug journal** on the phone and paste that too: the Gate 0A **Copy JSON
+report** deliberately filters the journal down to the harness event types
+its importer accepts, so alert-send and capture events (`MVP_ALERT_*`,
+`MVP_SMS_OUTCOME`, `LOCATION_CAPTURE`, `CAPTURE_*`, …) only appear in the
+debug journal — that is the export that shows why a send failed. Never
+import the debug journal as a Gate 0A report.

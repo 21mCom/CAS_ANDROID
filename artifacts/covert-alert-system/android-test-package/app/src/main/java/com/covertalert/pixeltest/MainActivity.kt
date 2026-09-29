@@ -223,6 +223,19 @@ class MainActivity : Activity() {
             TestStore.record(this, "REPORT_COPIED")
             refreshReport()
         })
+        root.addView(button("Copy debug journal (alert & capture events)") {
+            // The Gate 0A report above filters the journal down to the
+            // harness event types its importer accepts, so alert-send and
+            // capture diagnostics (MVP_ALERT_*, MVP_SMS_OUTCOME,
+            // LOCATION_CAPTURE, CAPTURE_*, ...) never appear in it. This
+            // export carries the raw journal — every event type — so a
+            // field tester can paste it and see why a send failed. It is
+            // NOT a Gate 0A report; never feed it to the importer.
+            val clipboard = getSystemService<ClipboardManager>()
+            clipboard?.setPrimaryClip(ClipData.newPlainText("CAS debug journal", buildDebugJournal().toString(2)))
+            TestStore.record(this, "DEBUG_JOURNAL_COPIED")
+            refreshReport()
+        })
         root.addView(button("Clear local test journal") {
             TestStore.clear(this)
             refreshReport()
@@ -613,6 +626,24 @@ class MainActivity : Activity() {
             // journal also records MVP alert activity, so filter it out of the report.
             .put("events", gate0aEventsOnly(TestStore.events(this)))
         return report
+    }
+
+    /**
+     * Raw recent journal for field debugging: every recorded event type,
+     * including the MVP alert-send and capture families the Gate 0A report
+     * deliberately filters out. Deliberately a different schema marker than
+     * cas-gate0a-report-v2 so it can never be mistaken for (or imported as)
+     * a Gate 0A run report.
+     */
+    private fun buildDebugJournal(): JSONObject {
+        val events = TestStore.events(this)
+        return JSONObject()
+            .put("schema", "cas-debug-journal-v1")
+            .put("reportType", "debug-journal")
+            .put("note", "Raw on-device journal for field debugging (alert sends, SMS radio results, capture events). NOT a Gate 0A report — do not import it as one.")
+            .put("exportedAtUtc", java.time.Instant.now().toString())
+            .put("eventCount", events.length())
+            .put("events", events)
     }
 
     private fun gate0aEventsOnly(events: JSONArray): JSONArray {
