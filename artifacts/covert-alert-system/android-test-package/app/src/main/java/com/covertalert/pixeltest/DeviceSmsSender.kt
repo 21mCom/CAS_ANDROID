@@ -85,6 +85,31 @@ object DeviceSmsSender {
     private val handler = Handler(Looper.getMainLooper())
 
     /**
+     * Process-scope attribution for finalized batch outcomes: every finalize
+     * is recorded here keyed by send id, and MainActivity asks the tracker
+     * what the Send button's status line may show (see BatchOutcomeTracker
+     * for the clobbering/misattribution rules). The listener is invoked with
+     * the finalized send id from whatever thread finalize ran on; activities
+     * must clear it in onDestroy so a dead activity is never called.
+     */
+    val outcomeTracker = BatchOutcomeTracker()
+    @Volatile var batchOutcomeListener: ((sendId: String) -> Unit)? = null
+
+    private fun publishBatchOutcome(sendId: String, line: SendOutcomeStatus.Line) {
+        synchronized(outcomeTracker) { outcomeTracker.record(sendId, line) }
+        batchOutcomeListener?.invoke(sendId)
+    }
+
+    /**
+     * sendAlert's result: [sendId] is the durable batch's id (null when no
+     * batch was started — nothing to await radio results for), [outcome] the
+     * human-readable start summary the journal and status line already use.
+     * Callers pass the send id to [outcomeTracker].attemptSendId so a batch
+     * that finalizes before this returns still wins over the summary.
+     */
+    data class SendStart(val sendId: String?, val outcome: String)
+
+    /**
      * Alert text mirrors the console's buildCasAlertMessage wording. The fix
      * (when one was captured for this alert) is stated with its accuracy
      * radius and age via AlertLocation.smsLocationClause — never as bare
@@ -107,24 +132,26 @@ object DeviceSmsSender {
      * pending answer: when non-null it is definitive (console edits and
      * disables apply immediately); when null — offline send, or a console
      * whose circle was never configured — the handset's own list is the
-     * explicit fallback. Returns a short human-readable start outcome for the
-     * journal; per-recipient delivery results land in SMS_PART_RESULT /
-     * SMS_SEND_OUTCOME events.
+     * explicit fallback. Returns a [SendStart]: the durable batch's send id
+     * (null when no batch was started) plus a short human-readable start
+     * outcome for the journal; per-recipient delivery results land in
+     * SMS_PART_RESULT / SMS_SEND_OUTCOME events, and the batch's final
+     * outcome is published to [outcomeTracker] when it finalizes.
      */
-    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null, respondersOverride: List<String>? = null): String {
+    fun sendAlert(context: Context, incidentId: String?, body: String, cycleToken: String? = null, respondersOverride: List<String>? = null): SendStart {
         val responders = respondersOverride ?: TestStore.smsResponders(context)
         if (responders.isEmpty()) {
-            return if (respondersOverride != null) {
+            return SendStart(null, if (respondersOverride != null) {
                 "not sent: the console responder circle has no enabled SMS numbers"
             } else {
                 "no responder numbers configured"
-            }
+            })
         }
         if (context.checkSelfPermission(android.Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            return "SEND_SMS permission not granted"
+            return SendStart(null, "SEND_SMS permission not granted")
         }
         val sms = context.getSystemService(SmsManager::class.java)
-            ?: return "SmsManager unavailable"
+            ?: return SendStart(null, "SmsManager unavailable")
         val appContext = context.applicationContext
         val store = TestStore.receiptStore(appContext)
         // Unique per send batch, not per incident (a UUID, so uniqueness does
@@ -182,7 +209,7 @@ object DeviceSmsSender {
                     "sendId" to sendId,
                     "reason" to "could not durably persist the full delivery batch before sending; nothing was sent",
                 ))
-                return "send aborted: could not durably persist the delivery batch (see SMS_SEND_ABORTED)"
+                return SendStart(null, "send aborted: could not durably persist the delivery batch (see SMS_SEND_ABORTED)")
             }
         }
         handler.postDelayed({ onWatchdog(appContext, sendId) }, RESULT_WATCHDOG_MS)
@@ -240,11 +267,11 @@ object DeviceSmsSender {
         val preDispatchFailures = synchronized(lock) {
             batch.failures.entries.map { "${it.value} (${mask(it.key)})" }
         }
-        return SendOutcomeStatus.smsDispatchSummary(
+        return SendStart(sendId, SendOutcomeStatus.smsDispatchSummary(
             dispatchedTo = dispatchedTo,
             attempted = roster.partsByRecipient.size + roster.failures.size,
             preDispatchFailures = preDispatchFailures,
-        )
+        ))
     }
 
     /** Entry point for SmsResultReceiver; runs on the main thread. */
@@ -501,6 +528,17 @@ object DeviceSmsSender {
             "delivered" to (pending.remainingByRecipient.size - failed),
             "failed" to failed,
             "failures" to pending.failures.entries.joinToString("; ") { "${it.value} (${mask(it.key)})" },
+        ))
+        // The Send button's inline status still reads "awaiting radio
+        // results" from the dispatch summary; publish the final answer so
+        // the sender sees delivered-to-all / failed-with-error-name in the
+        // same place instead of hunting the JSON report. This runs for
+        // offline sends too — their radio result is just as final.
+        publishBatchOutcome(sendId, SendOutcomeStatus.batchOutcome(
+            incidentId = pending.incidentId,
+            delivered = pending.remainingByRecipient.size - failed,
+            total = pending.remainingByRecipient.size,
+            failures = pending.failures.entries.map { "${it.value} (${mask(it.key)})" },
         ))
 
         if (pending.incidentId == null) {

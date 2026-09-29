@@ -95,4 +95,26 @@ object SendOutcomeStatus {
      */
     fun offlineDirect(reason: String, smsOutcome: String): Line =
         Line("NOT_SENT to server: $reason\nHandset SMS: $smsOutcome", success = smsDispatched(smsOutcome))
+
+    /**
+     * Radio-finalized path: the batch's per-part sent results are all in
+     * (or the watchdog closed silent ones as NO_RADIO_RESULT), so the
+     * "awaiting radio results" line gets its final answer in the same
+     * place. Success only when EVERY responder's every part reported
+     * RESULT_OK; any failure is red and names the radio's error (with the
+     * masked recipient) so the sender sees which responder was missed
+     * without opening the JSON report. [failures] entries arrive pre-masked
+     * ("ERROR_NAME (***)") exactly as the journal records them.
+     */
+    fun batchOutcome(incidentId: String?, delivered: Int, total: Int, failures: List<String>): Line {
+        val scope = if (incidentId != null) "incident $incidentId" else "offline alert"
+        return if (failures.isEmpty()) {
+            Line("DELIVERED — radio confirmed all $total responder(s) ($scope)", success = true)
+        } else {
+            Line(
+                "SMS_FAILED ($scope): radio confirmed $delivered of $total responder(s) — ${failures.joinToString("; ")}",
+                success = false,
+            )
+        }
+    }
 }

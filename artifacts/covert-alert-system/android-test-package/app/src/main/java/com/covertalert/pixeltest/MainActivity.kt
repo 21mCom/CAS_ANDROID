@@ -253,13 +253,46 @@ class MainActivity : Activity() {
         })
         root.addView(reportView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 12 })
         setContentView(ScrollView(this).apply { addView(root) })
+        // When a sent batch's radio results finish arriving, DeviceSmsSender
+        // publishes the final outcome keyed by send id; the tracker shows it
+        // in the same inline line that said "awaiting radio results" — but
+        // only for the attempt that currently owns that line, so a late or
+        // re-queued batch can never overwrite a newer attempt's status.
+        DeviceSmsSender.batchOutcomeListener = { sendId ->
+            val line = synchronized(DeviceSmsSender.outcomeTracker) {
+                DeviceSmsSender.outcomeTracker.showableOutcomeFor(sendId)
+            }
+            if (line != null) showBatchOutcome(line)
+        }
         refreshCoverStatus()
         refreshReport()
+    }
+
+    override fun onDestroy() {
+        // Never let a finalized batch call into a dead activity.
+        if (DeviceSmsSender.batchOutcomeListener != null) {
+            DeviceSmsSender.batchOutcomeListener = null
+        }
+        super.onDestroy()
+    }
+
+    /** Displays a finalized SMS batch outcome in the inline status line. */
+    private fun showBatchOutcome(line: SendOutcomeStatus.Line) {
+        showAlertStatus(line.text, if (line.success) COLOR_OK else COLOR_FAIL)
     }
 
     override fun onResume() {
         super.onResume()
         if (::reportView.isInitialized) refreshReport()
+        // The current attempt's batch may have finalized while this activity
+        // had no live listener (backgrounded through a config change); the
+        // tracker shows that outcome once, without repeating a shown one.
+        if (::alertStatus.isInitialized) {
+            val outcome = synchronized(DeviceSmsSender.outcomeTracker) {
+                DeviceSmsSender.outcomeTracker.resumeOutcome()
+            }
+            if (outcome != null) showBatchOutcome(outcome)
+        }
         // A previous process may have died after the SMS left the SIM but
         // before its receipt landed (or with radio results still owed);
         // recover those batches and retry any receipts the console has not
@@ -334,6 +367,9 @@ class MainActivity : Activity() {
             return
         }
         alertInFlight = true
+        // The new attempt owns the inline status line from here on: a late
+        // finalization of a PREVIOUS attempt's batch must not overwrite it.
+        synchronized(DeviceSmsSender.outcomeTracker) { DeviceSmsSender.outcomeTracker.beginAttempt() }
         TestStore.record(this, "MVP_ALERT_ATTEMPT", mapOf(
             "https" to baseUrl.startsWith("https://"),
             "responders" to TestStore.smsResponders(this).size,
@@ -477,9 +513,20 @@ class MainActivity : Activity() {
             } finally {
                 val line = statusLine
                 val color = statusColor
+                // A fast radio (or all-immediate dispatch failures) can
+                // finalize the batch INSIDE sendAlert, before this summary
+                // posts: the final outcome must win over "awaiting radio
+                // results" regardless of callback order.
+                val finalized = synchronized(DeviceSmsSender.outcomeTracker) {
+                    DeviceSmsSender.outcomeTracker.finalizedForCurrentAttempt()
+                }
                 runOnUiThread {
                     alertInFlight = false
-                    showAlertStatus(line, color)
+                    if (finalized != null) {
+                        showBatchOutcome(finalized)
+                    } else {
+                        showAlertStatus(line, color)
+                    }
                     refreshReport()
                 }
             }
@@ -495,14 +542,20 @@ class MainActivity : Activity() {
         // recipients/message come from the console's deviceSms directive on a
         // successful trigger; both are null on the offline path, where the
         // handset's own list and wording are the explicit fallback.
-        val outcome = DeviceSmsSender.sendAlert(
+        val start = DeviceSmsSender.sendAlert(
             this,
             incidentId,
             message ?: DeviceSmsSender.alertBody(incidentId, fix),
             respondersOverride = recipients,
         )
-        TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
-        return outcome
+        // Attribute this attempt to its batch BEFORE returning the summary:
+        // a batch that finalized inside sendAlert (fast radio) is then found
+        // by the finally block's finalizedForCurrentAttempt precedence check.
+        synchronized(DeviceSmsSender.outcomeTracker) {
+            DeviceSmsSender.outcomeTracker.attemptSendId(start.sendId)
+        }
+        TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to start.outcome))
+        return start.outcome
     }
 
     /** Immediate inline feedback under the Send button; safe from any thread. */

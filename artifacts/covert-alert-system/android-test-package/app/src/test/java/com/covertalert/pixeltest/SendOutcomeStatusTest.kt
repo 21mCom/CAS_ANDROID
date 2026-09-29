@@ -161,4 +161,42 @@ class SendOutcomeStatusTest {
         assertFalse(SendOutcomeStatus.smsDispatched("send aborted: could not durably persist the delivery batch (see SMS_SEND_ABORTED)"))
         assertFalse(SendOutcomeStatus.smsDispatched(""))
     }
+
+    // Radio-finalized path: every part of every responder reported RESULT_OK.
+    // The line replaces "awaiting radio results" with the delivered answer.
+    @Test
+    fun batchOutcome_allPartsOk_isDelivered() {
+        val line = SendOutcomeStatus.batchOutcome("inc-5", delivered = 2, total = 2, failures = emptyList())
+        assertTrue(line.success)
+        assertTrue(line.text.startsWith("DELIVERED"))
+        assertTrue(line.text.contains("all 2 responder(s)"))
+        assertTrue(line.text.contains("inc-5"))
+    }
+
+    // Radio-finalized path with a failure: red, names the radio error and the
+    // masked recipient, and reports the partial delivery count honestly.
+    @Test
+    fun batchOutcome_anyFailure_isFailedWithErrorNamed() {
+        val line = SendOutcomeStatus.batchOutcome(
+            "inc-6",
+            delivered = 1,
+            total = 2,
+            failures = listOf("NO_SERVICE (***)"),
+        )
+        assertFalse(line.success)
+        assertTrue(line.text.startsWith("SMS_FAILED"))
+        assertTrue(line.text.contains("1 of 2"))
+        assertTrue(line.text.contains("NO_SERVICE (***)"))
+        assertTrue(line.text.contains("inc-6"))
+    }
+
+    // Watchdog-closed silent radios surface as NO_RADIO_RESULT failures,
+    // never as a false DELIVERED.
+    @Test
+    fun batchOutcome_silentRadio_isNotDelivered() {
+        val line = SendOutcomeStatus.batchOutcome(null, delivered = 0, total = 1, failures = listOf("NO_RADIO_RESULT (***)"))
+        assertFalse(line.success)
+        assertTrue(line.text.contains("offline alert"))
+        assertTrue(line.text.contains("NO_RADIO_RESULT"))
+    }
 }
