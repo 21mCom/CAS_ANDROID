@@ -242,6 +242,7 @@ type EvidenceMeta = {
   contentType: string;
   sizeBytes: number;
   sequence: number;
+  camera: string | null;
   capturedAt: Date | null;
   requestId: string | null;
   createdAt: Date;
@@ -264,6 +265,7 @@ function shapeIncident(
       contentType: item.contentType,
       sizeBytes: item.sizeBytes,
       sequence: item.sequence,
+      camera: item.camera,
       capturedAt: item.capturedAt ? item.capturedAt.toISOString() : null,
       uploadedAt: item.createdAt.toISOString(),
       requestId: item.requestId,
@@ -325,6 +327,7 @@ router.get("/cas/state", requireCasCredential, async (_req, res, next) => {
         contentType: casEvidence.contentType,
         sizeBytes: casEvidence.sizeBytes,
         sequence: casEvidence.sequence,
+        camera: casEvidence.camera,
         capturedAt: casEvidence.capturedAt,
         requestId: casEvidence.requestId,
         createdAt: casEvidence.createdAt,

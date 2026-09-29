@@ -37,13 +37,15 @@ object CaptureRequests {
             }
             TestStore.record(context, "CAPTURE_REQUEST_RECEIVED", mapOf("id" to id, "kind" to kind, "incidentId" to incident, "via" to via))
             // The server's pending request is an explicit responder command;
-            // the cached policy supplies timing, not an ON_TRIGGER override.
-            val timing = CapturePolicy.cached(context).timing.wire
+            // the cached policy supplies timing and camera, not an ON_TRIGGER
+            // override.
+            val policy = CapturePolicy.cached(context)
             val failure = try {
                 context.startForegroundService(Intent(context, EvidenceCaptureService::class.java).apply {
                     putExtra("incident_id", incident)
                     putExtra("kinds", arrayOf(kind))
-                    putExtra("timing", timing)
+                    putExtra("timing", policy.timing.wire)
+                    putExtra("camera", policy.camera.wire)
                     putExtra("request_id", id)
                 })
                 null

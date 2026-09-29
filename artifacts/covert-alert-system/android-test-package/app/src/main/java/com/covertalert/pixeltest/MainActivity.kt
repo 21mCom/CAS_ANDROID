@@ -397,6 +397,7 @@ class MainActivity : Activity() {
                     TestStore.record(this, "CAPTURE_POLICY_APPLIED", mapOf(
                         "audio" to policy.audio.wire, "photo" to policy.photo.wire,
                         "video" to policy.video.wire, "timing" to policy.timing.wire,
+                        "camera" to policy.camera.wire,
                     ))
                     val kinds = listOfNotNull(
                         "audio".takeIf { policy.audio == CapturePolicy.Setting.ON_TRIGGER },
@@ -409,6 +410,7 @@ class MainActivity : Activity() {
                                 putExtra("incident_id", result.incidentId)
                                 putExtra("kinds", kinds.toTypedArray())
                                 putExtra("timing", policy.timing.wire)
+                                putExtra("camera", policy.camera.wire)
                             })
                         } catch (error: Exception) {
                             TestStore.record(this, "CAPTURE_START_FAILED", mapOf("detail" to "${error.javaClass.simpleName}: ${error.message}"))

@@ -3,12 +3,14 @@ import { casAuthedFetch } from '@/hooks/use-field-test';
 
 export type CaptureSetting = 'off' | 'trigger' | 'responder';
 export type CaptureTiming = 'immediate' | 'screen-off';
+export type CaptureCamera = 'back' | 'front' | 'both';
 
 export type CapturePolicy = {
   audio: CaptureSetting;
   photo: CaptureSetting;
   video: CaptureSetting;
   timing: CaptureTiming;
+  camera: CaptureCamera;
   updatedAt: string | null;
 };
 
@@ -17,6 +19,7 @@ const DEFAULT_POLICY: CapturePolicy = {
   photo: 'off',
   video: 'off',
   timing: 'immediate',
+  camera: 'back',
   updatedAt: null,
 };
 
@@ -61,6 +64,7 @@ export function useCapturePolicy() {
           photo: next.photo,
           video: next.video,
           timing: next.timing,
+          camera: next.camera,
         }),
       });
       if (!response.ok) {

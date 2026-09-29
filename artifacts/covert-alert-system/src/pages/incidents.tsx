@@ -224,7 +224,7 @@ export default function Incidents() {
                           <li key={item.id} className="flex flex-wrap items-center gap-2 border border-[#e0e1da] bg-[#f7f7f1] px-3 py-2" data-testid={`row-evidence-${item.id}`}>
                             <KindIcon size={14} className="text-[#203c49]" />
                             <span className="text-xs font-bold text-[#203c49]">
-                              {item.kind}{item.sequence > 1 ? ` · clip ${item.sequence}` : ''}
+                              {item.kind}{item.camera ? ` · ${item.camera} camera` : ''}{item.sequence > 1 ? ` · clip ${item.sequence}` : ''}
                             </span>
                             <span className="font-mono-ui text-[10px] text-[#687271]">
                               {formatEvidenceSize(item.sizeBytes)}

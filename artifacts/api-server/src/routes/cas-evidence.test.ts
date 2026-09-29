@@ -115,7 +115,7 @@ async function putPolicy(policy: Record<string, string>) {
   const response = await fetch(`${baseUrl}/cas/evidence-policy`, {
     method: "PUT",
     headers: { ...AUTH, "content-type": "application/json" },
-    body: JSON.stringify(policy),
+    body: JSON.stringify({ camera: "back", ...policy }),
   });
   assert.equal(response.status, 200);
 }
@@ -143,7 +143,7 @@ test("policy defaults to everything off with immediate timing", async () => {
   const response = await fetch(`${baseUrl}/cas/evidence-policy`, { headers: AUTH });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    audio: "off", photo: "off", video: "off", timing: "immediate", updatedAt: null,
+    audio: "off", photo: "off", video: "off", timing: "immediate", camera: "back", updatedAt: null,
   });
 });
 
@@ -173,19 +173,26 @@ test("policy write requires the console credential and validates values", async 
   const invalid = await fetch(`${baseUrl}/cas/evidence-policy`, {
     method: "PUT",
     headers: { ...AUTH, "content-type": "application/json" },
-    body: JSON.stringify({ audio: "always", photo: "off", video: "off", timing: "immediate" }),
+    body: JSON.stringify({ audio: "always", photo: "off", video: "off", timing: "immediate", camera: "back" }),
   });
   assert.equal(invalid.status, 400);
+  const invalidCamera = await fetch(`${baseUrl}/cas/evidence-policy`, {
+    method: "PUT",
+    headers: { ...AUTH, "content-type": "application/json" },
+    body: JSON.stringify({ audio: "off", photo: "off", video: "off", timing: "immediate", camera: "selfie" }),
+  });
+  assert.equal(invalidCamera.status, 400);
 });
 
 test("policy write round-trips and is what the handset fetches", async () => {
-  await putPolicy({ audio: "trigger", photo: "responder", video: "off", timing: "screen-off" });
+  await putPolicy({ audio: "trigger", photo: "responder", video: "off", timing: "screen-off", camera: "both" });
   const response = await fetch(`${baseUrl}/cas/evidence-policy`, { headers: HANDSET });
   const body = await response.json() as Record<string, unknown>;
   assert.equal(body.audio, "trigger");
   assert.equal(body.photo, "responder");
   assert.equal(body.video, "off");
   assert.equal(body.timing, "screen-off");
+  assert.equal(body.camera, "both");
   assert.equal(typeof body.updatedAt, "string");
 });
 
@@ -313,16 +320,68 @@ test("evidence upload stores the clip, journals it, and lists it in /cas/state",
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0].data, payload);
   assert.equal(rows[0].capturedAt?.toISOString(), new Date(1759000000000).toISOString());
+  // Uploads without a camera header (older APKs) store no label.
+  assert.equal(rows[0].camera, null);
 
   const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
   assert.ok(journal.some((event) => event.type === "EVIDENCE_UPLOADED"));
 
   const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH })).json() as {
-    activeIncident: { id: string; evidence: { id: string; kind: string; sizeBytes: number }[] };
+    activeIncident: { id: string; evidence: { id: string; kind: string; sizeBytes: number; camera: string | null }[] };
   };
   assert.equal(state.activeIncident.id, incidentId);
   assert.equal(state.activeIncident.evidence.length, 1);
   assert.equal(state.activeIncident.evidence[0].id, stored.id);
+  assert.equal(state.activeIncident.evidence[0].camera, null);
+});
+
+test("evidence upload labels the capturing camera and the label reaches journal, state, and filename", async () => {
+  const incidentId = await triggerIncident();
+  const back = await uploadEvidence(incidentId, { headers: { "x-cas-evidence-camera": "back" } });
+  assert.equal(back.status, 201);
+  const front = await uploadEvidence(incidentId, {
+    headers: { "x-cas-evidence-camera": "front", "x-cas-sequence": "2" },
+  });
+  assert.equal(front.status, 201);
+  const frontId = ((await front.json()) as { id: string }).id;
+
+  const rows = await db.select().from(casEvidence).where(eq(casEvidence.incidentId, incidentId));
+  assert.deepEqual(rows.map((row) => row.camera).sort(), ["back", "front"]);
+
+  const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+  assert.ok(journal.some((event) => event.type === "EVIDENCE_UPLOADED" && event.detail.includes("front camera")));
+
+  const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH })).json() as {
+    activeIncident: { evidence: { id: string; camera: string | null }[] };
+  };
+  assert.deepEqual(
+    state.activeIncident.evidence.find((item) => item.id === frontId)?.camera,
+    "front",
+  );
+
+  const download = await fetch(`${baseUrl}/cas/evidence/${frontId}/download`, { headers: AUTH });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get("content-disposition") ?? "", /attachment; filename="cas-.*-photo-front-2\.jpg"/);
+});
+
+test("evidence upload rejects an unknown camera label and drops the label from audio clips", async () => {
+  const incidentId = await triggerIncident();
+  const invalid = await uploadEvidence(incidentId, { headers: { "x-cas-evidence-camera": "selfie" } });
+  assert.equal(invalid.status, 400);
+
+  // Audio has no lens; a camera header on an audio upload is meaningless
+  // metadata and must not be stored.
+  const audio = await uploadEvidence(incidentId, {
+    kind: "audio",
+    contentType: "audio/mp4",
+    body: Buffer.from("fake-audio"),
+    headers: { "x-cas-evidence-camera": "front" },
+  });
+  assert.equal(audio.status, 201);
+  const rows = await db.select().from(casEvidence).where(eq(casEvidence.incidentId, incidentId));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "audio");
+  assert.equal(rows[0].camera, null);
 });
 
 test("evidence download streams the bytes to the console credential only", async () => {

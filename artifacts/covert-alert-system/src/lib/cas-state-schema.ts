@@ -95,6 +95,8 @@ const evidenceItemSchema = z.object({
   contentType: z.string(),
   sizeBytes: z.number().int(),
   sequence: z.number().int(),
+  // Which lens captured a photo/video clip; null for audio and older uploads.
+  camera: z.enum(['front', 'back']).nullable(),
   capturedAt: z.string().nullable(),
   uploadedAt: z.string(),
   requestId: z.string().nullable(),

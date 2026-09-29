@@ -49,6 +49,17 @@ export type CaptureSetting = (typeof CAPTURE_SETTINGS)[number];
 export const CAPTURE_TIMINGS = ["immediate", "screen-off"] as const;
 export type CaptureTiming = (typeof CAPTURE_TIMINGS)[number];
 
+// Camera selection for photo/video: "back" (the original behavior), "front",
+// or "both" — front and back captured on handsets with concurrent-camera
+// support; the handset journals an honest degradation on handsets without it.
+export const CAPTURE_CAMERAS = ["back", "front", "both"] as const;
+export type CaptureCamera = (typeof CAPTURE_CAMERAS)[number];
+
+// Per-artifact camera label on uploads: the lens a photo/video clip actually
+// came from. Audio clips and older APKs omit it (stored as null).
+export const EVIDENCE_CAMERAS = ["back", "front"] as const;
+export type EvidenceCamera = (typeof EVIDENCE_CAMERAS)[number];
+
 // Uploads are bounded clips by design (rolling audio segments, one still,
 // one short video); 48 MB is generous headroom, not a streaming budget.
 const MAX_EVIDENCE_BYTES = 48 * 1024 * 1024;
@@ -64,6 +75,7 @@ const DEFAULT_POLICY = {
   photo: "off" as CaptureSetting,
   video: "off" as CaptureSetting,
   timing: "immediate" as CaptureTiming,
+  camera: "back" as CaptureCamera,
 };
 
 /**
@@ -104,6 +116,7 @@ const policyBodySchema = z.object({
   photo: z.enum(CAPTURE_SETTINGS),
   video: z.enum(CAPTURE_SETTINGS),
   timing: z.enum(CAPTURE_TIMINGS),
+  camera: z.enum(CAPTURE_CAMERAS),
 });
 
 async function readPolicy() {
@@ -114,11 +127,14 @@ async function readPolicy() {
     (CAPTURE_SETTINGS as readonly string[]).includes(value) ? (value as CaptureSetting) : "off";
   const timing = (value: string): CaptureTiming =>
     (CAPTURE_TIMINGS as readonly string[]).includes(value) ? (value as CaptureTiming) : "immediate";
+  const camera = (value: string): CaptureCamera =>
+    (CAPTURE_CAMERAS as readonly string[]).includes(value) ? (value as CaptureCamera) : "back";
   return {
     audio: setting(row.audio),
     photo: setting(row.photo),
     video: setting(row.video),
     timing: timing(row.timing),
+    camera: camera(row.camera),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -159,6 +175,8 @@ router.put("/cas/evidence-policy", requireCasCredential, async (req, res, next) 
  *   X-Cas-Captured-At: epoch milliseconds of the on-device capture start
  *   X-Cas-Sequence: rolling-clip sequence number (optional, default 1)
  *   X-Cas-Capture-Request-Id: responder request this clip satisfies (optional)
+ *   X-Cas-Evidence-Camera: front | back (optional; which lens captured a
+ *     photo/video clip — older APKs and audio omit it)
  * The upload is the only state transition: it stores the clip, journals it
  * on the incident, and completes the responder request it answers.
  */
@@ -190,6 +208,13 @@ router.post(
       const sequenceRaw = Number(req.get("x-cas-sequence") ?? "1");
       const sequence = Number.isInteger(sequenceRaw) && sequenceRaw > 0 && sequenceRaw < 10_000 ? sequenceRaw : 1;
       const requestId = req.get("x-cas-capture-request-id")?.trim() || null;
+      const cameraRaw = req.get("x-cas-evidence-camera")?.trim().toLowerCase() || null;
+      if (cameraRaw && !(EVIDENCE_CAMERAS as readonly string[]).includes(cameraRaw)) {
+        return res.status(400).json({ error: `Invalid X-Cas-Evidence-Camera (expected one of: ${EVIDENCE_CAMERAS.join(", ")})` });
+      }
+      // Only photo/video clips carry a lens; a camera label on audio would be
+      // meaningless metadata, so it is dropped rather than stored.
+      const camera = captureKind === "audio" ? null : (cameraRaw as EvidenceCamera | null);
 
       const now = new Date();
       const evidenceId = `ev-${now.getTime()}-${randomUUID()}`;
@@ -207,6 +232,7 @@ router.post(
           capturedAt,
           requestId,
           sequence,
+          camera,
           data: body,
           createdAt: now,
         });
@@ -215,7 +241,7 @@ router.post(
           incidentId,
           type: "EVIDENCE_UPLOADED",
           priority: "P2",
-          detail: `${captureKind} evidence received from the handset (${formatBytes(body.length)}${capturedAt ? `, captured ${capturedAt.toISOString()}` : ""}${requestId ? ", answering a responder capture request" : ""}). Downloadable from this incident's evidence panel.`,
+          detail: `${captureKind} evidence received from the handset (${formatBytes(body.length)}${camera ? `, ${camera} camera` : ""}${capturedAt ? `, captured ${capturedAt.toISOString()}` : ""}${requestId ? ", answering a responder capture request" : ""}). Downloadable from this incident's evidence panel.`,
           createdAt: now,
         });
 
@@ -267,6 +293,7 @@ router.get("/cas/evidence/:id/download", requireCasCredential, async (req: Reque
       kind: casEvidence.kind,
       contentType: casEvidence.contentType,
       sequence: casEvidence.sequence,
+      camera: casEvidence.camera,
       data: casEvidence.data,
     }).from(casEvidence).where(eq(casEvidence.id, req.params.id)).limit(1);
     const row = rows[0];
@@ -274,7 +301,7 @@ router.get("/cas/evidence/:id/download", requireCasCredential, async (req: Reque
     const extension = row.kind === "photo" ? "jpg" : row.kind === "video" ? "mp4" : "m4a";
     res.setHeader("Content-Type", row.contentType);
     res.setHeader("Content-Length", String(row.data.length));
-    res.setHeader("Content-Disposition", `attachment; filename="cas-${row.incidentId}-${row.kind}-${row.sequence}.${extension}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="cas-${row.incidentId}-${row.kind}${row.camera ? `-${row.camera}` : ""}-${row.sequence}.${extension}"`);
     return res.end(row.data);
   } catch (error) { return next(error); }
 });

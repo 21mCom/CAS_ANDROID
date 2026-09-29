@@ -17,8 +17,17 @@ object CapturePolicy {
             fun parse(value: String): Timing = entries.first { it.wire == value }
         }
     }
-    data class Policy(val audio: Setting, val photo: Setting, val video: Setting, val timing: Timing)
-    private val disabled = Policy(Setting.OFF, Setting.OFF, Setting.OFF, Timing.IMMEDIATE)
+    enum class Camera(val wire: String) {
+        BACK("back"), FRONT("front"), BOTH("both");
+        companion object {
+            // Missing (older server) or unknown camera values fall back to
+            // BACK — the original behavior — instead of failing closed and
+            // silently disabling all capture over one advisory field.
+            fun parse(value: String?): Camera = entries.firstOrNull { it.wire == value } ?: BACK
+        }
+    }
+    data class Policy(val audio: Setting, val photo: Setting, val video: Setting, val timing: Timing, val camera: Camera)
+    private val disabled = Policy(Setting.OFF, Setting.OFF, Setting.OFF, Timing.IMMEDIATE, Camera.BACK)
 
     private fun parse(raw: String): Policy {
         val json = JSONObject(raw)
@@ -27,6 +36,7 @@ object CapturePolicy {
             Setting.parse(json.getString("photo")),
             Setting.parse(json.getString("video")),
             Timing.parse(json.getString("timing")),
+            Camera.parse(json.optString("camera", null)),
         )
     }
 
@@ -47,6 +57,7 @@ object CapturePolicy {
                 TestStore.record(context, "CAPTURE_POLICY", mapOf(
                     "audio" to policy.audio.wire, "photo" to policy.photo.wire,
                     "video" to policy.video.wire, "timing" to policy.timing.wire,
+                    "camera" to policy.camera.wire,
                 ))
                 policy
             } finally {

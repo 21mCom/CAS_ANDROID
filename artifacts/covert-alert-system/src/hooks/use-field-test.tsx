@@ -113,6 +113,8 @@ export type EvidenceItem = {
   contentType: string;
   sizeBytes: number;
   sequence: number;
+  /** Which lens captured a photo/video clip; null for audio and older uploads. */
+  camera: 'front' | 'back' | null;
   /** Device-reported capture start; null when the handset did not supply one. */
   capturedAt: string | null;
   uploadedAt: string;

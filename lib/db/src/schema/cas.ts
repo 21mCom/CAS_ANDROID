@@ -178,7 +178,10 @@ export const casGateEvidence = pgTable("cas_gate_evidence", {
  * a responder asks from the console). timing is "immediate" (capture begins
  * at trigger, catching the first-~60-seconds window) or "screen-off"
  * (capture begins when the screen next turns off after the trigger — the
- * stealth-first option) and applies to every enabled type.
+ * stealth-first option) and applies to every enabled type. camera is "back"
+ * (the original behavior), "front", or "both" (front and back captured on
+ * devices with concurrent-camera support; the handset journals an honest
+ * degradation on devices without it) and applies to photo and video.
  */
 export const casCapturePolicy = pgTable("cas_capture_policy", {
   id: text("id").primaryKey(),
@@ -186,6 +189,7 @@ export const casCapturePolicy = pgTable("cas_capture_policy", {
   photo: text("photo").notNull().default("off"),
   video: text("video").notNull().default("off"),
   timing: text("timing").notNull().default("immediate"),
+  camera: text("camera").notNull().default("back"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export const insertCasIncidentSchema = createInsertSchema(casIncidents);
@@ -279,6 +283,9 @@ export const casEvidence = pgTable("cas_evidence", {
   capturedAt: timestamp("captured_at", { withTimezone: true }),
   requestId: text("request_id"),
   sequence: integer("sequence").notNull().default(1),
+  // Which lens captured this clip ("front" | "back"); null for audio and for
+  // clips uploaded by APKs that predate the camera label.
+  camera: text("camera"),
   data: bytea("data").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

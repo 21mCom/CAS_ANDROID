@@ -32,7 +32,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Owner-visible, bounded evidence playground. No preview surface or activity
  * is opened; Android's camera/microphone indicators and service notification
  * remain visible. All capture is serialized so two recorders never fight for
- * the microphone. Hardware failures are isolated per kind and journaled.
+ * the microphone — the "both" camera selection captures each lens in turn
+ * rather than streaming them concurrently. Hardware failures are isolated
+ * per kind (and per lens) and journaled.
  */
 class EvidenceCaptureService : Service() {
     private val worker = Executors.newSingleThreadExecutor()
@@ -70,6 +72,9 @@ class EvidenceCaptureService : Service() {
         }
         val timing = intent.getStringExtra("timing")
         val requestId = intent.getStringExtra("request_id")
+        // back | front | both; anything missing or unknown keeps the original
+        // back-camera behavior.
+        val camera = intent.getStringExtra("camera") ?: "back"
         worker.execute {
             try {
                 if (timing == "screen-off" && !waitForScreenOff()) return@execute
@@ -95,14 +100,28 @@ class EvidenceCaptureService : Service() {
                                     }
                                 }
                             } else {
-                                val start = System.currentTimeMillis()
-                                val file = File(cacheDir, if (kind == "photo") "photo.jpg" else "video.mp4")
-                                try {
-                                    if (kind == "photo") photograph(file) else recordVideo(file)
-                                    stage(incident, kind, start, 1, requestId, file)
-                                    TestStore.record(this, "EVIDENCE_CAPTURE", mapOf("kind" to kind, "outcome" to "CAPTURED", "detail" to "${file.length()} bytes"))
-                                } finally {
-                                    file.delete()
+                                val (lenses, degraded) = selectedLenses(camera)
+                                if (lenses.isEmpty()) throw IOException("No camera available")
+                                if (degraded) {
+                                    TestStore.record(this, "EVIDENCE_CAPTURE", mapOf(
+                                        "kind" to kind, "outcome" to "DEGRADED", "camera" to lenses[0].label,
+                                        "detail" to "camera '$camera' requested but this device cannot honor it (missing lens or no concurrent front+back support); capturing ${lenses[0].label} only",
+                                    ))
+                                }
+                                // Each lens gets its own artifact so the panel
+                                // can label which camera the evidence came from.
+                                for ((index, lens) in lenses.withIndex()) {
+                                    val start = System.currentTimeMillis()
+                                    val file = File(cacheDir, if (kind == "photo") "photo-${lens.label}.jpg" else "video-${lens.label}.mp4")
+                                    try {
+                                        if (kind == "photo") photograph(file, lens.id) else recordVideo(file, lens.id)
+                                        stage(incident, kind, start, index + 1, requestId, file, lens.label)
+                                        TestStore.record(this, "EVIDENCE_CAPTURE", mapOf("kind" to kind, "outcome" to "CAPTURED", "camera" to lens.label, "detail" to "${file.length()} bytes"))
+                                    } catch (error: Exception) {
+                                        TestStore.record(this, "EVIDENCE_CAPTURE", mapOf("kind" to kind, "outcome" to "FAILED", "camera" to lens.label, "detail" to error.toString()))
+                                    } finally {
+                                        file.delete()
+                                    }
                                 }
                             }
                         } catch (error: Exception) {
@@ -140,20 +159,46 @@ class EvidenceCaptureService : Service() {
         }
     }
 
-    private fun stage(incident: String, kind: String, started: Long, sequence: Int, requestId: String?, file: File) {
-        val sidecar = EvidenceUploader.enqueue(this, EvidenceUploader.Meta(incident, kind, started, sequence, requestId), file.readBytes())
+    private fun stage(incident: String, kind: String, started: Long, sequence: Int, requestId: String?, file: File, camera: String? = null) {
+        val sidecar = EvidenceUploader.enqueue(this, EvidenceUploader.Meta(incident, kind, started, sequence, requestId, camera), file.readBytes())
         // Upload errors cannot erase the durable pair or block the next clip.
         try { EvidenceUploader.upload(this, sidecar) } catch (error: Exception) {
             TestStore.record(this, "EVIDENCE_UPLOAD", mapOf("kind" to kind, "outcome" to "RETRY_LATER", "detail" to error.toString()))
         }
     }
 
-    private fun cameraId(): String {
+    /** A lens to capture from: the console-facing label plus the camera2 id. */
+    private data class Lens(val label: String, val id: String)
+
+    private fun cameraId(facing: Int): String? {
         val manager = getSystemService(CameraManager::class.java)
-        val ids = manager.cameraIdList
-        return ids.firstOrNull {
-            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        } ?: ids.firstOrNull() ?: throw IOException("No camera available")
+        return manager.cameraIdList.firstOrNull {
+            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == facing
+        }
+    }
+
+    /**
+     * Resolve the camera selection ("back" | "front" | "both") to the lenses
+     * to capture from. "both" is honored only when the device advertises the
+     * front+back pair in its concurrent-camera combinations (API 30+; the
+     * approved baseline is API 35, and Pixels support concurrent streams).
+     * The boolean flags an honest degradation: the request could not be
+     * honored as asked, so only the best single lens is captured and the
+     * caller journals the DEGRADED outcome.
+     */
+    private fun selectedLenses(selection: String): Pair<List<Lens>, Boolean> {
+        val back = cameraId(CameraCharacteristics.LENS_FACING_BACK)?.let { Lens("back", it) }
+        val front = cameraId(CameraCharacteristics.LENS_FACING_FRONT)?.let { Lens("front", it) }
+        return when (selection) {
+            "front" -> if (front != null) listOf(front) to false else listOfNotNull(back) to true
+            "both" -> {
+                val concurrent = back != null && front != null &&
+                    getSystemService(CameraManager::class.java).concurrentCameraIds
+                        .any { combo -> back.id in combo && front.id in combo }
+                if (concurrent) listOf(back, front) to false else listOfNotNull(back ?: front) to true
+            }
+            else -> listOfNotNull(back ?: front) to false
+        }
     }
 
     private fun openCamera(id: String): CameraDevice {
@@ -195,8 +240,7 @@ class EvidenceCaptureService : Service() {
         return opened ?: throw IOException("Camera session configuration failed")
     }
 
-    private fun photograph(file: File) {
-        val id = cameraId()
+    private fun photograph(file: File, id: String) {
         val sizes = getSystemService(CameraManager::class.java).getCameraCharacteristics(id)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG)
             ?: throw IOException("No JPEG output")
@@ -237,7 +281,7 @@ class EvidenceCaptureService : Service() {
         }
     }
 
-    private fun recordVideo(file: File) {
+    private fun recordVideo(file: File, id: String) {
         val recorder = MediaRecorder(this)
         try {
             file.delete()
@@ -251,7 +295,7 @@ class EvidenceCaptureService : Service() {
             recorder.setVideoEncodingBitRate(4_000_000)
             recorder.setOutputFile(file.absolutePath)
             recorder.prepare()
-            openCamera(cameraId()).use { camera ->
+            openCamera(id).use { camera ->
                 session(camera, recorder.surface).use { captureSession ->
                     val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                         .apply { addTarget(recorder.surface) }.build()

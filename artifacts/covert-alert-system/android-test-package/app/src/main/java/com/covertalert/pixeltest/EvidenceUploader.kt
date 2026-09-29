@@ -16,6 +16,9 @@ object EvidenceUploader {
         val capturedAtMs: Long,
         val sequence: Int,
         val requestId: String? = null,
+        // Which lens a photo/video clip came from ("front" | "back"); null for
+        // audio so the server stores no meaningless label.
+        val camera: String? = null,
     ) {
         val contentType: String get() = when (kind) {
             "photo" -> "image/jpeg"
@@ -56,6 +59,7 @@ object EvidenceUploader {
                 .put("kind", meta.kind).put("capturedAtMs", meta.capturedAtMs)
                 .put("sequence", meta.sequence).put("contentType", meta.contentType)
             if (meta.requestId != null) json.put("requestId", meta.requestId)
+            if (meta.camera != null) json.put("camera", meta.camera)
             metadataTemp.also { tmp ->
                 tmp.outputStream().use { stream ->
                     stream.write(json.toString().toByteArray(Charsets.UTF_8))
@@ -120,6 +124,7 @@ object EvidenceUploader {
                 connection.setRequestProperty("X-Cas-Captured-At", json.getLong("capturedAtMs").toString())
                 connection.setRequestProperty("X-Cas-Sequence", json.getInt("sequence").toString())
                 if (json.has("requestId")) connection.setRequestProperty("X-Cas-Capture-Request-Id", json.getString("requestId"))
+                if (json.has("camera")) connection.setRequestProperty("X-Cas-Evidence-Camera", json.getString("camera"))
                 connection.setFixedLengthStreamingMode(file.length())
                 connection.outputStream.use { output -> file.inputStream().use { it.copyTo(output) } }
                 connection.responseCode

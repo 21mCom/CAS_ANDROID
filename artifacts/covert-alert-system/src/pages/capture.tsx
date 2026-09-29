@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Camera, Check, Clock3, Eye, Mic, Video } from 'lucide-react';
+import { Camera, Check, Clock3, Eye, Mic, SwitchCamera, Video } from 'lucide-react';
 import { SectionKicker } from '@/components/field-ui';
 import {
   useCapturePolicy,
+  type CaptureCamera,
   type CapturePolicy,
   type CaptureSetting,
   type CaptureTiming,
@@ -19,13 +20,13 @@ const KINDS = [
     key: 'photo' as const,
     label: 'Photo',
     icon: Camera,
-    detail: 'One still from the rear camera, no camera UI on screen. Camera indicator shows briefly.',
+    detail: 'One still per selected camera, no camera UI on screen. Camera indicator shows briefly.',
   },
   {
     key: 'video' as const,
     label: 'Video',
     icon: Video,
-    detail: 'One 20-second clip from the rear camera. Camera (and mic) indicators show while recording.',
+    detail: 'One 20-second clip per selected camera. Camera (and mic) indicators show while recording.',
   },
 ];
 
@@ -43,6 +44,21 @@ const TIMING_LABELS: Record<CaptureTiming, { label: string; detail: string }> = 
   'screen-off': {
     label: 'On screen-off',
     detail: 'Capture begins only when the screen next turns off after the trigger — the stealth-first option. If the screen is already off, capture starts right away.',
+  },
+};
+
+const CAMERA_LABELS: Record<CaptureCamera, { label: string; detail: string }> = {
+  back: {
+    label: 'Back camera',
+    detail: 'The original behavior: photo and video capture the environment the phone is pointed at.',
+  },
+  front: {
+    label: 'Front camera',
+    detail: 'Photo and video capture whoever is holding the phone.',
+  },
+  both: {
+    label: 'Front and back',
+    detail: 'Captures both angles — the environment and the holder. Needs concurrent-camera hardware (Pixel 8 and later support it); on a device without it the handset captures the back camera only and journals the degradation on the incident.',
   },
 };
 
@@ -138,6 +154,36 @@ export default function Capture() {
                   </span>
                   <span className={`mt-2 block text-[11px] leading-4 ${policy.timing === timing ? 'text-[#c2cec7]' : 'text-[#687271]'}`}>
                     {TIMING_LABELS[timing].detail}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border border-[#d7d8d0] bg-[#fbfbf7] p-5">
+            <div className="flex items-center gap-2">
+              <SwitchCamera size={16} className="text-[#203c49]" />
+              <SectionKicker>Camera for photo &amp; video</SectionKicker>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-[#687271]">
+              Applies to every enabled camera-based capture type. Each captured artifact is labeled
+              with the camera it came from on the incident's evidence panel.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              {(['back', 'front', 'both'] as const).map((camera) => (
+                <button
+                  key={camera}
+                  disabled={saving}
+                  onClick={() => { void apply({ camera }); }}
+                  className={`border p-4 text-left transition-colors disabled:opacity-40 ${policy.camera === camera ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] bg-[#f7f7f1] text-[#687271] hover:border-[#203c49]'}`}
+                  data-testid={`button-capture-camera-${camera}`}
+                >
+                  <span className="flex items-center gap-2 text-xs font-bold">
+                    {policy.camera === camera && <Check size={13} />}
+                    {CAMERA_LABELS[camera].label}
+                  </span>
+                  <span className={`mt-2 block text-[11px] leading-4 ${policy.camera === camera ? 'text-[#c2cec7]' : 'text-[#687271]'}`}>
+                    {CAMERA_LABELS[camera].detail}
                   </span>
                 </button>
               ))}

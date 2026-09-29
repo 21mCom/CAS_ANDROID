@@ -305,6 +305,15 @@ requests, and the shared device token is not accepted for evidence.
    opened on the phone.
 4. Set **Video** to *Start on trigger*, alert again. Pass: one ~20 s video
    clip lands in the panel, playable after download.
+4a. **Camera selector:** on the console **Evidence capture** page, set
+   **Camera for photo & video** to *Front and back* and alert again. Pass:
+   one still **and** one clip per lens land in the panel, each labeled with
+   its camera (`photo · back camera`, `photo · front camera`, …), and the
+   downloads are named `…-photo-back-1.jpg` / `…-photo-front-2.jpg`. Then
+   try *Front camera* alone. If the phone cannot do concurrent front+back
+   capture (Pixel 8 and later can), the journal honestly shows
+   `EVIDENCE_CAPTURE … outcome=DEGRADED` and only the back camera is
+   captured — record that; it is the measured hardware limit, not a bug.
 5. **Timing experiment:** switch timing to *On screen-off* and run the same
    scenario twice — once locking the phone right away, once leaving the
    screen on for ~2 minutes first. Pass: in both runs capture begins only
@@ -365,7 +374,7 @@ T7 email sink:       PASS/FAIL — <subject seen>
 T7b SMTP failure honesty: PASS/FAIL/SKIP — <authentication (permanent) named in chip + journal? SENT after fix + re-queue?>
 T8 failure honesty:  PASS/FAIL — <replay:true seen?>
 T9 no-data fallback: PASS/FAIL/SKIP — <SMS arrived with data off?>
-T10 evidence capture: PASS/FAIL — <which types landed; immediate vs screen-off comparison; any CAPTURE_FAILED detail>
+T10 evidence capture: PASS/FAIL — <which types landed; immediate vs screen-off comparison; camera selector (front/both) honored & labeled?; any CAPTURE_FAILED or DEGRADED detail>
 T10b push wake:        PASS/FAIL/SKIP — <push path honored from idle? fallback polling still works?>
 Console UI check:    incidents page showed all four transport chips with matching states? Y/N
 Blockers/questions:  <...>

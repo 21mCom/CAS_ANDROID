@@ -70,6 +70,7 @@ function validState() {
         contentType: 'audio/mp4',
         sizeBytes: 1024,
         sequence: 1,
+        camera: null,
         capturedAt: null,
         uploadedAt: '2026-09-27T14:09:00.000Z',
         requestId: null,
