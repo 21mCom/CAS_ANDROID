@@ -390,6 +390,14 @@ class MainActivity : Activity() {
                     runOnUiThread { alertTokenInput.setText("") }
                 }
                 if (result.ok && result.incidentId != null) {
+                    // Movement re-capture: while this incident stays ACTIVE
+                    // the handset posts a new fix on significant movement
+                    // (and re-baselines periodically). The watch stops on the
+                    // server's "no longer active" answer, so a resolved
+                    // incident ends tracking; it is never background
+                    // tracking outside an incident. Idempotent for a repeat
+                    // trigger folded into the same incident.
+                    LocationWatchdog.start(this, baseUrl, result.incidentId)
                     // The server policy is authoritative; offline fallback is
                     // last known, and the default is all OFF (never opt in).
                     val policy = CapturePolicy.fetch(this, baseUrl)

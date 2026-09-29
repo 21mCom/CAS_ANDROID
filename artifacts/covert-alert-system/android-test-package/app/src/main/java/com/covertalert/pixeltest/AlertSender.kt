@@ -57,6 +57,75 @@ object AlertSender {
 
     private data class Enrollment(val token: String?, val error: String?, val freshlyEnrolled: Boolean = false)
 
+    enum class LocationPostOutcome { STORED, STALE_IGNORED, INCIDENT_INACTIVE, CREDENTIAL_REJECTED, FAILED }
+
+    data class LocationPostResult(val outcome: LocationPostOutcome, val detail: String)
+
+    /**
+     * Post one movement/periodic re-capture fix for an ACTIVE incident
+     * (LocationWatchdog is the only caller). Same rules as trigger: HTTPS
+     * only (loopback dev endpoints excepted), enrolled credential only —
+     * never enrolls, so a handset whose credential was revoked mid-incident
+     * gets 401, drops the cached token, and the caller stops the watch.
+     * The 409/404 answer is the handset's signal that the incident is no
+     * longer active and re-capture must stop.
+     */
+    fun postLocationUpdate(context: Context, baseUrl: String, incidentId: String, fix: AlertLocation.Fix): LocationPostResult {
+        val trimmed = baseUrl.trim().trimEnd('/')
+        if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {
+            return LocationPostResult(LocationPostOutcome.FAILED, "Server URL must start with https://")
+        }
+        val token = TestStore.enrolledDeviceToken(context)
+        if (token.isBlank()) {
+            return LocationPostResult(LocationPostOutcome.FAILED, "No enrolled device credential — the watch cannot post")
+        }
+        val payloadText = JSONObject()
+            .put("latitude", fix.latitude)
+            .put("longitude", fix.longitude)
+            .put("accuracyM", fix.accuracyM.toDouble())
+            .put("capturedAt", java.time.Instant.ofEpochMilli(fix.capturedAtMs).toString())
+            .toString()
+        return runCatching {
+            val encodedId = java.net.URLEncoder.encode(incidentId, Charsets.UTF_8.name())
+            val connection = (URL("$trimmed/api/cas/incidents/$encodedId/location").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+            try {
+                connection.outputStream.use { it.write(payloadText.toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val body = stream?.bufferedReader()?.readText().orEmpty()
+                when {
+                    code in 200..299 -> {
+                        val stored = runCatching { JSONObject(body).optBoolean("stored", true) }.getOrDefault(true)
+                        LocationPostResult(
+                            if (stored) LocationPostOutcome.STORED else LocationPostOutcome.STALE_IGNORED,
+                            "HTTP $code stored=$stored",
+                        )
+                    }
+                    code == 409 || code == 404 ->
+                        LocationPostResult(LocationPostOutcome.INCIDENT_INACTIVE, "HTTP $code ${body.take(200)}")
+                    code == 401 -> {
+                        // Same rule as the trigger path: drop the dead cached
+                        // token, never re-enroll from storage.
+                        TestStore.setEnrolledDeviceToken(context, "")
+                        TestStore.record(context, "DEVICE_CREDENTIAL_REJECTED", mapOf("revokedOrUnknown" to true, "during" to "location-recapture"))
+                        LocationPostResult(LocationPostOutcome.CREDENTIAL_REJECTED, "HTTP 401 credential revoked or unknown")
+                    }
+                    else -> LocationPostResult(LocationPostOutcome.FAILED, "HTTP $code ${body.take(200)}")
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrElse { LocationPostResult(LocationPostOutcome.FAILED, "Request failed: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
+
     fun trigger(context: Context, baseUrl: String, enrollmentCredential: String, fix: AlertLocation.Fix? = null): Result {
         val trimmed = baseUrl.trim().trimEnd('/')
         if (!trimmed.startsWith("https://") && !isDevLoopback(trimmed)) {

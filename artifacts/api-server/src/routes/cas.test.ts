@@ -773,6 +773,138 @@ test("a reused trigger stores a fresher fix and journals it, but never moves bac
   assert.equal(events.filter((event) => event.type === "LOCATION_UPDATED").length, 1);
 });
 
+test("movement re-capture stores each fresher fix, journals the history, and the newest stays authoritative", async () => {
+  const triggerAt = new Date(Date.now() - 10 * 60_000);
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({
+      location: { latitude: 52.5163, longitude: 13.3777, accuracyM: 12.5, capturedAt: triggerAt.toISOString() },
+    }),
+  });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // First movement fix, ~111 m north of the trigger fix.
+  const move1At = new Date(Date.now() - 5 * 60_000);
+  const move1 = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5173, longitude: 13.3777, accuracyM: 18, capturedAt: move1At.toISOString() }),
+  });
+  assert.equal(move1.status, 200);
+  assert.deepEqual(await move1.json(), { id, stored: true });
+
+  // Second movement fix, another ~111 m north.
+  const move2At = new Date(Date.now() - 60_000);
+  const move2 = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5183, longitude: 13.3777, accuracyM: 9, capturedAt: move2At.toISOString() }),
+  });
+  assert.equal(move2.status, 200);
+
+  // The newest fix is authoritative on the incident row...
+  const [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 52.5183);
+  assert.equal(incident.locationAccuracyM, 9);
+  assert.equal(incident.locationCapturedAt?.getTime(), move2At.getTime());
+  const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS })).json() as {
+    activeIncident: { location: { latitude: number; capturedAt: string } };
+  };
+  assert.equal(state.activeIncident.location.latitude, 52.5183);
+  assert.equal(state.activeIncident.location.capturedAt, move2At.toISOString());
+
+  // ...and every accepted fix is journaled with accuracy and capture time,
+  // numbered so the history reads in order (trigger fix is #1).
+  const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  const updates = events.filter((event) => event.type === "LOCATION_UPDATED");
+  assert.equal(updates.length, 2);
+  assert.ok(updates[0].detail.includes("fix #2"));
+  assert.ok(updates[0].detail.includes("52.51730, 13.37770"));
+  assert.ok(updates[0].detail.includes("±18 m"));
+  assert.ok(updates[0].detail.includes(move1At.toISOString()));
+  assert.ok(updates[0].detail.includes("before receipt"));
+  assert.ok(updates[1].detail.includes("fix #3"));
+  assert.ok(updates[1].detail.includes("Movement re-capture"));
+});
+
+test("location updates stop the moment the incident resolves, and stale or unknown updates store nothing", async () => {
+  const triggerAt = new Date(Date.now() - 10 * 60_000);
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({
+      location: { latitude: 52.5163, longitude: 13.3777, accuracyM: 12.5, capturedAt: triggerAt.toISOString() },
+    }),
+  });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+
+  // A fix older than the stored one (a retried POST arriving late) is
+  // acknowledged but stores nothing and journals nothing.
+  const stale = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 0, longitude: 0, accuracyM: 5000, capturedAt: new Date(triggerAt.getTime() - 60_000).toISOString() }),
+  });
+  assert.equal(stale.status, 200);
+  assert.deepEqual(await stale.json(), { id, stored: false });
+  let [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 52.5163);
+  let events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "LOCATION_UPDATED").length, 0);
+
+  // Acked is still ACTIVE: updates keep landing.
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(ack.status, 200);
+  const whileAcked = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5173, longitude: 13.3777, accuracyM: 18, capturedAt: new Date().toISOString() }),
+  });
+  assert.equal(whileAcked.status, 200);
+
+  // Resolve, then the very next update is refused loudly: this 409 is the
+  // handset's signal to tear down the re-capture watch.
+  const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(resolve.status, 200);
+  const afterResolve = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5183, longitude: 13.3777, accuracyM: 9, capturedAt: new Date().toISOString() }),
+  });
+  assert.equal(afterResolve.status, 409);
+  assert.match(((await afterResolve.json()) as { error: string }).error, /RESOLVED/);
+  [incident] = await db.select().from(casIncidents).where(eq(casIncidents.id, id));
+  assert.equal(incident.locationLatitude, 52.5173);
+  events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+  assert.equal(events.filter((event) => event.type === "LOCATION_UPDATED").length, 1);
+
+  // An unknown incident id is a 404 with the same "stop" semantics, and a
+  // missing credential is a 401 (the handset drops the dead token).
+  const missing = await fetch(`${baseUrl}/cas/incidents/sim-nope/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5183, longitude: 13.3777, accuracyM: 9, capturedAt: new Date().toISOString() }),
+  });
+  assert.equal(missing.status, 404);
+  const anonymous = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 52.5183, longitude: 13.3777, accuracyM: 9, capturedAt: new Date().toISOString() }),
+  });
+  assert.equal(anonymous.status, 401);
+
+  // Malformed fixes are rejected with 400, same contract as the trigger.
+  const malformed = await fetch(`${baseUrl}/cas/incidents/${id}/location`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({ latitude: 91, longitude: 13.3777, accuracyM: 9, capturedAt: new Date().toISOString() }),
+  });
+  assert.equal(malformed.status, 400);
+});
+
 test("alert message carries the maps link with accuracy and fix age, and says so when no fix was captured", async () => {
   const { buildCasAlertMessage } = await import("../lib/delivery-providers");
   const item = {

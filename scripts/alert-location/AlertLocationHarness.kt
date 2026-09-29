@@ -95,6 +95,52 @@ fun main() {
         "stale coarse fix keeps its age in the wording (and locale can never mangle the coordinates)",
     )
 
+    // --- Movement re-capture rules (ACTIVE incidents only) ------------------
+    // distanceM: haversine sanity. Berlin (52.5163, 13.3777) to Paris
+    // (48.8566, 2.3522) is ~878 km; a 0.01° latitude step is ~1.1 km.
+    val berlin = fix()
+    val paris = fix(lat = 48.8566, lng = 2.3522)
+    check(AlertLocation.distanceM(berlin, paris) in 800_000f..950_000f, "distanceM: Berlin-Paris is ~878 km")
+    check(AlertLocation.distanceM(berlin, berlin) == 0f, "distanceM: a fix is 0 m from itself")
+    val walked = fix(lat = 52.5163 + 0.001, lng = 13.3777) // ~111 m north
+    check(AlertLocation.distanceM(berlin, walked) in 100f..125f, "distanceM: 0.001° latitude is ~111 m")
+
+    // acceptMovementFix: the anchor is the last posted fix.
+    val anchor = fix(capturedAtMs = now - 120_000L)
+    check(AlertLocation.acceptMovementFix(null, fix(capturedAtMs = now)), "first candidate after watch start re-baselines the incident")
+    check(
+        AlertLocation.acceptMovementFix(anchor, fix(lat = 52.5163 + 0.001, capturedAtMs = now)),
+        "111 m of movement past the frequency cap is accepted",
+    )
+    check(
+        !AlertLocation.acceptMovementFix(anchor, fix(lat = 52.5163 + 0.0003, capturedAtMs = now)),
+        "33 m of drift is below the 100 m threshold and is not posted",
+    )
+    check(
+        !AlertLocation.acceptMovementFix(anchor, fix(lat = 52.5163 + 0.005, capturedAtMs = anchor.capturedAtMs + 30_000L)),
+        "even 550 m of movement inside the 60 s frequency cap is not posted",
+    )
+    check(
+        !AlertLocation.acceptMovementFix(anchor, fix(lat = 52.5163 + 0.005, accuracy = 3_000f, capturedAtMs = now)),
+        "a ±3 km cell fix can never prove 100 m movement, however far it jumps",
+    )
+    check(
+        !AlertLocation.acceptMovementFix(anchor, anchor.copy(capturedAtMs = anchor.capturedAtMs - 5_000L)),
+        "a fix older than the anchor is never accepted",
+    )
+    check(
+        !AlertLocation.acceptMovementFix(anchor, anchor.copy(latitude = 52.5163 + 0.005)),
+        "a fix with the anchor's own timestamp is a duplicate, not movement",
+    )
+
+    // periodicRecaptureDue: a stationary handset still re-baselines on the clock.
+    check(AlertLocation.periodicRecaptureDue(now - AlertLocation.RECAPTURE_PERIODIC_MS, now), "periodic fix is due once the interval elapses")
+    check(!AlertLocation.periodicRecaptureDue(now - AlertLocation.RECAPTURE_PERIODIC_MS + 1_000L, now), "periodic fix is not due one second early")
+
+    // recaptureExpired: the hard battery cap, independent of movement.
+    check(AlertLocation.recaptureExpired(now - AlertLocation.RECAPTURE_MAX_DURATION_MS, now), "the watch stops at the 2 h cap")
+    check(!AlertLocation.recaptureExpired(now - AlertLocation.RECAPTURE_MAX_DURATION_MS + 1_000L, now), "the watch runs until the cap")
+
     // --- toTriggerJson: the shape the server persists -----------------------
     // 2025-09-27T12:00:00Z — a fixed instant so the ISO string is asserted exactly.
     val json = AlertLocation.toTriggerJson(fix(lat = 48.8566, lng = 2.3522, accuracy = 30f, capturedAtMs = 1_758_974_400_000L, provider = "fused"))

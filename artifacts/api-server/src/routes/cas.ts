@@ -876,12 +876,14 @@ router.post("/cas/incidents/test", requireCasCredential, async (req, res, next) 
 // dead-letter. An omitted list means "every enabled device channel" (API
 // drills and older APKs). WHATSAPP stays in the enum so APKs from the
 // retired tap-to-send build get the loud 409 below instead of a 400.
-// One position fix per alert. The handset captures it under a bounded wait
-// before the trigger POST and sends it with its accuracy radius and capture
-// time; both must travel with the coordinates everywhere they are shown so a
-// stale or wildly inaccurate fix is never presented as current truth. The
-// server does not freshness-check the fix beyond shape (a labeled stale fix
-// is worth more than none in a distress alert) — the console renders the age.
+// One position fix rides the alert trigger; while the incident stays ACTIVE
+// the handset then posts movement re-capture fixes to the per-incident
+// location endpoint below. Every fix travels with its accuracy radius and
+// capture time everywhere it is shown, so a stale or wildly inaccurate fix
+// is never presented as current truth. The server does not freshness-check
+// the fix beyond shape (a labeled stale fix is worth more than none in a
+// distress alert) — the console renders the age. The incident row carries
+// the newest fix (authoritative); the journal keeps the full fix history.
 // Numbers, not integers: coordinates and accuracy are fractional.
 const triggerLocationSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -1047,6 +1049,68 @@ router.post("/cas/incidents/trigger", requireCasCredential, async (req, res, nex
       };
     });
     return res.status(result.reused ? 200 : 201).json(result);
+  } catch (error) { return next(error); }
+});
+
+// Movement re-capture: while an incident is ACTIVE the handset posts a new
+// fix when it moves significantly (and periodically when stationary) so
+// responders track the response, not just the trigger-time position. The
+// incident row keeps the newest fix as authoritative; every accepted fix is
+// journaled (LOCATION_UPDATED), so the console incident view carries the
+// full history with accuracy and capture time. Resolution stops re-capture:
+// a non-active incident rejects updates (409/404) and the handset's watch
+// tears down on that answer. The monotonic rule matches repeat triggers —
+// an older fix arriving late (retried POST) never moves the incident
+// backwards in time.
+router.post("/cas/incidents/:id/location", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
+  try {
+    const parsed = triggerLocationSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid location update", issues: parsed.error.issues });
+    }
+    const location = parsed.data;
+    const now = new Date();
+    const result = await db.transaction(async (tx) => {
+      // Lock the incident row so concurrent updates and a resolve cannot
+      // interleave into a lost write or an update landing after resolution.
+      await tx.execute(sql`SELECT id FROM cas_incidents WHERE id = ${req.params.id} FOR UPDATE`);
+      const rows = await tx.select().from(casIncidents).where(eq(casIncidents.id, req.params.id)).limit(1);
+      const incident = rows[0];
+      if (!incident) return { kind: "missing" as const };
+      if (incident.status !== "ACTIVE_UNACKED" && incident.status !== "ACTIVE_ACKED") {
+        return { kind: "inactive" as const, status: incident.status };
+      }
+      const incomingCapturedAt = new Date(location.capturedAt);
+      const stored = incident.locationCapturedAt === null || incomingCapturedAt > incident.locationCapturedAt;
+      if (!stored) return { kind: "ok" as const, stored: false };
+      await tx.update(casIncidents).set({
+        locationLatitude: location.latitude,
+        locationLongitude: location.longitude,
+        locationAccuracyM: location.accuracyM,
+        locationCapturedAt: incomingCapturedAt,
+        updatedAt: now,
+      }).where(eq(casIncidents.id, incident.id));
+      const priorFixes = await tx.select({ id: casIncidentEvents.id }).from(casIncidentEvents)
+        .where(sql`${casIncidentEvents.incidentId} = ${incident.id} AND ${casIncidentEvents.type} = 'LOCATION_UPDATED'`);
+      const fixNumber = priorFixes.length + (incident.locationCapturedAt === null ? 0 : 1) + 1;
+      const ageSeconds = Math.max(0, Math.round((now.getTime() - incomingCapturedAt.getTime()) / 1000));
+      await tx.insert(casIncidentEvents).values({
+        id: `${incident.id}-location-${randomUUID()}`,
+        incidentId: incident.id,
+        type: "LOCATION_UPDATED",
+        priority: "P2",
+        detail: `Movement re-capture fix #${fixNumber} from ${deviceAttribution(res)}: ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)} (±${Math.round(location.accuracyM)} m, captured ${location.capturedAt}, ${ageSeconds}s before receipt). Newest fix is authoritative; earlier fixes stay in this journal.`,
+        createdAt: now,
+      });
+      return { kind: "ok" as const, stored: true };
+    });
+    if (result.kind === "missing") {
+      return res.status(404).json({ error: "Incident not found; stop re-capture" });
+    }
+    if (result.kind === "inactive") {
+      return res.status(409).json({ error: `Incident is ${result.status}; location updates are only accepted while ACTIVE — stop re-capture`, status: result.status });
+    }
+    return res.json({ id: req.params.id, stored: result.stored });
   } catch (error) { return next(error); }
 });
 

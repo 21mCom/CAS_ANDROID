@@ -26,3 +26,9 @@ Direct `tsx --test` runs use the shared dev `DATABASE_URL`, so a running api-ser
 **Why:** a green-then-red flip with no code change between runs cost a debugging round; the failures looked like real regressions (wrong transport, wrong counts) because the dev worker was delivering test rows to the live sink.
 
 **How to apply:** validate DB-heavy suites via the contract runner (`pnpm --filter @workspace/api-server run test` — disposable review database), or stop the api-server workflow before direct `tsx --test` runs; never trust a direct run's failures while the workflow is up.
+
+Ambient `CAS_EMAIL_SMTP_*` workspace secrets leak into direct `tsx --test src/routes/cas.test.ts` runs and enable the EMAIL channel, failing the provider-channel assertion tests even on an unmodified tree.
+
+**Why:** the failures mimic a provider-config regression but reproduce identically without any code change.
+
+**How to apply:** treat direct-run EMAIL-channel failures as environment noise; the contract runner (`pnpm --filter @workspace/api-server run test`, disposable review database) is the authoritative green.

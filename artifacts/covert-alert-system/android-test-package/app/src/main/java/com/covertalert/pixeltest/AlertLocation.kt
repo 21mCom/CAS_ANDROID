@@ -1,6 +1,11 @@
 package com.covertalert.pixeltest
 
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 import org.json.JSONObject
 import java.util.Locale
 
@@ -29,6 +34,25 @@ object AlertLocation {
 
     /** A last-known fix older than this is not worth sending at all. */
     const val MAX_LAST_KNOWN_AGE_MS = 6L * 60L * 60L * 1000L // 6 h
+
+    // --- Movement re-capture (ACTIVE incidents only) -----------------------
+    // While an incident is active the handset re-captures so responders see
+    // movement during the response, not just the trigger-time fix. Battery
+    // and privacy posture: the watch exists only while an incident is active
+    // (the server rejects updates for resolved incidents and the handset
+    // stops on that answer), never as general background tracking.
+
+    /** A candidate this far from the last posted fix counts as significant movement. */
+    const val RECAPTURE_DISTANCE_M = 100f
+
+    /** Movement fixes are posted at most this often, however fast they arrive. */
+    const val RECAPTURE_MIN_INTERVAL_MS = 60_000L
+
+    /** A stationary handset still re-captures this often while the incident is active. */
+    const val RECAPTURE_PERIODIC_MS = 5L * 60L * 1000L // 5 min
+
+    /** Hard stop: one incident's re-capture never runs longer than this. */
+    const val RECAPTURE_MAX_DURATION_MS = 2L * 60L * 60L * 1000L // 2 h
 
     data class Fix(
         val latitude: Double,
@@ -75,6 +99,42 @@ object AlertLocation {
     fun captureComplete(answeredProviders: Int, requestedProviders: Int, best: Fix?): Boolean =
         (best != null && best.accuracyM <= GOOD_ACCURACY_M) ||
             (requestedProviders > 0 && answeredProviders >= requestedProviders)
+
+    /** Great-circle distance between two fixes, in meters (haversine). */
+    fun distanceM(a: Fix, b: Fix): Float {
+        val earthRadiusM = 6_371_000.0
+        val dLat = Math.toRadians(b.latitude - a.latitude)
+        val dLng = Math.toRadians(b.longitude - a.longitude)
+        val lat1 = Math.toRadians(a.latitude)
+        val lat2 = Math.toRadians(b.latitude)
+        val h = sin(dLat / 2).pow(2) + cos(lat1) * cos(lat2) * sin(dLng / 2).pow(2)
+        return (2 * earthRadiusM * asin(sqrt(h))).toFloat()
+    }
+
+    /**
+     * True when a movement-listener fix should become the next posted fix:
+     * the candidate is newer than the anchor, the frequency cap since the
+     * anchor has elapsed, its accuracy radius is tight enough to actually
+     * prove movement at the threshold (a ±3 km cell fix jumping around must
+     * not read as movement), and it is at least RECAPTURE_DISTANCE_M from
+     * the anchor. The first candidate after a watch starts (no anchor) is
+     * always accepted — it re-baselines the incident after the trigger fix.
+     */
+    fun acceptMovementFix(anchor: Fix?, candidate: Fix): Boolean {
+        if (anchor == null) return true
+        if (candidate.capturedAtMs <= anchor.capturedAtMs) return false
+        if (candidate.capturedAtMs - anchor.capturedAtMs < RECAPTURE_MIN_INTERVAL_MS) return false
+        if (candidate.accuracyM > RECAPTURE_DISTANCE_M) return false
+        return distanceM(anchor, candidate) >= RECAPTURE_DISTANCE_M
+    }
+
+    /** True when a stationary handset owes a fresh fix anyway. */
+    fun periodicRecaptureDue(anchorCapturedAtMs: Long, nowMs: Long): Boolean =
+        nowMs - anchorCapturedAtMs >= RECAPTURE_PERIODIC_MS
+
+    /** True when the watch hit its hard duration cap and must stop. */
+    fun recaptureExpired(startedAtMs: Long, nowMs: Long): Boolean =
+        nowMs - startedAtMs >= RECAPTURE_MAX_DURATION_MS
 
     /** Human fix age, matching the console's buildLocationClause phrasing. */
     fun formatAge(nowMs: Long, capturedAtMs: Long): String {

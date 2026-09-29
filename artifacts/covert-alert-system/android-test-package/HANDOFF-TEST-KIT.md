@@ -133,6 +133,22 @@ Proves the fix responders receive is trustworthy, not just present.
 3. **Airplane-mode toggle** (optional): with location off at the OS level,
    send once more. Pass: the alert leaves immediately and both the SMS and
    the console say no fix was captured.
+4. **Movement re-capture** (outdoors, incident still ACTIVE): keep the app
+   open after the send and walk at least 100 m (a short block is enough);
+   wait up to ~1 minute at the far point. Pass: the console incident journal
+   gains a `LOCATION_UPDATED` entry per accepted fix (`Movement re-capture
+   fix #N …` with accuracy `±Nm` and capture age), the incident's location
+   panel moves to the newest fix, and the phone's debug journal shows
+   `LOCATION_RECAPTURE_STARTED` then `LOCATION_RECAPTURE_FIX` with
+   `outcome=POSTED_MOVEMENT`. Fixes arrive at most once a minute however far
+   you walk; standing still still re-baselines every 5 minutes
+   (`POSTED_PERIODIC`).
+5. **Stop on resolve**: resolve the incident in the console, then walk
+   another 100+ m. Pass: no new `LOCATION_UPDATED` entries appear; within
+   one movement (or one 5-minute periodic cycle) the phone's debug journal
+   shows `LOCATION_RECAPTURE_STOPPED` with reason `incident no longer
+   active on the server`. The watch never runs longer than 2 hours per
+   incident (`duration cap reached`) even if nobody resolves it.
 
 ## T3 — SMS dead-letter drill (phone required)
 
@@ -366,6 +382,8 @@ T2 real SMS:         PASS/FAIL — <responder received? console state? incident 
 T2b outdoors:        PASS/FAIL — <accuracy radius ±Nm; fix age; distance link-vs-true position; incident id>
 T2b indoors:         PASS/FAIL — <which behavior: coarser fix (radius/age) / +last-known (age) / no-fix sentence; alert left within ~8s?; incident id>
 T2b location-off (opt.): PASS/FAIL/SKIP — <alert left immediately? SMS + console both said no fix captured?>
+T2b movement re-capture: PASS/FAIL — <LOCATION_UPDATED entries with ±Nm + age? console moved to newest fix? POSTED_MOVEMENT/POSTED_PERIODIC on phone; incident id>
+T2b stop on resolve: PASS/FAIL — <no updates after resolve? LOCATION_RECAPTURE_STOPPED reason seen>
 T3 SMS dead-letter:  PASS/FAIL — <journal sequence seen>
 T4 WhatsApp sink:      PASS/FAIL — <messaging_product/idempotency key seen>
 T5 WhatsApp off-phone: PASS/FAIL — <409 seen? pending list SMS-only?>
@@ -385,6 +403,6 @@ workspace chat. If an alert send or capture misbehaved, also tap **Copy
 debug journal** on the phone and paste that too: the Gate 0A **Copy JSON
 report** deliberately filters the journal down to the harness event types
 its importer accepts, so alert-send and capture events (`MVP_ALERT_*`,
-`MVP_SMS_OUTCOME`, `LOCATION_CAPTURE`, `CAPTURE_*`, …) only appear in the
-debug journal — that is the export that shows why a send failed. Never
-import the debug journal as a Gate 0A report.
+`MVP_SMS_OUTCOME`, `LOCATION_CAPTURE`, `LOCATION_RECAPTURE_*`, `CAPTURE_*`,
+…) only appear in the debug journal — that is the export that shows why a
+send failed. Never import the debug journal as a Gate 0A report.
