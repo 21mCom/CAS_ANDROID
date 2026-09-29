@@ -10,8 +10,10 @@ package com.covertalert.pixeltest
  * committed incident with no SMS leaving the SIM is a NOT_SENT the sender
  * must see. The dispatch test is string-based because DeviceSmsSender
  * journals the same human-readable outcome string; the producer builds that
- * string from [SMS_DISPATCHED_PREFIX] so producer and classifier cannot
- * drift apart (the unit tests pin both sides).
+ * string via [smsDispatchSummary] from the dispatch loop's ACTUAL counts —
+ * never from the responder list's size — so a send in which every division
+ * failed or every sendMultipartTextMessage threw immediately cannot read
+ * as SENT (the unit tests pin both sides).
  */
 object SendOutcomeStatus {
 
@@ -27,6 +29,30 @@ object SendOutcomeStatus {
 
     /** True when sendAlert actually dispatched message parts to the radio. */
     fun smsDispatched(smsOutcome: String): Boolean = smsOutcome.startsWith(SMS_DISPATCHED_PREFIX)
+
+    /**
+     * Builds sendAlert's outcome string from what the dispatch loop actually
+     * did. Only a positive [dispatchedTo] earns the [SMS_DISPATCHED_PREFIX]
+     * success string: when nothing was handed to the radio (every
+     * divideMessage failed, or every sendMultipartTextMessage threw
+     * immediately) the string must not carry the prefix, or the button would
+     * show a green SENT for an alert that never left the phone. A partial
+     * dispatch still names the shortfall so the sender knows to reconcile
+     * with the console's per-recipient receipt.
+     */
+    fun smsDispatchSummary(dispatchedTo: Int, attempted: Int, preDispatchFailures: List<String>): String {
+        if (dispatchedTo <= 0) {
+            val detail = preDispatchFailures.joinToString("; ")
+            return "not sent: no alert SMS could be handed to the radio" +
+                if (detail.isNotEmpty()) " — $detail" else ""
+        }
+        val failedBeforeDispatch = attempted - dispatchedTo
+        return if (failedBeforeDispatch > 0) {
+            "${SMS_DISPATCHED_PREFIX}$dispatchedTo of $attempted responder(s); awaiting radio results ($failedBeforeDispatch failed before dispatch)"
+        } else {
+            "${SMS_DISPATCHED_PREFIX}$dispatchedTo responder(s); awaiting radio results"
+        }
+    }
 
     data class Line(val text: String, val success: Boolean)
 

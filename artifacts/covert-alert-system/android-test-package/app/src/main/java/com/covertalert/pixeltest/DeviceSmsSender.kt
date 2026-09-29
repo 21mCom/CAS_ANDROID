@@ -180,6 +180,7 @@ object DeviceSmsSender {
         }
         handler.postDelayed({ onWatchdog(appContext, sendId) }, RESULT_WATCHDOG_MS)
 
+        var dispatchedTo = 0
         for ((recipient, parts) in roster.partsByRecipient) {
             val sentIntents = ArrayList<PendingIntent>(parts.size)
             for (index in parts.indices) {
@@ -198,6 +199,7 @@ object DeviceSmsSender {
             }
             try {
                 sms.sendMultipartTextMessage(recipient, null, ArrayList(parts), sentIntents, null)
+                dispatchedTo += 1
             } catch (error: IllegalArgumentException) {
                 recordImmediateFailure(appContext, store, batch, recipient, "ILLEGAL_DESTINATION_ADDRESS")
             } catch (error: SecurityException) {
@@ -214,10 +216,20 @@ object DeviceSmsSender {
             "responders" to synchronized(lock) { batch.remainingByRecipient.size },
         ))
         finalizeIfComplete(appContext, sendId)
-        // The ONLY outcome meaning parts reached the radio; built from the
-        // shared prefix SendOutcomeStatus.smsDispatched classifies on, so the
-        // inline button status can never drift from this string.
-        return "${SendOutcomeStatus.SMS_DISPATCHED_PREFIX}${responders.size} responder(s); awaiting radio results"
+        // The outcome string reports what the loop ACTUALLY handed to the
+        // radio — never the responder list's size: when every divideMessage
+        // failed or every sendMultipartTextMessage threw immediately,
+        // nothing left the phone and the inline button status must read
+        // NOT_SENT. SendOutcomeStatus.smsDispatchSummary owns that decision
+        // (and the shared success prefix); the unit tests pin both sides.
+        val preDispatchFailures = synchronized(lock) {
+            batch.failures.entries.map { "${it.value} (${mask(it.key)})" }
+        }
+        return SendOutcomeStatus.smsDispatchSummary(
+            dispatchedTo = dispatchedTo,
+            attempted = roster.partsByRecipient.size + roster.failures.size,
+            preDispatchFailures = preDispatchFailures,
+        )
     }
 
     /** Entry point for SmsResultReceiver; runs on the main thread. */

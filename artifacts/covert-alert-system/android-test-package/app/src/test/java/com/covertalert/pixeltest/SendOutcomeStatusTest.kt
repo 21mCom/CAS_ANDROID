@@ -49,6 +49,50 @@ class SendOutcomeStatusTest {
         assertTrue(line.text.contains("inc-1"))
     }
 
+    // Regression: every divideMessage failed or every sendMultipartTextMessage
+    // threw immediately — zero parts reached the radio. The summary must not
+    // carry the dispatched prefix, so the button must NOT read as SENT.
+    @Test
+    fun allImmediateFailures_isNotSent() {
+        val summary = SendOutcomeStatus.smsDispatchSummary(
+            dispatchedTo = 0,
+            attempted = 2,
+            preDispatchFailures = listOf("PERMISSION_DENIED (***)", "ILLEGAL_DESTINATION_ADDRESS (***)"),
+        )
+        assertFalse(SendOutcomeStatus.smsDispatched(summary))
+        assertTrue(summary.startsWith("not sent"))
+        assertTrue(summary.contains("PERMISSION_DENIED"))
+        val line = SendOutcomeStatus.triggered("inc-7", summary)
+        assertFalse(line.success)
+        assertTrue(line.text.startsWith("NOT_SENT"))
+        assertTrue(line.text.contains("inc-7"))
+    }
+
+    // Partial dispatch: some recipients got the SMS, some failed before
+    // dispatch. Still a real dispatch (SENT), and the shortfall is named so
+    // the sender reconciles with the console's per-recipient receipt.
+    @Test
+    fun partialDispatch_isSentWithShortfallNamed() {
+        val summary = SendOutcomeStatus.smsDispatchSummary(
+            dispatchedTo = 1,
+            attempted = 2,
+            preDispatchFailures = listOf("ILLEGAL_DESTINATION_ADDRESS (***)"),
+        )
+        assertTrue(SendOutcomeStatus.smsDispatched(summary))
+        assertTrue(summary.contains("1 of 2"))
+        assertTrue(summary.contains("1 failed before dispatch"))
+        assertTrue(SendOutcomeStatus.triggered("inc-8", summary).success)
+    }
+
+    // Full dispatch keeps the exact legacy string other surfaces match on.
+    @Test
+    fun fullDispatch_matchesLegacyString() {
+        assertEquals(
+            "sent to 2 responder(s); awaiting radio results",
+            SendOutcomeStatus.smsDispatchSummary(2, 2, emptyList()),
+        )
+    }
+
     @Test
     fun smsManagerUnavailable_isNotSent() {
         assertFalse(SendOutcomeStatus.triggered("inc-2", "SmsManager unavailable").success)

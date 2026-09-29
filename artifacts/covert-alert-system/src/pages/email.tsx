@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CircleAlert, Plug, Save, Trash2 } from 'lucide-react';
 import { EvidenceLabel, SectionKicker } from '@/components/field-ui';
+import { useOutboxStatus, type EmailChannelHealth } from '@/hooks/use-outbox-status';
+import { outboxAgeLabel } from '@/lib/outbox-warnings';
 import {
   deleteEmailAccount,
   fetchEmailAccounts,
@@ -46,6 +48,81 @@ function draftFor(saved: EmailAccountInfo | undefined): AccountDraft {
     fromAddress: saved.fromAddress ?? '',
     saved,
   };
+}
+
+/**
+ * The scheduled mailbox probe's last outcome, mirrored from the outbox
+ * status endpoint onto this page — the person fixing a dead mailbox is
+ * looking here, not at the incidents panel. The probe is channel-level
+ * (one record covering the active account source), so this renders one
+ * line scoped to whichever mailbox the probe authenticated against. The
+ * server's health registry only ever stores classifications, timestamps,
+ * and redacted messages — rendering lastFailure.message exposes nothing
+ * the incidents panel does not already show.
+ */
+export function EmailProbeHealthLine({ health, nowMs }: { health: EmailChannelHealth; nowMs: number }) {
+  const age = (iso: string) => outboxAgeLabel(iso, nowMs);
+  const scope =
+    health.target === 'console'
+      ? 'the mailbox saved on this page (primary, and fallback when set)'
+      : health.target === 'environment'
+        ? 'the server-secrets mailbox (CAS_EMAIL_*)'
+        : null;
+
+  if (health.state === 'ok' && health.lastProbeAt && scope) {
+    return (
+      <p className="mt-5 border border-[#b7cfbf] bg-[#eef5ee] px-5 py-4 text-xs leading-5 text-[#33523f]" data-testid="email-probe-health" data-state="ok">
+        Last automatic login check of {scope}: <strong>ok</strong>, {age(health.lastProbeAt)} — the mailbox accepted the server&apos;s credentials. Re-checks every {Math.max(1, Math.round(health.probeIntervalMs / 86_400_000))}d.
+      </p>
+    );
+  }
+  if (health.state === 'failed') {
+    const failure = health.lastFailure;
+    // Mirror the pipeline warning's permanent/transient split: a mailbox
+    // refusing authentication is broken until someone fixes it, but a
+    // network-class failure may clear on the next probe — stating that as a
+    // certain outage would be a false alarm.
+    const permanent =
+      failure !== null &&
+      (failure.classification === 'authentication' ||
+        failure.classification === 'not-configured' ||
+        failure.classification === 'rejected');
+    const when = health.lastProbeAt ?? failure?.at ?? null;
+    return (
+      <div
+        className={`mt-5 border px-5 py-4 text-xs leading-5 ${permanent ? 'border-[#e7b8af] bg-[#f9e9e6] text-[#7c3a30]' : 'border-[#e8c880] bg-[#fff8e7] text-[#765013]'}`}
+        data-testid="email-probe-health"
+        data-state="failed"
+        data-permanent={permanent ? 'true' : 'false'}
+      >
+        <p>
+          Last automatic login check{scope ? ` of ${scope}` : ''}: <strong>failed ({failure?.classification ?? 'unknown'})</strong>
+          {when ? `, ${age(when)}` : ''}.{' '}
+          {permanent
+            ? `Email alerts will not go out until the mailbox is fixed — update the account below${health.target === 'environment' ? ' or the CAS_EMAIL_* server secrets' : ''}.`
+            : 'The mailbox could not be verified this run; if this persists, email alerts may not go out.'}
+        </p>
+        {failure && (
+          <p className="mt-1 flex gap-2" data-testid="email-probe-health-detail">
+            <CircleAlert size={14} className={`mt-0.5 shrink-0 ${permanent ? 'text-[#914136]' : 'text-[#a06712]'}`} />
+            {failure.message}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (health.state === 'skipped') {
+    return (
+      <p className="mt-5 border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="skipped">
+        Automatic login check: skipped — {health.note ?? 'not applicable'}.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-5 border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="pending">
+      Automatic login check{scope ? ` of ${scope}` : ''}: scheduled — the first probe has not run yet (it runs shortly after server start).
+    </p>
+  );
 }
 
 const SOURCE_BANNER: Record<EmailAccountsResponse['source'], { tone: string; text: string }> = {
@@ -211,6 +288,9 @@ export default function EmailDelivery() {
   const [status, setStatus] = useState<EmailAccountsResponse | null>(null);
   const [drafts, setDrafts] = useState<Record<EmailAccountSlot, AccountDraft> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Same credential-gated poll the overview banner and incidents panel use;
+  // it waits quietly until this browser has enrolled a console credential.
+  const { status: outboxStatus } = useOutboxStatus();
 
   const load = useCallback(async () => {
     try {
@@ -304,6 +384,8 @@ export default function EmailDelivery() {
           {banner.text}
         </p>
       )}
+
+      {outboxStatus?.email && <EmailProbeHealthLine health={outboxStatus.email} nowMs={Date.now()} />}
 
       <section className="fade-up fade-up-1 mt-5 space-y-5">
         {drafts && (['primary', 'fallback'] as const).map((slot) => (
