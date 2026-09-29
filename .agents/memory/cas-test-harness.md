@@ -20,3 +20,9 @@ Outbox rows created in one transaction (e.g. the SMS and XMPP pair from a trigge
 **Why:** Tests that assume a specific sibling is claimed first flake or assert against the wrong row.
 
 **How to apply:** In outbox worker tests, pin claim order explicitly — hold non-target siblings back with a future next_attempt_at instead of relying on created_at ordering.
+
+Direct `tsx --test` runs use the shared dev `DATABASE_URL`, so a running api-server workflow's outbox worker (10s tick) claims and settles test rows mid-suite, producing dozens of wrong-incident assertion failures that vanish when rerun.
+
+**Why:** a green-then-red flip with no code change between runs cost a debugging round; the failures looked like real regressions (wrong transport, wrong counts) because the dev worker was delivering test rows to the live sink.
+
+**How to apply:** validate DB-heavy suites via the contract runner (`pnpm --filter @workspace/api-server run test` — disposable review database), or stop the api-server workflow before direct `tsx --test` runs; never trust a direct run's failures while the workflow is up.

@@ -19,6 +19,7 @@ import {
 } from "./cas-provider-error";
 import { readSmtpCaPem, sendSmtpMessage } from "./cas-smtp";
 import { accountToSmtpConfig, getEmailAccount } from "./cas-email-accounts";
+import { DEV_PROVIDER_SINK_HEADER } from "./dev-provider-sink";
 
 export { CasProviderError, type ProviderErrorClassification };
 import {
@@ -242,6 +243,35 @@ function providerUrlError(url: string): string | undefined {
   return `provider URL "${url}" must use HTTPS; plain HTTP is only allowed for loopback test endpoints because submissions carry credentials and alert content`;
 }
 
+/**
+ * deliveredTo value recorded when the accepting endpoint is the built-in dev
+ * provider sink (it proves itself with DEV_PROVIDER_SINK_HEADER on every
+ * acceptance, including replays). The console labels these deliveries as
+ * simulated — a sink acceptance means no real provider was contacted.
+ */
+export const DEV_SINK_DELIVERED_TO = "dev-sink";
+
+/**
+ * Where a successful send was actually accepted. Persisted on the outbox
+ * record at the SENT transition so the console and journal can distinguish
+ * real provider delivery from the built-in test inbox.
+ */
+export type ProviderDeliveryReceipt = {
+  deliveredTo: string;
+};
+
+/** The provider's display identity: the dev sink marker, or the endpoint host. */
+function deliveredToForEndpoint(url: string, sinkAccepted: boolean): string {
+  if (sinkAccepted) return DEV_SINK_DELIVERED_TO;
+  try {
+    return new URL(url).host;
+  } catch {
+    // providerUrlError already rejected unparseable URLs before any send;
+    // this fallback is unreachable in practice but never throws mid-incident.
+    return url;
+  }
+}
+
 export type ProviderAdapter = {
   transport: "SMS" | "XMPP" | "EMAIL" | "WHATSAPP";
   /**
@@ -249,13 +279,14 @@ export type ProviderAdapter = {
    * recipients when `recipientsOverride` is omitted. The console-managed
    * responder circle is passed as the override by the delivery sender; an
    * explicitly empty override is a loud "deliver to nobody" failure, never a
-   * silent success.
+   * silent success. Resolves with a receipt naming where the alert was
+   * accepted (the dev sink or the real provider).
    */
   send: (
     message: CasAlertMessage,
     idempotencyKey: string,
     recipientsOverride?: string[],
-  ) => Promise<void>;
+  ) => Promise<ProviderDeliveryReceipt>;
 };
 
 const PROVIDER_TIMEOUT_MS = 10_000;
@@ -370,7 +401,7 @@ async function submitToProvider(
   message: CasAlertMessage,
   idempotencyKey: string,
   recipientsOverride?: string[],
-): Promise<void> {
+): Promise<ProviderDeliveryReceipt> {
   const urlError = providerUrlError(config.url);
   if (urlError) {
     throw new CasProviderError("not-configured", `${adapter} ${urlError}`, {
@@ -378,6 +409,10 @@ async function submitToProvider(
     });
   }
   const recipients = requireRecipients(adapter, recipientsOverride ?? config.recipients);
+  // Set when any acceptance (initial or replay) carried the dev sink's
+  // marker header — the alert went to the built-in test inbox, not a real
+  // provider, and must be labeled simulated downstream.
+  let sinkAccepted = false;
   // One provider request per recipient, each carrying a stable key derived
   // from the durable outbox ID. When a retry replays a recipient the provider
   // has already accepted, its idempotency handling (or a 409) suppresses the
@@ -406,6 +441,9 @@ async function submitToProvider(
       throw classifyFetchFailure(adapter, error);
     }
 
+    if (response.headers.get(DEV_PROVIDER_SINK_HEADER) === "true") {
+      sinkAccepted = true;
+    }
     if (response.status >= 200 && response.status < 300) continue;
     const detail = await response.text().catch(() => "");
     const classified = classifyStatus(
@@ -418,6 +456,7 @@ async function submitToProvider(
     );
     if (classified) throw classified;
   }
+  return { deliveredTo: deliveredToForEndpoint(config.url, sinkAccepted) };
 }
 
 /**
@@ -429,12 +468,21 @@ async function submitToProvider(
  * common retry paths duplicate-free; only a crash inside that narrow window
  * can still double-send.
  */
-async function deliveryAcceptanceRecorded(keyHash: string): Promise<boolean> {
+/**
+ * The recorded acceptance for a key, or undefined when the provider never
+ * accepted it. Returns the provenance (deliveredTo) too: a retry that skips
+ * every recipient makes no HTTP request, so the ledger is the only place the
+ * sink-vs-real distinction survives a crash between acceptance and the SENT
+ * mark.
+ */
+async function deliveryAcceptance(
+  keyHash: string,
+): Promise<{ deliveredTo: string | null } | undefined> {
   const [recorded] = await db
-    .select({ keyHash: casProviderDeliveries.keyHash })
+    .select({ deliveredTo: casProviderDeliveries.deliveredTo })
     .from(casProviderDeliveries)
     .where(eq(casProviderDeliveries.keyHash, keyHash));
-  return Boolean(recorded);
+  return recorded;
 }
 
 async function recordDeliveryAcceptance(
@@ -442,6 +490,7 @@ async function recordDeliveryAcceptance(
   incidentId: string,
   keyHash: string,
   recipient: string,
+  deliveredTo: string,
 ): Promise<void> {
   await db
     .insert(casProviderDeliveries)
@@ -450,6 +499,7 @@ async function recordDeliveryAcceptance(
       transport,
       incidentId,
       recipientMasked: maskRecipient(recipient),
+      deliveredTo,
     })
     .onConflictDoNothing();
 }
@@ -552,7 +602,7 @@ export function createSmtpEmailProvider(config: SmtpProviderConfig): ProviderAda
       for (const recipient of recipients) {
         const key = `${idempotencyKey}:${recipient}`;
         const keyHash = createHash("sha256").update(key).digest("hex");
-        if (await deliveryAcceptanceRecorded(keyHash)) continue;
+        if (await deliveryAcceptance(keyHash)) continue;
         try {
           await sendSmtpMessage(
             {
@@ -583,8 +633,9 @@ export function createSmtpEmailProvider(config: SmtpProviderConfig): ProviderAda
           }
           throw error;
         }
-        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient);
+        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient, `smtp:${config.host}`);
       }
+      return { deliveredTo: `smtp:${config.host}` };
     },
   };
 }
@@ -621,15 +672,26 @@ export function createConsoleEmailProvider(
       }
       const fallback = await getEmailAccount("fallback");
       const recipients = requireRecipients("EMAIL", recipientsOverride ?? readProviderRecipients(env, "EMAIL"));
+      // The account that actually accepted each recipient — the fallback
+      // accepts when the primary fails, so the receipt names real hosts, not
+      // just the primary's.
+      const acceptedIdentities = new Set<string>();
       for (const recipient of recipients) {
         const keyHash = createHash("sha256").update(`${idempotencyKey}:${recipient}`).digest("hex");
-        if (await deliveryAcceptanceRecorded(keyHash)) continue;
+        const prior = await deliveryAcceptance(keyHash);
+        if (prior) {
+          // Skipped on retry: the ledger's provenance is the only record of
+          // who accepted this recipient.
+          if (prior.deliveredTo) acceptedIdentities.add(prior.deliveredTo);
+          continue;
+        }
         const payload = {
           to: recipient,
           subject: `CAS ${message.priority} alert ${message.incidentId}`,
           bodyText: message.body,
           messageId: keyHash,
         };
+        let acceptedBy = `smtp:${primary.host}`;
         try {
           await sendSmtpMessage({ ...accountToSmtpConfig(primary), caPem }, payload);
         } catch (primaryError) {
@@ -644,6 +706,7 @@ export function createConsoleEmailProvider(
           }
           try {
             await sendSmtpMessage({ ...accountToSmtpConfig(fallback), caPem }, payload);
+            acceptedBy = `smtp:${fallback.host}`;
           } catch (fallbackError) {
             const fb =
               fallbackError instanceof CasProviderError
@@ -660,8 +723,12 @@ export function createConsoleEmailProvider(
             );
           }
         }
-        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient);
+        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient, acceptedBy);
+        acceptedIdentities.add(acceptedBy);
       }
+      return {
+        deliveredTo: [...acceptedIdentities].sort().join(", ") || `smtp:${primary.host}`,
+      };
     },
   };
 }
@@ -683,10 +750,19 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
       // cas_provider_deliveries ledger — a retried send (worker crash after
       // partial acceptance, claim expiry) skips recipients whose acceptance
       // is already recorded instead of messaging them twice.
+      // Tracks the dev sink's marker header like the other adapters.
+      let sinkAccepted = false;
       for (const recipient of recipients) {
         const key = `${idempotencyKey}:${recipient}`;
         const keyHash = createHash("sha256").update(key).digest("hex");
-        if (await deliveryAcceptanceRecorded(keyHash)) continue;
+        const prior = await deliveryAcceptance(keyHash);
+        if (prior) {
+          // A retry that skips every recipient makes no HTTP request, so the
+          // ledger's provenance is the only record of where the acceptance
+          // happened — trust it, or a sink delivery would be mislabeled real.
+          if (prior.deliveredTo === DEV_SINK_DELIVERED_TO) sinkAccepted = true;
+          continue;
+        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -717,8 +793,14 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
           throw classifyFetchFailure("WHATSAPP", error);
         }
 
+        const acceptedBySink =
+          response.headers.get(DEV_PROVIDER_SINK_HEADER) === "true";
+        if (acceptedBySink) sinkAccepted = true;
+        const provenance = acceptedBySink
+          ? DEV_SINK_DELIVERED_TO
+          : deliveredToForEndpoint(config.url, false);
         if (response.status >= 200 && response.status < 300) {
-          await recordDeliveryAcceptance("WHATSAPP", message.incidentId, keyHash, recipient);
+          await recordDeliveryAcceptance("WHATSAPP", message.incidentId, keyHash, recipient, provenance);
           continue;
         }
         const detail = await response.text().catch(() => "");
@@ -731,7 +813,12 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
           parseRetryAfterMs(response.headers.get("retry-after")),
         );
         if (classified) throw classified;
+        // A documented replay (409 + replay header) means an earlier attempt
+        // was accepted; that acceptance may predate the ledger insert (the
+        // crash window the ledger exists for), so record its provenance now.
+        await recordDeliveryAcceptance("WHATSAPP", message.incidentId, keyHash, recipient, provenance);
       }
+      return { deliveredTo: deliveredToForEndpoint(config.url, sinkAccepted) };
     },
   };
 }
@@ -852,7 +939,9 @@ export function createCasDeliverySender(
     const dbRecipients = isCasTemplateChannel(item.transport)
       ? await resolveDbRecipients(item.transport)
       : null;
-    await adapter.send(
+    // The receipt names where the alert was accepted so the outbox record
+    // (and the console) can tell a real provider from the dev test inbox.
+    return adapter.send(
       buildCasAlertMessage(item, location, templateBody),
       idempotencyKey,
       dbRecipients ?? undefined,

@@ -197,6 +197,13 @@ and the inbox shows a `chat` stanza whose `stanzaId` equals the
 Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
 `to`, `from`, `subject` = `CAS P1 alert <incident id>`, and the alert body.
 
+**Expected labeling for T4/T6/T7:** because these drills deliver to the
+built-in test inbox, the console no longer shows a bare `SENT` — the chip
+reads `SIMULATED — test inbox`, the outbox item's `deliveredTo` is
+`"dev-sink"`, and the incident journal carries a `DELIVERY_SIMULATED` event.
+That is the pass state; a real provider would show the provider's identity
+instead.
+
 ## T7b — Email failure honesty: wrong app password (API only, SMTP deployment)
 
 Proves the failure the owner is most likely to hit a year from now — a

@@ -61,6 +61,7 @@ function validState() {
         priority: 'P1',
         attempts: 0,
         lastError: null,
+        deliveredTo: null,
         terminal: false,
       }],
       evidence: [{

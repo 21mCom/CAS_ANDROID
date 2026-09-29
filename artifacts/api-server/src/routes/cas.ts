@@ -22,11 +22,13 @@ import {
 } from "../lib/cas-readiness-schema";
 import {
   CasProviderError,
+  DEV_SINK_DELIVERED_TO,
   buildLocationClause,
   createCasDeliverySender,
   formatProviderError,
   loadConfiguredProviders,
   type CasIncidentLocation,
+  type ProviderDeliveryReceipt,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
 import { getCasEmailChannelHealth } from "../lib/cas-email-health";
@@ -294,6 +296,10 @@ function shapeIncident(
       priority: item.priority,
       attempts: item.attempts,
       lastError: item.lastError,
+      // Where a gateway delivery was accepted: "dev-sink" (built-in test
+      // inbox — simulated) or the provider identity. Null for device-direct
+      // deliveries and unsent items.
+      deliveredTo: item.deliveredTo,
       terminal: item.state === "SENT" || item.state === "DEAD_LETTER",
     })),
   };
@@ -1093,6 +1099,9 @@ router.post("/cas/outbox/:id/requeue", requireCasCredential, async (req: Request
         claimedBy: null,
         claimedAt: null,
         nextAttemptAt: now,
+        // A re-queued delivery has not reached anywhere in its new cycle;
+        // the next SENT transition records a fresh destination.
+        deliveredTo: null,
         // Starts a new delivery cycle for device channels: the receipt
         // endpoint only accepts receipts echoing this token afterwards, so a
         // stale retried receipt from the superseded batch (rejected 410, and
@@ -1149,7 +1158,7 @@ export default router;
 export type CasDeliverySender = (
   item: typeof casOutbox.$inferSelect,
   idempotencyKey: string,
-) => Promise<void>;
+) => Promise<ProviderDeliveryReceipt | void>;
 
 /**
  * Claims and delivers durable outbox records.
@@ -1181,12 +1190,12 @@ export async function processCasOutbox(options: {
     result.claimed += 1;
 
     try {
-      await send(claimed, claimed.id);
-      const completed = await completeCasOutboxItem(
+      const receipt = await send(claimed, claimed.id);
+      const completed = await markCasOutboxItemSent(
         claimed,
         workerId,
-        "SENT",
         new Date(),
+        receipt ? receipt.deliveredTo : null,
       );
       if (completed) {
         result.sent += 1;
@@ -1332,32 +1341,69 @@ async function deadLetterCasOutboxItem(
   });
 }
 
+/**
+ * Marks a claimed delivery SENT and records where it was accepted
+ * (deliveredTo: the dev sink marker or the provider identity) in the same
+ * transaction. A dev-sink acceptance additionally journals a
+ * DELIVERY_SIMULATED event so the incident timeline never shows a test-inbox
+ * delivery as if a real provider had sent it.
+ */
+async function markCasOutboxItemSent(
+  item: typeof casOutbox.$inferSelect,
+  workerId: string,
+  now: Date,
+  deliveredTo: string | null,
+) {
+  return db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(casOutbox)
+      .set({
+        state: "SENT",
+        claimedBy: null,
+        claimedAt: null,
+        lastError: null,
+        sentAt: now,
+        deliveredTo,
+      })
+      .where(
+        sql`${casOutbox.id} = ${item.id}
+          AND ${casOutbox.state} = 'PROCESSING'
+          AND ${casOutbox.claimedBy} = ${workerId}`,
+      )
+      .returning({ id: casOutbox.id });
+    if (!updated) return undefined;
+
+    if (deliveredTo === DEV_SINK_DELIVERED_TO) {
+      await tx.insert(casIncidentEvents).values({
+        id: `${item.id}-simulated-${now.getTime()}`,
+        incidentId: item.incidentId,
+        type: "DELIVERY_SIMULATED",
+        priority: item.priority,
+        detail: `${item.transport} alert was accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real ${item.transport} provider was contacted and no responder received anything. Configure a real provider before relying on this channel.`,
+        createdAt: now,
+      });
+    }
+    return updated;
+  });
+}
+
 async function completeCasOutboxItem(
   item: typeof casOutbox.$inferSelect,
   workerId: string,
-  state: "SENT" | "FAILED",
+  state: "FAILED",
   now: Date,
   error?: string,
   retryAfterMs?: number,
 ) {
-  const values =
-    state === "SENT"
-      ? {
-          state,
-          claimedBy: null,
-          claimedAt: null,
-          lastError: null,
-          sentAt: now,
-        }
-      : {
-          state,
-          claimedBy: null,
-          claimedAt: null,
-          lastError: error ?? "Delivery failed",
-          nextAttemptAt: new Date(
-            now.getTime() + retryDelayMs(item.attempts, retryAfterMs),
-          ),
-        };
+  const values = {
+    state,
+    claimedBy: null,
+    claimedAt: null,
+    lastError: error ?? "Delivery failed",
+    nextAttemptAt: new Date(
+      now.getTime() + retryDelayMs(item.attempts, retryAfterMs),
+    ),
+  };
 
   const [updated] = await db
     .update(casOutbox)

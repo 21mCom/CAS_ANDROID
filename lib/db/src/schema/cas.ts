@@ -71,6 +71,13 @@ export const casOutbox = pgTable("cas_outbox", {
   // (410) so it cannot mark the re-queued item SENT. Deliberately NOT a
   // timestamp: handset and console wall clocks are not guaranteed to agree.
   deviceCycleToken: text("device_cycle_token"),
+  // Where a gateway delivery was actually accepted, recorded at the SENT
+  // transition: "dev-sink" for the built-in dev provider sink (simulated
+  // delivery — no real provider was contacted), otherwise the provider's
+  // identity (e.g. "graph.facebook.com", "smtp:mail.example.com"). Null for
+  // device-direct deliveries (the handset's own SIM) and unsent items, so
+  // the console can never present a test-inbox acceptance as real delivery.
+  deliveredTo: text("delivered_to"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -87,6 +94,12 @@ export const casProviderDeliveries = pgTable("cas_provider_deliveries", {
   // Cascade: same test-cleanup rationale as cas_incident_events.
   incidentId: text("incident_id").notNull().references(() => casIncidents.id, { onDelete: "cascade" }),
   recipientMasked: text("recipient_masked").notNull(),
+  // Where this acceptance happened ("dev-sink" or the provider identity).
+  // A retry that skips every recipient makes no HTTP request, so this is the
+  // only place the sink-vs-real distinction survives — without it a skipped
+  // retry would mislabel a test-inbox delivery as real. Null on rows written
+  // before provenance was recorded.
+  deliveredTo: text("delivered_to"),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

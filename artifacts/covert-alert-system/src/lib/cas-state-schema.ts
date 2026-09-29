@@ -78,6 +78,7 @@ const outboxItemSchema = z.object({
   priority: z.enum(['P1', 'P2']),
   attempts: z.number().int(),
   lastError: z.string().nullable(),
+  deliveredTo: z.string().nullable(),
   terminal: z.boolean(),
 }).strict();
 

@@ -1692,6 +1692,136 @@ test("SMS and XMPP adapters send through their providers with outbox-ID idempote
   }
 });
 
+test("a delivery accepted by the dev provider sink is recorded and labeled as simulated", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(trigger.status, 201);
+  const { id: incidentId } = (await trigger.json()) as { id: string };
+
+  // The stub answers like the built-in dev provider sink: acceptance plus the
+  // sink marker header. The outbox must record that the alert went to the
+  // test inbox, and the journal must say the delivery was simulated — a bare
+  // SENT here is what misled the field test.
+  const sink = await startStubProvider(() => ({ status: 202, headers: { "x-cas-dev-provider-sink": "true" } }));
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: sink.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: sink.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "sink-worker", send });
+    assert.equal(result.sent, 2);
+    assert.equal(result.failed, 0);
+
+    const outbox = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, incidentId));
+    assert.equal(outbox.length, 2);
+    for (const item of outbox) {
+      assert.equal(item.state, "SENT");
+      assert.equal(item.deliveredTo, "dev-sink");
+    }
+
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+    const simulated = events.filter((event) => event.type === "DELIVERY_SIMULATED");
+    assert.equal(simulated.length, 2);
+    for (const event of simulated) {
+      assert.match(event.detail, /dev provider sink \(test inbox\)/);
+      assert.match(event.detail, /simulated delivery/);
+    }
+
+    // The state endpoint carries the marker so the console chip can label it.
+    const state = await fetch(`${baseUrl}/cas/state`, { headers: AUTH_HEADERS });
+    assert.equal(state.status, 200);
+    const body = (await state.json()) as {
+      activeIncident: { id: string; outbox: Array<{ id: string; deliveredTo: string | null }> };
+    };
+    assert.equal(body.activeIncident.id, incidentId);
+    assert.ok(body.activeIncident.outbox.every((item) => item.deliveredTo === "dev-sink"));
+  } finally {
+    await sink.close();
+  }
+});
+
+test("a WhatsApp retry that skips sink-accepted recipients is still labeled simulated", async () => {
+  // Reproduces the crash window: the sink accepted every recipient and the
+  // durable ledger recorded the acceptance, but the worker died before the
+  // SENT mark. The retry makes no HTTP request at all, so the simulated
+  // label must come from the ledger's provenance, not the wire.
+  const sink = await startStubProvider(() => ({ status: 200, headers: { "x-cas-dev-provider-sink": "true" } }));
+  try {
+    await withEnv(
+      {
+        CAS_SMS_DELIVERY_MODE: "device",
+        CAS_DEVICE_CHANNELS: "SMS",
+        CAS_DEVICE_TOKEN: DEVICE_TOKEN,
+        CAS_WHATSAPP_PROVIDER_URL: sink.url,
+        CAS_WHATSAPP_RECIPIENTS: "+1555000333",
+        CAS_XMPP_PROVIDER_URL: undefined,
+        CAS_XMPP_RECIPIENTS: undefined,
+      },
+      async () => {
+        const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+        assert.equal(trigger.status, 201);
+        const { id } = (await trigger.json()) as { id: string };
+
+        const send = createCasDeliverySender(loadConfiguredProviders());
+        // First attempt, straight through the sender: the sink accepts and
+        // the ledger records it, but no SENT transition happens (the worker
+        // "dies" here).
+        const queued = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+        const whatsappItem = queued.find((row) => row.transport === "WHATSAPP");
+        assert.ok(whatsappItem);
+        await send(whatsappItem, whatsappItem.id);
+        assert.equal(sink.requests.length, 1);
+
+        // The retrying worker claims the item and re-sends: every recipient
+        // is already in the ledger, so no HTTP request is made.
+        const result = await processCasOutbox({ workerId: "whatsapp-retry-worker", send });
+        assert.equal(result.sent, 1);
+        assert.equal(sink.requests.length, 1);
+
+        const rows = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, id));
+        const whatsapp = rows.find((row) => row.transport === "WHATSAPP");
+        assert.equal(whatsapp?.state, "SENT");
+        assert.equal(whatsapp?.deliveredTo, "dev-sink");
+
+        const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+        const simulated = events.filter((event) => event.type === "DELIVERY_SIMULATED");
+        assert.equal(simulated.length, 1);
+        assert.match(simulated[0].detail, /dev provider sink \(test inbox\)/);
+      },
+    );
+  } finally {
+    await sink.close();
+  }
+});
+
+test("a delivery accepted by a real provider records the provider host, not the sink", async () => {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+  assert.equal(trigger.status, 201);
+  const { id: incidentId } = (await trigger.json()) as { id: string };
+
+  const provider = await startStubProvider(() => 200);
+  try {
+    const send = createCasDeliverySender({
+      sms: createSmsProvider({ url: provider.url, recipients: ["+15550001"] }),
+      xmpp: createXmppProvider({ url: provider.url, recipients: ["ops@example.org"] }),
+    });
+    const result = await processCasOutbox({ workerId: "real-provider-worker", send });
+    assert.equal(result.sent, 2);
+
+    const host = new URL(provider.url).host;
+    const outbox = await db.select().from(casOutbox).where(eq(casOutbox.incidentId, incidentId));
+    assert.equal(outbox.length, 2);
+    for (const item of outbox) {
+      assert.equal(item.state, "SENT");
+      assert.equal(item.deliveredTo, host);
+    }
+
+    const events = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+    assert.equal(events.filter((event) => event.type === "DELIVERY_SIMULATED").length, 0);
+  } finally {
+    await provider.close();
+  }
+});
+
 test("a provider outage fails the delivery as retryable and keeps the outbox record", async () => {
   const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
   assert.equal(trigger.status, 201);

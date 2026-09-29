@@ -21,6 +21,14 @@ import { Router, type IRouter } from "express";
  * the same path, so the handoff test kit can assert exactly what would have
  * been sent.
  */
+/**
+ * Response header (value "true") the sink sends on every accepted submission
+ * — including idempotent replays — so the provider adapters can record that
+ * the alert went to the built-in test inbox, not a real provider. The console
+ * then labels the delivery as simulated instead of showing a bare SENT.
+ */
+export const DEV_PROVIDER_SINK_HEADER = "x-cas-dev-provider-sink";
+
 export type SinkDelivery = {
   channel: string;
   idempotencyKey: string | null;
@@ -56,7 +64,10 @@ export function createDevProviderSinkRouter(): IRouter {
     }
     if (key && acceptedKeys.has(key)) {
       res.setHeader("x-idempotency-replayed", "true");
-      return res.status(409).json({ error: "idempotency key already accepted", replayed: true });
+      // A replayed acceptance still went to the test inbox — carry the sink
+      // marker so the retried delivery is labeled simulated too.
+      res.setHeader(DEV_PROVIDER_SINK_HEADER, "true");
+      return res.status(409).json({ error: "idempotency key already accepted", replayed: true, sink: "dev-provider-inbox" });
     }
     if (key) acceptedKeys.add(key);
     deliveries.push({
@@ -69,7 +80,8 @@ export function createDevProviderSinkRouter(): IRouter {
     if (deliveries.length > MAX_DELIVERIES) {
       deliveries.splice(0, deliveries.length - MAX_DELIVERIES);
     }
-    return res.status(202).json({ accepted: true, channel });
+    res.setHeader(DEV_PROVIDER_SINK_HEADER, "true");
+    return res.status(202).json({ accepted: true, channel, sink: "dev-provider-inbox" });
   });
 
   router.get("/cas/dev/provider-inbox", (_req, res) => {

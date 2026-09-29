@@ -106,6 +106,9 @@ export const outboxItemSchema = z.object({
   priority: z.enum(["P1", "P2"]),
   attempts: z.number().int(),
   lastError: z.string().nullable(),
+  // Where a SENT gateway delivery was accepted: "dev-sink" (built-in test
+  // inbox — simulated) or the provider identity; null otherwise.
+  deliveredTo: z.string().nullable(),
   terminal: z.boolean(),
 }).strict();
 

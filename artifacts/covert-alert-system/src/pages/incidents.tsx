@@ -1,12 +1,35 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Activity, ArrowRight, Camera, Check, CircleStop, Download, LockKeyhole, Mic, RotateCcw, ShieldAlert, Video } from 'lucide-react';
 import { Link } from 'wouter';
-import { casAuthedFetch, useFieldTest, type EvidenceItem, type Priority } from '@/hooks/use-field-test';
+import { casAuthedFetch, useFieldTest, type EvidenceItem, type OutboxItem, type Priority } from '@/hooks/use-field-test';
 import { formatEvidenceSize, useCapturePolicy } from '@/hooks/use-capture-policy';
 import { EvidenceLabel, EmptyState, PriorityPill, SectionKicker } from '@/components/field-ui';
 import { OutboxStatusPanel } from '@/components/outbox-status';
 
 const EVIDENCE_KIND_ICONS = { audio: Mic, photo: Camera, video: Video } as const;
+
+/** True when the delivery was accepted by the built-in dev provider sink, not a real provider. */
+const isSimulatedDelivery = (item: OutboxItem) => item.state === 'SENT' && item.deliveredTo === 'dev-sink';
+
+function outboxChipTitle(item: OutboxItem): string | undefined {
+  if (item.state === 'DEAD_LETTER') return `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}`;
+  if (isSimulatedDelivery(item)) return 'Accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real provider was contacted and no responder received anything.';
+  if (item.state === 'SENT' && item.deliveredTo) return `Delivery accepted by ${item.deliveredTo}`;
+  return undefined;
+}
+
+function outboxChipLabel(item: OutboxItem): string {
+  if (isSimulatedDelivery(item)) return 'SIMULATED — test inbox';
+  if (item.state === 'DEAD_LETTER') return `DEAD LETTER · abandoned after ${item.attempts} attempts`;
+  return item.state;
+}
+
+function outboxChipClass(item: OutboxItem): string {
+  if (item.state === 'DEAD_LETTER') return 'border-[#914136] bg-[#914136]/10 font-bold text-[#914136]';
+  if (isSimulatedDelivery(item)) return 'border-[#a06712] bg-[#fff8e7] font-bold text-[#a06712]';
+  if (item.state === 'FAILED') return 'border-[#a06712] bg-[#fbfbf7] text-[#a06712]';
+  return 'border-[#c6cbc3] bg-[#fbfbf7] text-[#687271]';
+}
 
 export default function Incidents() {
   const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, requestCapture, resetDemo } = useFieldTest();
@@ -125,7 +148,7 @@ export default function Incidents() {
                 </div>
                 <div>
                   <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Independent P1 outbox</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="inline-flex items-center gap-1"><span title={item.state === 'DEAD_LETTER' ? `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}` : undefined} className={`border px-2 py-1 font-mono-ui text-[10px] ${item.state === 'DEAD_LETTER' ? 'border-[#914136] bg-[#914136]/10 font-bold text-[#914136]' : item.state === 'FAILED' ? 'border-[#a06712] bg-[#fbfbf7] text-[#a06712]' : 'border-[#c6cbc3] bg-[#fbfbf7] text-[#687271]'}`}>{item.transport} · {item.state === 'DEAD_LETTER' ? `DEAD LETTER · abandoned after ${item.attempts} attempts` : item.state}</span>{item.state === 'DEAD_LETTER' ? <button onClick={() => openRequeueNote(item.id)} title="Re-queue this abandoned delivery after fixing the provider problem" className="border border-[#914136] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#914136] transition-colors hover:bg-[#f8e0db]" data-testid={`button-requeue-outbox-${item.id}`}>Re-queue</button> : null}</span>)}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="inline-flex items-center gap-1"><span title={outboxChipTitle(item)} className={`border px-2 py-1 font-mono-ui text-[10px] ${outboxChipClass(item)}`} data-testid={`chip-outbox-${item.id}`}>{item.transport} · {outboxChipLabel(item)}</span>{item.state === 'DEAD_LETTER' ? <button onClick={() => openRequeueNote(item.id)} title="Re-queue this abandoned delivery after fixing the provider problem" className="border border-[#914136] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#914136] transition-colors hover:bg-[#f8e0db]" data-testid={`button-requeue-outbox-${item.id}`}>Re-queue</button> : null}</span>)}</div>
                   {requeueTarget && activeIncident.outbox.some((item) => item.id === requeueTarget) && (
                     <form onSubmit={submitRequeue} className="mt-3 border border-[#e7b8af] bg-[#fbfbf7] p-3" data-testid="form-requeue-note">
                       <label htmlFor="requeue-note" className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">What did you fix? (optional — recorded in the incident journal)</label>

@@ -92,6 +92,9 @@ export type OutboxItem = {
   priority: 'P1' | 'P2';
   attempts: number;
   lastError: string | null;
+  /** Where a SENT gateway delivery was accepted: 'dev-sink' (built-in test
+   *  inbox — simulated, no real provider) or the provider identity. */
+  deliveredTo: string | null;
   terminal: boolean;
 };
 
