@@ -42,6 +42,7 @@
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
 - [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after.
+- [CAS sink drill environment](cas-sink-drill-environment.md) — workspace SMTP secrets route T7 over real email; sink drills need a standalone no-SMTP instance with its own sink URLs and CAS_EMAIL_FROM, main workflow stopped.
 - [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.
 - [WriteFile NUL-escape trap](writefile-nul-escape-trap.md) — `\0` escapes become literal NUL bytes; file turns "binary" and later exact-match edits fail invisibly.
 - [Async finalize vs summary status races](cas-status-line-finalize-races.md) — check-and-post of final-vs-interim status must be one UI-thread op; invalidate attempt ownership on every tap, incl. preflight early-returns.
