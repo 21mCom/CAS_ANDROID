@@ -15,6 +15,12 @@ import {
 import { deliverableGatewayTransports } from "./cas-delivery-config";
 import { maskRecipient } from "./cas-device-delivery";
 import { SMTP_STUB_CERT_PATH, startStubSmtp, type StubSmtpServer } from "./cas-smtp-stub";
+import { assertDisposableTestDatabase } from "./cas-test-db-guard";
+
+// This suite writes to whatever DATABASE_URL points at (provider-delivery
+// ledger assertions): refuse to boot unless the contract runner's disposable
+// review database is provably the target.
+assertDisposableTestDatabase();
 
 // AUTH PLAIN payload separator (NUL) without a literal escape, so this
 // source file stays plain text.

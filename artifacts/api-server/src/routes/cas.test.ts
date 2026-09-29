@@ -16,11 +16,13 @@ import app from "../app";
 import { db, pool } from "@workspace/db";
 import {
   casDeviceCredentials,
+  casEmailAccounts,
   casGateEvidence,
   casIncidentEvents,
   casIncidents,
   casOutbox,
   casProviderDeliveries,
+  casResponders,
   casSetupReadiness,
   casTransportCooldowns,
 } from "@workspace/db/schema";
@@ -62,6 +64,13 @@ import {
   type CasAuthFailureBurst,
   type CasAuthRejection,
 } from "../lib/cas-auth";
+import { assertDisposableTestDatabase } from "../lib/cas-test-db-guard";
+import { SMTP_STUB_CERT_PATH, startStubSmtp } from "../lib/cas-smtp-stub";
+
+// This suite writes to whatever DATABASE_URL points at: refuse to boot unless
+// the contract runner's disposable review database is provably the target
+// (never the dev database).
+assertDisposableTestDatabase();
 
 // Alert trigger and incident/outbox mutations are gated on per-device
 // enrolled credentials. The shared CAS_ALERT_TOKEN is now only the
@@ -148,7 +157,10 @@ async function startApiProcess(extraEnv: NodeJS.ProcessEnv = {}) {
   );
   const childBaseUrl = `http://127.0.0.1:${port}/api`;
 
-  for (let attempt = 0; attempt < 150; attempt += 1) {
+  // Generous readiness window: a cold tsx compile of the API graph on a
+  // loaded box demonstrably exceeds a short poll (observed >20s), and every
+  // spawn-based test in this suite shares this helper.
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     if (child.exitCode !== null) {
       throw new Error(
         `API process exited before becoming ready: ${child.exitCode}`,
@@ -161,7 +173,7 @@ async function startApiProcess(extraEnv: NodeJS.ProcessEnv = {}) {
     } catch {
       // The child process has not started listening yet.
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   child.kill();
@@ -4525,4 +4537,107 @@ test("handset receipts accept an enrolled device credential and a revoked device
       assert.equal(legacyPickup.status, 401);
     },
   );
+});
+
+test("test-harness burst with live provider secrets configured: every channel lands in the dev sink, no real channel is touched, and the database is provably disposable", async () => {
+  // The boot guard already enforced this; the canary re-states it as test
+  // evidence. The burst below writes ONLY to the disposable review database —
+  // never the dev database the runner replaced.
+  assert.equal(process.env.CAS_TEST_DISPOSABLE_DB, "1");
+  const expectedName = process.env.CAS_TEST_EXPECTED_DATABASE_NAME;
+  assert.ok(expectedName, "contract runner did not name the disposable database");
+  assert.equal(new URL(process.env.DATABASE_URL ?? "").pathname, `/${expectedName}`);
+  const forbiddenUrl = process.env.CAS_TEST_FORBIDDEN_DATABASE_URL;
+  if (forbiddenUrl) {
+    assert.notEqual(process.env.DATABASE_URL, forbiddenUrl);
+  }
+
+  // Live-looking provider configuration for EVERY gateway channel, pointed at
+  // recording stubs: if any real send path survived the test-harness forcing,
+  // the child process's worker would contact these stubs (standing in for the
+  // real providers) and the assertions below catch it. This is the 2026-09
+  // incident shape: an automated burst while live CAS_EMAIL_SMTP_* secrets
+  // sit in the environment.
+  const smtpStub = await startStubSmtp("implicit-tls");
+  const gateway = await startStubProvider(() => 202);
+  // Env recipient lists are the fan-out source (the incident deployment
+  // shape): clear any console-managed responders/accounts left by earlier
+  // tests so all four channels resolve from the child's environment.
+  await db.delete(casResponders);
+  await db.delete(casEmailAccounts);
+
+  const { child, baseUrl: childBaseUrl } = await startApiProcess({
+    CAS_EMAIL_SMTP_HOST: "127.0.0.1",
+    CAS_EMAIL_SMTP_PORT: String(smtpStub.port),
+    CAS_EMAIL_SMTP_USER: "alerts@example.test",
+    CAS_EMAIL_SMTP_PASSWORD: "live-looking-app-password",
+    CAS_EMAIL_SMTP_CA_FILE: SMTP_STUB_CERT_PATH,
+    CAS_EMAIL_RECIPIENTS: "owner@example.test",
+    CAS_SMS_PROVIDER_URL: gateway.url,
+    CAS_SMS_RECIPIENTS: "+1555000111",
+    CAS_XMPP_PROVIDER_URL: gateway.url,
+    CAS_XMPP_RECIPIENTS: "ops@example.org",
+    CAS_WHATSAPP_PROVIDER_URL: gateway.url,
+    CAS_WHATSAPP_RECIPIENTS: "+1555000222",
+    CAS_DEV_PROVIDER_SINK: "1",
+    CAS_OUTBOX_INTERVAL_MS: "150",
+  });
+  try {
+    // A burst of incidents, each fanning out to every configured channel —
+    // the automated-suite signature from the incident. Each round waits for
+    // its rows to drain before resolving, because a resolve now withdraws
+    // undelivered outbox items by design — and this canary asserts on the
+    // DELIVERED rows, so every row must reach SENT first.
+    const incidentIds: string[] = [];
+    for (let round = 0; round < 10; round += 1) {
+      const trigger = await fetch(`${childBaseUrl}/cas/incidents/trigger`, { method: "POST", headers: AUTH_HEADERS });
+      assert.ok([200, 201].includes(trigger.status), `trigger round ${round}: ${trigger.status}`);
+      const { id } = (await trigger.json()) as { id: string };
+      incidentIds.push(id);
+
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const pending = await db
+          .select({ id: casOutbox.id })
+          .from(casOutbox)
+          .where(sql`${casOutbox.incidentId} = ${id} AND ${casOutbox.state} IN ('QUEUED', 'PROCESSING')`);
+        if (pending.length === 0) break;
+        if (Date.now() > deadline) {
+          throw new Error(`Timed out waiting for the child worker to drain incident ${id}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      assert.equal((await fetch(`${childBaseUrl}/cas/incidents/${id}/ack`, { method: "POST", headers: AUTH_HEADERS })).status, 200);
+      assert.equal((await fetch(`${childBaseUrl}/cas/incidents/${id}/resolve`, { method: "POST", headers: AUTH_HEADERS })).status, 200);
+    }
+    assert.equal(new Set(incidentIds).size, incidentIds.length);
+
+    // Every delivery succeeded — through the dev sink, and ONLY the dev sink.
+    const rows = await db.select().from(casOutbox);
+    assert.equal(rows.length, 40);
+    for (const row of rows) {
+      assert.equal(row.state, "SENT", `${row.transport} row ${row.id}`);
+      assert.equal(row.deliveredTo, "dev-sink", `${row.transport} row ${row.id}`);
+    }
+
+    // Zero real sends: the recording stubs behind the "live" secrets saw
+    // nothing — no SMTP connection, no gateway HTTP request.
+    assert.equal(smtpStub.connections(), 0);
+    assert.equal(smtpStub.messages.length, 0);
+    assert.equal(gateway.requests.length, 0);
+
+    // Every delivery is visible in the child's dev-sink inbox instead.
+    const inbox = (await (
+      await fetch(`${childBaseUrl}/cas/dev/provider-inbox`, { headers: AUTH_HEADERS })
+    ).json()) as {
+      deliveries: Array<{ channel: string; payload: { forcedTestSink?: boolean } }>;
+    };
+    assert.equal(inbox.deliveries.length, 40);
+    assert.ok(inbox.deliveries.every((delivery) => delivery.payload.forcedTestSink === true));
+  } finally {
+    await stopApiProcess(child);
+    await gateway.close();
+    await smtpStub.close();
+  }
 });

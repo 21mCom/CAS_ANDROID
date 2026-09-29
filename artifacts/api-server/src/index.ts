@@ -2,6 +2,7 @@ import app from "./app";
 import { startCasOutboxWorker } from "./lib/cas-outbox-worker";
 import { startCasEmailHealthWorker } from "./lib/cas-email-health-worker";
 import { deviceAccessToken, deviceChannels, smsDeliveryMode } from "./lib/cas-device-delivery";
+import { testHarnessDeliveryForced } from "./lib/delivery-providers";
 import { logger } from "./lib/logger";
 
 const rawPort = process.env["PORT"];
@@ -66,7 +67,17 @@ const outboxWorker = startCasOutboxWorker();
 // Probe the alert mailbox's credentials on a slow schedule (weekly + once
 // shortly after boot) so a revoked/expired app password surfaces as a
 // console warning instead of a dead-lettered alert during a real incident.
-const emailHealthWorker = startCasEmailHealthWorker();
+// Under a test harness the probe is skipped entirely: it would log into the
+// real mailbox with live secrets from the environment, which is the same
+// risk class as sending — test runs must not touch real provider accounts.
+let emailHealthWorker: ReturnType<typeof startCasEmailHealthWorker> | null = null;
+if (testHarnessDeliveryForced()) {
+  logger.warn(
+    "Test harness detected (NODE_ENV=test or CAS_TEST_DISPOSABLE_DB=1): all CAS provider deliveries are forced to the dev sink and the mailbox health probe is disabled — configured provider secrets are ignored in this process.",
+  );
+} else {
+  emailHealthWorker = startCasEmailHealthWorker();
+}
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
@@ -74,7 +85,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   logger.info({ signal }, "Shutting down");
   await outboxWorker.stop();
-  await emailHealthWorker.stop();
+  await emailHealthWorker?.stop();
   server.close((err) => {
     if (err) {
       logger.error({ err }, "Error closing server");

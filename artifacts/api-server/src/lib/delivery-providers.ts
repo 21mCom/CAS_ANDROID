@@ -19,7 +19,7 @@ import {
 } from "./cas-provider-error";
 import { readSmtpCaPem, sendSmtpMessage } from "./cas-smtp";
 import { accountToSmtpConfig, getEmailAccount } from "./cas-email-accounts";
-import { DEV_PROVIDER_SINK_HEADER } from "./dev-provider-sink";
+import { DEV_PROVIDER_SINK_HEADER, recordDevSinkDelivery } from "./dev-provider-sink";
 
 export { CasProviderError, type ProviderErrorClassification };
 import {
@@ -838,6 +838,72 @@ export type CasProviderAdapters = {
   email?: ProviderAdapter;
   whatsapp?: ProviderAdapter;
 };
+
+/**
+ * Test-harness delivery forcing: when an automated suite runs (NODE_ENV=test,
+ * or the contract runner's disposable-database marker is present), the app's
+ * delivery wiring must NEVER touch a real responder channel — no matter which
+ * provider secrets happen to be configured in the environment. The 2026-09
+ * field-test incident proved why: an integration suite ran with live
+ * CAS_EMAIL_SMTP_* secrets in the environment and emailed the owner's real
+ * test responders ~20 times before anyone noticed.
+ *
+ * The check reads the env passed to the wiring call site (process.env at app
+ * boot), NOT the env fixtures handed to loadConfiguredProviders by adapter
+ * unit tests — those keep exercising the real config-driven selection.
+ */
+export function testHarnessDeliveryForced(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.NODE_ENV === "test" || env.CAS_TEST_DISPOSABLE_DB === "1";
+}
+
+/**
+ * Sink adapters for every gateway transport, used in place of the real
+ * providers when testHarnessDeliveryForced is on. Sends are recorded in the
+ * dev provider sink's in-memory inbox (the same store the HTTP sink endpoint
+ * writes to) and report deliveredTo "dev-sink", so the console and journal
+ * label them simulated exactly like a sink-URL drill. Configured secrets are
+ * ignored entirely — no SMTP connection, no provider HTTP request — while
+ * recipient resolution and the [sink-fail] failure drill keep their real
+ * semantics so suites still exercise the meaningful paths.
+ */
+export function createDevSinkProviderAdapters(
+  env: NodeJS.ProcessEnv = process.env,
+): CasProviderAdapters {
+  const makeAdapter = (transport: GatewayTransport): ProviderAdapter => ({
+    transport,
+    send: async (message, idempotencyKey, recipientsOverride) => {
+      const recipients = requireRecipients(
+        transport,
+        recipientsOverride ?? readProviderRecipients(env, transport),
+      );
+      if (message.body.includes("[sink-fail]")) {
+        // Same drill the HTTP sink offers: a 500 there maps to this class.
+        throw new CasProviderError(
+          "server-outage",
+          `${transport} dev sink rejected the submission ([sink-fail] marker present in alert body)`,
+          { retryable: true },
+        );
+      }
+      for (const recipient of recipients) {
+        recordDevSinkDelivery({
+          channel: transport,
+          idempotencyKey: `${idempotencyKey}:${recipient}`,
+          authorized: true,
+          payload: { to: recipient, body: message.body, forcedTestSink: true },
+        });
+      }
+      return { deliveredTo: DEV_SINK_DELIVERED_TO };
+    },
+  });
+  return {
+    sms: makeAdapter("SMS"),
+    xmpp: makeAdapter("XMPP"),
+    email: makeAdapter("EMAIL"),
+    whatsapp: makeAdapter("WHATSAPP"),
+  };
+}
 
 /**
  * Builds adapters for every transport with a provider endpoint configured.

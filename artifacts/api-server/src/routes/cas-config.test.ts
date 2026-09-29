@@ -21,6 +21,7 @@ import {
   buildCasAlertMessage,
 } from "../lib/delivery-providers";
 import { issueDeviceCredential, setCasAuthFailureLimitConfig } from "../lib/cas-auth";
+import { assertDisposableTestDatabase } from "../lib/cas-test-db-guard";
 import { loadConsoleMirrors } from "../lib/cas-console-mirror";
 import {
   findUnknownPlaceholders,
@@ -43,6 +44,10 @@ import {
 // credential up front and presents its token on every guarded call — the same
 // pattern cas.test.ts uses.
 process.env.CAS_ALERT_TOKEN ??= "cas-test-alert-token";
+// This suite writes to whatever DATABASE_URL points at: refuse to boot unless
+// the contract runner's disposable review database is provably the target.
+assertDisposableTestDatabase();
+
 const suiteCredential = await issueDeviceCredential("config-test-suite");
 
 // This suite intentionally strings credential rejections together; run the

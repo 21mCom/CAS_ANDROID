@@ -24,6 +24,11 @@ import { deliverableGatewayTransports } from "./cas-delivery-config";
 import { maskRecipient } from "./cas-device-delivery";
 import { probeSmtpAccount } from "./cas-smtp";
 import { SMTP_STUB_CERT_PATH, startStubSmtp } from "./cas-smtp-stub";
+import { assertDisposableTestDatabase } from "./cas-test-db-guard";
+
+// This suite writes to whatever DATABASE_URL points at: refuse to boot unless
+// the contract runner's disposable review database is provably the target.
+assertDisposableTestDatabase();
 
 /**
  * Console-managed email accounts (the Email delivery page): storage,

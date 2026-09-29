@@ -100,6 +100,17 @@ export async function runWithDisposableReviewDatabase(runContractCommand, {
     const environment = {
       ...baseEnvironment,
       DATABASE_URL: databaseUrl,
+      // Markers the test suites assert at boot (cas-test-db-guard.ts): the
+      // harness flag, the disposable database's name, and the dev DATABASE_URL
+      // this run replaces — so a suite can prove it is not writing to the dev
+      // database, and the delivery wiring forces every provider channel onto
+      // the dev sink even when live provider secrets are in the environment.
+      CAS_TEST_DISPOSABLE_DB: "1",
+      CAS_TEST_EXPECTED_DATABASE_NAME: databaseName,
+      CAS_TEST_FORBIDDEN_DATABASE_URL: baseEnvironment.DATABASE_URL ?? "",
+      // The conventional test signal too: delivery wiring forces every
+      // provider channel onto the dev sink under either signal.
+      NODE_ENV: "test",
     };
 
     run("initdb", [

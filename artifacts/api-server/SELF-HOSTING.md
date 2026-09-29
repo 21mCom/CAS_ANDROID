@@ -122,7 +122,7 @@ DATABASE_URL=postgresql://cas:CHANGE_ME@127.0.0.1:5432/cas
 # enroll devices (the phone, each operator console browser). Day-to-day
 # actions use per-device credentials that you can revoke individually.
 # Generate one: openssl rand -hex 32
-CAS_ALERT_TOKEN=CHANGE_ME
+CAS_DEVICE_TOKEN=CHANGE_ME
 
 # --- Handset delivery (recommended for the MVP) ----------------------------
 
@@ -514,6 +514,31 @@ console and phone traffic. If the recorded IP shows `127.0.0.1`, check that
 `CAS_TRUST_PROXY` is set in `/etc/cas/cas.env`; if you ever expose the API
 directly without a proxy, unset it, or clients could spoof X-Forwarded-For
 to dodge the tarpit.
+
+
+## Running the automated test suites safely
+
+The API's integration suites (`pnpm --filter @workspace/api-server run test`)
+fire real alert bursts — dozens of triggers, outbox drains, the lot. Two rails
+make that safe even on a box holding live secrets:
+
+- **Disposable database only.** The runner provisions a throwaway PostgreSQL
+  cluster and every DB-touching suite asserts at boot that `DATABASE_URL`
+  points at it (and is not the deployment database). A suite started directly
+  against the dev or production database refuses to boot.
+- **All delivery channels forced to the dev sink.** Under `NODE_ENV=test` or
+  the runner's marker, the server ignores configured provider secrets and
+  delivers every SMS/XMPP/email/WhatsApp alert to the built-in test inbox
+  (`deliveredTo: "dev-sink"`, journal shows `DELIVERY_SIMULATED`). The mailbox
+  health probe is disabled too.
+
+Heed the asymmetry: **field-testing with live secrets means any process that
+runs without those rails emails real responders.** In 2026-09 an automated
+suite ran with the live `CAS_EMAIL_SMTP_*` secrets in its environment and
+emailed the owner's test responders ~20 times before anyone noticed. Never
+point a test, script, or load harness at the production API or its database;
+keep `CAS_DEV_PROVIDER_SINK=1` drills on a dev deployment, and treat any
+shell that has sourced `/etc/cas/cas.env` as armed.
 
 ## Updating to a new version later
 

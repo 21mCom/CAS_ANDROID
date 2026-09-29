@@ -25,8 +25,10 @@ import {
   DEV_SINK_DELIVERED_TO,
   buildLocationClause,
   createCasDeliverySender,
+  createDevSinkProviderAdapters,
   formatProviderError,
   loadConfiguredProviders,
+  testHarnessDeliveryForced,
   type CasIncidentLocation,
   type ProviderDeliveryReceipt,
 } from "../lib/delivery-providers";
@@ -1475,9 +1477,17 @@ export async function processCasOutbox(options: {
 // The default sender dispatches to the SMS/XMPP provider adapters configured
 // through CAS_* environment variables. A transport without a configured
 // provider fails explicitly ("not-configured") so the outbox record is kept
-// for the retrying worker instead of being silently dropped.
+// for the retrying worker instead of being silently dropped. In a test run
+// (NODE_ENV=test or the contract runner's disposable-database marker) the
+// default sender is forced onto the dev provider sink for EVERY transport,
+// ignoring any real provider secrets in the environment, so an automated
+// burst can never reach a real responder. Unit tests that drive
+// loadConfiguredProviders() directly are unaffected — the forcing lives at
+// this app-wiring layer only.
 const defaultCasDeliverySender: CasDeliverySender = createCasDeliverySender(
-  loadConfiguredProviders(),
+  testHarnessDeliveryForced()
+    ? createDevSinkProviderAdapters()
+    : loadConfiguredProviders(),
 );
 
 const MAX_RETRY_DELAY_MS = 60_000;

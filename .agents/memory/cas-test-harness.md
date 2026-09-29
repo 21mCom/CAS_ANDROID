@@ -28,14 +28,22 @@ Outbox rows created in one transaction (e.g. the SMS and XMPP pair from a trigge
 
 **How to apply:** In outbox worker tests, pin claim order explicitly — hold non-target siblings back with a future next_attempt_at instead of relying on created_at ordering.
 
-Direct `tsx --test` runs use the shared dev `DATABASE_URL`, so a running api-server workflow's outbox worker (10s tick) claims and settles test rows mid-suite, producing dozens of wrong-incident assertion failures that vanish when rerun.
+DB-touching suites REFUSE to boot outside the contract runner: a shared boot guard requires the runner's disposable-database markers and validates DATABASE_URL against them, so a direct `tsx --test` run fails loudly instead of writing to the dev database.
 
-**Why:** a green-then-red flip with no code change between runs cost a debugging round; the failures looked like real regressions (wrong transport, wrong counts) because the dev worker was delivering test rows to the live sink.
+**Why:** an automated suite once ran against the dev DB with live SMTP secrets in the environment and emailed real responders ~20 times.
 
-**How to apply:** validate DB-heavy suites via the contract runner (`pnpm --filter @workspace/api-server run test` — disposable review database), or stop the api-server workflow before direct `tsx --test` runs; never trust a direct run's failures while the workflow is up.
+**How to apply:** always run DB suites via the contract runner; never hand a suite the dev DATABASE_URL. New DB-touching suites must call the guard at module top, before any credential issuance. The guard must fail closed: the harness flag alone is trivially forgeable by hand, so every runner marker is mandatory, not optional.
 
-Ambient `CAS_EMAIL_SMTP_*` workspace secrets leak into direct `tsx --test src/routes/cas.test.ts` runs and enable the EMAIL channel, failing the provider-channel assertion tests even on an unmodified tree.
+**How to apply:** when verifying a suite-heavy change, run the API typecheck with `--incremental false`; incremental tsc hid a mangled cas.ts here while the runtime suite still passed on a stale build-info.
 
-**Why:** the failures mimic a provider-config regression but reproduce identically without any code change.
+In test runs, the app's default delivery wiring forces every provider channel onto the in-process dev sink and the scheduled mailbox health probe is skipped, regardless of configured secrets. Suite-spawned child API processes inherit the markers, so their workers are forced too.
 
-**How to apply:** treat direct-run EMAIL-channel failures as environment noise; the contract runner (`pnpm --filter @workspace/api-server run test`, disposable review database) is the authoritative green.
+**Why:** the sink only caught gateway channels when credentials were absent; with live secrets configured, tests sent for real.
+
+**How to apply:** when adding a delivery path, route it through the default sender wiring so the forcing covers it; the end-to-end canary lives in the route suite (burst with live-looking secrets, recording stubs must stay untouched). Keep the forcing at the app-wiring layer, not inside the config loader — unit tests drive the loader directly with fixture envs.
+
+Ambient workspace provider secrets leak into test processes and would arm the real channels — the delivery forcing is the control, not per-suite env hygiene.
+
+**Why:** before the guard/forcing existed, the leak made provider-channel assertions fail identically on an unmodified tree, mimicking a regression — and in the field-test incident it is what armed the real sends.
+
+**How to apply:** never treat ambient secrets as absent in tests.

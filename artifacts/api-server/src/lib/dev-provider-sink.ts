@@ -43,6 +43,36 @@ const acceptedKeys = new Set<string>();
 // without limit; drills clear the inbox between runs anyway.
 const MAX_DELIVERIES = 500;
 
+/**
+ * Records a delivery in the sink inbox with the same dedup contract as the
+ * HTTP endpoint: a repeated idempotency key is a replay (returned as such,
+ * not double-counted). Shared by the HTTP router and by the in-process test
+ * harness sink adapters (delivery-providers.ts), so a forced-sink test run
+ * and a sink-URL drill leave the same evidence in the same inbox.
+ */
+export function recordDevSinkDelivery(entry: {
+  channel: string;
+  idempotencyKey: string | null;
+  authorized: boolean;
+  payload: unknown;
+}): { replayed: boolean } {
+  if (entry.idempotencyKey && acceptedKeys.has(entry.idempotencyKey)) {
+    return { replayed: true };
+  }
+  if (entry.idempotencyKey) acceptedKeys.add(entry.idempotencyKey);
+  deliveries.push({
+    channel: entry.channel,
+    idempotencyKey: entry.idempotencyKey,
+    authorized: entry.authorized,
+    payload: entry.payload,
+    receivedAt: new Date().toISOString(),
+  });
+  if (deliveries.length > MAX_DELIVERIES) {
+    deliveries.splice(0, deliveries.length - MAX_DELIVERIES);
+  }
+  return { replayed: false };
+}
+
 export function devProviderSinkEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -62,25 +92,19 @@ export function createDevProviderSinkRouter(): IRouter {
     if (typeof payload.body === "string" && payload.body.includes("[sink-fail]")) {
       return res.status(500).json({ error: "sink-fail marker present in alert body" });
     }
-    if (key && acceptedKeys.has(key)) {
-      res.setHeader("x-idempotency-replayed", "true");
-      // A replayed acceptance still went to the test inbox — carry the sink
-      // marker so the retried delivery is labeled simulated too.
-      res.setHeader(DEV_PROVIDER_SINK_HEADER, "true");
-      return res.status(409).json({ error: "idempotency key already accepted", replayed: true, sink: "dev-provider-inbox" });
-    }
-    if (key) acceptedKeys.add(key);
-    deliveries.push({
+    const recorded = recordDevSinkDelivery({
       channel,
       idempotencyKey: key,
       authorized: Boolean(req.header("authorization")),
       payload,
-      receivedAt: new Date().toISOString(),
     });
-    if (deliveries.length > MAX_DELIVERIES) {
-      deliveries.splice(0, deliveries.length - MAX_DELIVERIES);
-    }
+    // A replayed acceptance still went to the test inbox — carry the sink
+    // marker so the retried delivery is labeled simulated too.
     res.setHeader(DEV_PROVIDER_SINK_HEADER, "true");
+    if (recorded.replayed) {
+      res.setHeader("x-idempotency-replayed", "true");
+      return res.status(409).json({ error: "idempotency key already accepted", replayed: true, sink: "dev-provider-inbox" });
+    }
     return res.status(202).json({ accepted: true, channel, sink: "dev-provider-inbox" });
   });
 
