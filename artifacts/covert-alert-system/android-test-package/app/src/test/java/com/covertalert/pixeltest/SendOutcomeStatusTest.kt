@@ -9,8 +9,9 @@ import org.junit.Test
  * Pins the inline Send-button outcome decision: a committed incident must
  * never read as a green SENT unless message parts were actually handed to
  * the radio. These are the exact strings DeviceSmsSender.sendAlert returns;
- * the producer builds its success string from SMS_DISPATCHED_PREFIX, so a
- * drift between producer and classifier fails here.
+ * the producer builds them via SendOutcomeStatus.smsDispatchSummary from the
+ * dispatch loop's actual counts, so a drift between producer and classifier
+ * fails here.
  */
 class SendOutcomeStatusTest {
 
@@ -115,6 +116,19 @@ class SendOutcomeStatusTest {
         val line = SendOutcomeStatus.triggered(null, "sent to 1 responder(s); awaiting radio results")
         assertTrue(line.success)
         assertTrue(line.text.contains("incident unknown"))
+    }
+
+    // Repeat-tap path: the reused-incident line must never claim SENT — this
+    // tap dispatched nothing and the original batch's delivery state is only
+    // knowable from the console.
+    @Test
+    fun reusedIncident_neverClaimsSent() {
+        val line = SendOutcomeStatus.reused("inc-7")
+        assertFalse(line.startsWith("SENT"))
+        assertTrue(line.startsWith("ALREADY ACTIVE"))
+        assertTrue(line.contains("inc-7"))
+        assertTrue(line.contains("no repeat SMS sent"))
+        assertFalse(SendOutcomeStatus.reused(null).contains("inc-7"))
     }
 
     // Offline path: header always reports NOT_SENT to server; the success

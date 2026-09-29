@@ -18,12 +18,15 @@ package com.covertalert.pixeltest
 object SendOutcomeStatus {
 
     /**
-     * Prefix of the ONLY DeviceSmsSender.sendAlert outcome in which message
-     * parts were handed to the radio. Every other return ("no responder
-     * numbers configured", "SmsManager unavailable", "send aborted: …",
-     * "SEND_SMS permission not granted", "not sent: …") means nothing left
-     * the phone. DeviceSmsSender builds its success string from this exact
-     * prefix; change it in both places or the tests fail.
+     * Prefix of the ONLY DeviceSmsSender.sendAlert outcomes in which message
+     * parts were handed to the radio for at least one responder. Every other
+     * return ("no responder numbers configured", "SmsManager unavailable",
+     * "send aborted: …", "SEND_SMS permission not granted", "not sent: …"
+     * — including "not sent: no SMS reached the radio — …" when every
+     * responder failed preparation or the radio call) means nothing left
+     * the phone. DeviceSmsSender builds its dispatch strings from this exact
+     * prefix and only when its per-recipient record shows a real dispatch;
+     * change it in both places or the tests fail.
      */
     const val SMS_DISPATCHED_PREFIX = "sent to "
 
@@ -53,6 +56,16 @@ object SendOutcomeStatus {
             "${SMS_DISPATCHED_PREFIX}$dispatchedTo responder(s); awaiting radio results"
         }
     }
+
+    /**
+     * Repeat-tap path: the tap folded into an already-active incident, so
+     * THIS send dispatched nothing. The line must never claim SENT — the
+     * original batch's delivery state is only knowable from the console,
+     * not from this tap. Returns plain text (no success flag): MainActivity
+     * colors it a neutral amber, neither green nor red.
+     */
+    fun reused(incidentId: String?): String =
+        "ALREADY ACTIVE — incident ${incidentId ?: "unknown"}; no repeat SMS sent — delivery state is on the console"
 
     data class Line(val text: String, val success: Boolean)
 

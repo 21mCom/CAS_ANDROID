@@ -9,6 +9,11 @@ run-guide freshness job, and the MVP handoff ZIP freshness job have all
 executed green on real windows-latest GitHub runners — the "first real run"
 question for these gates is settled.
 
+For suites whose first real run is still owed: when the remote-tip tree is
+nearly identical to workspace main and the target workflow has no branch
+filter, a scratch branch = remote tip + cherry-pick of the feature commit is
+enough to get a faithful real-CI run without touching main.
+
 **Why:** these gates were merged to the workspace lineage while GitHub main
 stayed far behind, so each "confirm the first real run" task does not need a
 fresh scratch-branch push if an earlier run already covered the same code.

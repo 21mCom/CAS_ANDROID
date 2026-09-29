@@ -418,10 +418,14 @@ class MainActivity : Activity() {
                 if (result.ok && result.reused) {
                     // The repeat tap folded into the still-active incident and
                     // the console queued no new deliveries, so the handset
-                    // must not re-send physical messages either.
+                    // must not re-send physical messages either. THIS tap
+                    // dispatched nothing, so the line must not claim SENT —
+                    // the original batch's delivery state is only knowable
+                    // from the console. Neutral amber: neither success nor
+                    // failure is proven from here.
                     TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS"))
-                    statusLine = "SENT — incident ${result.incidentId ?: "unknown"} (already active; no repeat SMS sent)"
-                    statusColor = COLOR_OK
+                    statusLine = SendOutcomeStatus.reused(result.incidentId)
+                    statusColor = COLOR_WARN
                 } else if (result.ok && result.smsCircle != null && result.smsCircle.isEmpty()) {
                     // The console's managed responder circle has no enabled
                     // SMS numbers: text nobody — falling back to the local
@@ -736,3 +740,4 @@ private const val REQUEST_CAMERA = 44
 // Inline send-outcome colors (readable on the default light theme).
 private const val COLOR_OK = 0xFF2E7D32.toInt()
 private const val COLOR_FAIL = 0xFFC62828.toInt()
+private const val COLOR_WARN = 0xFFF9A825.toInt()
