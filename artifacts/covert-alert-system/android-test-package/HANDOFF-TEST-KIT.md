@@ -197,6 +197,58 @@ and the inbox shows a `chat` stanza whose `stanzaId` equals the
 Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
 `to`, `from`, `subject` = `CAS P1 alert <incident id>`, and the alert body.
 
+## T7b — Email failure honesty: wrong app password (API only, SMTP deployment)
+
+Proves the failure the owner is most likely to hit a year from now — a
+rotated or revoked mailbox app password — fails loudly in the console,
+never silently. Run once against the real deployment after T7 passes.
+Requires a deployment where email sends over direct SMTP (server
+`CAS_EMAIL_SMTP_*` secrets or the console's primary mailbox), not the dev
+provider sink.
+
+1. Break the credential on whichever configuration owns the channel — the
+   banner on the console's **Email delivery** page says which is live:
+   - **Server secrets:** set `CAS_EMAIL_SMTP_PASSWORD` to a wrong value
+     (e.g. the real app password with one character changed) and restart
+     the service (`sudo systemctl restart cas-api`).
+   - **Console primary mailbox:** edit the primary mailbox and save a wrong
+     app password (no restart; the field is write-only).
+2. From the workstation:
+
+   ```powershell
+   Invoke-CasTrigger          # note the incident id
+   Watch-CasOutbox -IncidentId <id> -TimeoutSeconds 600
+   ```
+
+3. Pass — the failure is loud and named:
+   - The EMAIL item ends `DEAD_LETTER` (8 attempts with backoff, so allow a
+     few minutes) — never stuck `QUEUED`, never silently dropped. The
+     console chip reads `EMAIL · DEAD LETTER · abandoned after 8 attempts`
+     and its last error starts `authentication (permanent):` — the mailbox
+     refused the credentials — and names the recovery
+     (`CAS_EMAIL_SMTP_USER` / a fresh app password). No password material
+     appears in any error text.
+   - The journal shows `DELIVERY_ABANDONED` with the same named error, and
+     the dead-letter alarm appears on the incidents page.
+   - `Get-CasOutboxStatus` surfaces the failure under `lastDeliveryError`
+     from the first failed attempt, well before the retries exhaust.
+4. Fix the credential (restore the correct app password — env secret +
+   restart, or re-save the console primary mailbox), then re-queue:
+
+   ```powershell
+   Invoke-CasRequeue -OutboxItemId '<incidentId>-email'
+   Watch-CasOutbox -IncidentId <id>
+   ```
+
+   (The console's **Re-queue** button on the EMAIL chip does the same.)
+   Pass: EMAIL item → `SENT` within ~15 s (one worker tick); the journal
+   shows `DELIVERY_ABANDONED → DELIVERY_REQUEUED`.
+5. Resolve the incident.
+
+   If the deployment sends through `CAS_EMAIL_PROVIDER_URL` instead of
+   SMTP, the same drill applies to the provider token — the named
+   classification is still `authentication (permanent)`.
+
 ## T8 — Failure honesty (API only)
 
 1. `Send-CasDeviceReceipt` with `-Ok:$false` against a live incident's SMS
@@ -303,6 +355,7 @@ T4 WhatsApp sink:      PASS/FAIL — <messaging_product/idempotency key seen>
 T5 WhatsApp off-phone: PASS/FAIL — <409 seen? pending list SMS-only?>
 T6 XMPP sink:        PASS/FAIL — <stanzaId seen>
 T7 email sink:       PASS/FAIL — <subject seen>
+T7b SMTP failure honesty: PASS/FAIL/SKIP — <authentication (permanent) named in chip + journal? SENT after fix + re-queue?>
 T8 failure honesty:  PASS/FAIL — <replay:true seen?>
 T9 no-data fallback: PASS/FAIL/SKIP — <SMS arrived with data off?>
 T10 evidence capture: PASS/FAIL — <which types landed; immediate vs screen-off comparison; any CAPTURE_FAILED detail>
