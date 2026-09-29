@@ -132,13 +132,33 @@ object DeviceSmsSender {
         // replacement send gets a fresh id under the new cycle token.
         val sendId = "${incidentId ?: "offline"}-${java.util.UUID.randomUUID()}"
 
+        // The body is shared by every responder, so divide it once.
+        // divideMessage is NOT reliable on every handset/Android build (seen
+        // in the field: a Pixel on Android 17 / API 37 fails it for every
+        // recipient, so no alert SMS ever left the phone). An undividable but
+        // non-empty body must not kill the alert: fall back to sending it as
+        // a single part and journal the real exception so field reports show
+        // WHY division failed. Only a blank body stays DIVIDE_FAILED — there
+        // is genuinely nothing to send. (An over-long single part may still
+        // be rejected by the radio; that rejection is reported honestly via
+        // the normal per-part result path, which beats certain silence.)
+        var divideError: String? = null
+        val sharedParts = runCatching { sms.divideMessage(body) }
+            .onFailure { divideError = it.message ?: it.javaClass.simpleName }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?: body.takeIf { it.isNotBlank() }?.let { singlePart ->
+                TestStore.record(context, "SMS_DIVIDE_FALLBACK", mapOf(
+                    "reason" to (divideError ?: "divideMessage returned no parts"),
+                    "bodyChars" to singlePart.length,
+                ))
+                listOf(singlePart)
+            }
         // Compute the FULL roster before persisting or sending anything: the
         // durable record must cover every responder, so a process death
         // mid-dispatch can never finalize a partially attempted roster into
         // an all-success receipt that marks the console's item SENT.
-        val roster = ReceiptDurability.planDispatch(responders) { recipient ->
-            runCatching { sms.divideMessage(body) }.getOrNull()
-        }
+        val roster = ReceiptDurability.planDispatch(responders) { sharedParts }
         val batch = Batch(sendId, incidentId, cycleToken)
         batch.remainingByRecipient.putAll(roster.partsByRecipient.mapValues { it.value.size })
         roster.failures.keys.forEach { batch.remainingByRecipient[it] = 0 }
