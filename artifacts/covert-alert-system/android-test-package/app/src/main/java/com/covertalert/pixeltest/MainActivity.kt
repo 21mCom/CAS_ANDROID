@@ -28,6 +28,8 @@ class MainActivity : Activity() {
     private lateinit var respondersInput: EditText
     private lateinit var alertTokenInput: EditText
     private lateinit var reportView: TextView
+    private lateinit var alertStatus: TextView
+    private var alertStatusDefaultColor = 0
     @Volatile private var alertInFlight = false
 
     private val smsPermissionGranted: Boolean
@@ -49,6 +51,14 @@ class MainActivity : Activity() {
             setTextIsSelectable(true)
             setPadding(0, 16, 0, 16)
         }
+        // Inline outcome line directly under the Send button: the sender must
+        // see SENT/FAILED/NOT_SENT (and why) without scrolling to the report.
+        alertStatus = TextView(this).apply {
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 8, 0, 8)
+        }
+        alertStatusDefaultColor = alertStatus.textColors.defaultColor
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -196,6 +206,7 @@ class MainActivity : Activity() {
             refreshReport()
         })
         root.addView(button("Send MVP alert now") { sendMvpAlert() })
+        root.addView(alertStatus)
         root.addView(button("Check re-queued deliveries") { checkRequeued() })
         root.addView(button("Request pinned proxy shortcut") {
             val manager = getSystemService<android.content.pm.ShortcutManager>()
@@ -293,7 +304,12 @@ class MainActivity : Activity() {
     }
 
     private fun sendMvpAlert() {
-        if (alertInFlight) return
+        if (alertInFlight) {
+            // Never swallow the tap silently: a distressed sender tapping
+            // again must see that an attempt is already underway.
+            showAlertStatus("Already sending — wait for the current attempt to finish")
+            return
+        }
         val baseUrl = serverInput.text.toString().trim()
         val token = alertTokenInput.text.toString().trim()
         TestStore.setAlertServerUrl(this, baseUrl)
@@ -306,12 +322,14 @@ class MainActivity : Activity() {
         val canReachConsole = baseUrl.isNotBlank() && hasConsoleCredential
         if (TestStore.smsResponders(this).isEmpty() && !canReachConsole) {
             TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "no responder numbers configured (with no reachable console to supply its responder circle, the handset's own list is the only source)"))
+            showAlertStatus("NOT_SENT: no responder numbers configured — save responder numbers or an alert server first", COLOR_FAIL)
             refreshReport()
             return
         }
         if (!smsPermissionGranted) {
             TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to "SEND_SMS permission not granted; requesting it now — tap Send again after granting"))
             requestPermissions(arrayOf(android.Manifest.permission.SEND_SMS), REQUEST_SEND_SMS)
+            showAlertStatus("NOT_SENT: SMS permission not granted — grant it, then tap Send again", COLOR_FAIL)
             refreshReport()
             return
         }
@@ -321,8 +339,15 @@ class MainActivity : Activity() {
             "responders" to TestStore.smsResponders(this).size,
             "locationPermission" to locationPermissionGranted,
         ))
-        reportView.text = "Sending MVP alert..."
+        showAlertStatus("Sending alert…")
         Thread {
+            // Set in every terminal branch below; the finally guard makes
+            // sure even a crashed attempt resets alertInFlight so it can
+            // never silently swallow later taps. Defaults cover a Throwable
+            // that is not an Exception (the catch below would not run).
+            var statusLine = "FAILED: alert attempt ended without a result"
+            var statusColor = COLOR_FAIL
+            try {
             // Bounded capture: at most AlertLocation.MAX_WAIT_MS before the
             // trigger POST and SMS go out, with or without a fix.
             val captureStart = System.currentTimeMillis()
@@ -352,7 +377,9 @@ class MainActivity : Activity() {
                     "no enrollment credential or enrolled device credential configured; the server would reject the trigger with 401, texting responders directly without an incident"
                 }
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "NOT_SENT", "reason" to reason))
-                sendSmsFromHandset(null, fix)
+                val line = SendOutcomeStatus.offlineDirect(reason, sendSmsFromHandset(null, fix))
+                statusLine = line.text
+                statusColor = if (line.success) COLOR_OK else COLOR_FAIL
             } else {
                 val result = AlertSender.trigger(this@MainActivity, baseUrl, token, fix)
                 TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to if (result.ok) "SENT" else "FAILED", "detail" to result.detail))
@@ -393,12 +420,15 @@ class MainActivity : Activity() {
                     // the console queued no new deliveries, so the handset
                     // must not re-send physical messages either.
                     TestStore.record(this, "MVP_ALERT_OUTCOME", mapOf("outcome" to "FOLDED_INTO_ACTIVE", "detail" to "incident already active; not re-sending SMS"))
+                    statusLine = "SENT — incident ${result.incidentId ?: "unknown"} (already active; no repeat SMS sent)"
+                    statusColor = COLOR_OK
                 } else if (result.ok && result.smsCircle != null && result.smsCircle.isEmpty()) {
                     // The console's managed responder circle has no enabled
                     // SMS numbers: text nobody — falling back to the local
                     // list would keep texting responders the operator
                     // disabled in the console.
                     TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (result.incidentId ?: "unknown"), "detail" to "NOT_SENT: the console responder circle has no enabled SMS numbers — add or enable one in the console"))
+                    statusLine = "NOT_SENT: incident ${result.incidentId ?: "unknown"} created, but the console responder circle has no enabled SMS numbers — add or enable one in the console"
                 } else {
                     // Device-direct: even when the trigger POST fails (no
                     // data, server down) the alert still leaves this handset
@@ -406,17 +436,38 @@ class MainActivity : Activity() {
                     // responders where the handset was. Online sends use the
                     // console's circle and wording; only a failed trigger
                     // falls back to the local list and offline wording.
-                    sendSmsFromHandset(
+                    val smsOutcome = sendSmsFromHandset(
                         if (result.ok) result.incidentId else null,
                         fix,
                         if (result.ok) result.smsCircle else null,
                         if (result.ok) result.smsMessage else null,
                     )
+                    if (result.ok) {
+                        // A committed incident is not proof the alert left the
+                        // phone: classify the SMS start itself so an unseeded
+                        // console circle with no local numbers (or a dispatch
+                        // abort) reads NOT_SENT, never a false green SENT.
+                        val line = SendOutcomeStatus.triggered(result.incidentId, smsOutcome)
+                        statusLine = line.text
+                        statusColor = if (line.success) COLOR_OK else COLOR_FAIL
+                    } else {
+                        statusLine = "FAILED: ${result.detail}\nHandset SMS fallback: $smsOutcome"
+                        statusColor = if (SendOutcomeStatus.smsDispatched(smsOutcome)) COLOR_OK else COLOR_FAIL
+                    }
                 }
             }
-            runOnUiThread {
-                alertInFlight = false
-                refreshReport()
+            } catch (error: Exception) {
+                // A crashed attempt still owes the sender an answer; the
+                // journal stays the detailed source via refreshReport below.
+                statusLine = "FAILED: unexpected error — ${error.javaClass.simpleName}: ${error.message ?: "no detail"}"
+            } finally {
+                val line = statusLine
+                val color = statusColor
+                runOnUiThread {
+                    alertInFlight = false
+                    showAlertStatus(line, color)
+                    refreshReport()
+                }
             }
         }.start()
     }
@@ -426,7 +477,7 @@ class MainActivity : Activity() {
         fix: AlertLocation.Fix? = null,
         recipients: List<String>? = null,
         message: String? = null,
-    ) {
+    ): String {
         // recipients/message come from the console's deviceSms directive on a
         // successful trigger; both are null on the offline path, where the
         // handset's own list and wording are the explicit fallback.
@@ -437,6 +488,16 @@ class MainActivity : Activity() {
             respondersOverride = recipients,
         )
         TestStore.record(this, "MVP_SMS_OUTCOME", mapOf("incidentId" to (incidentId ?: "offline"), "detail" to outcome))
+        return outcome
+    }
+
+    /** Immediate inline feedback under the Send button; safe from any thread. */
+    private fun showAlertStatus(text: String, color: Int? = null) {
+        runOnUiThread {
+            if (!::alertStatus.isInitialized) return@runOnUiThread
+            alertStatus.text = text
+            alertStatus.setTextColor(color ?: alertStatusDefaultColor)
+        }
     }
 
     private fun checkRequeued() {
@@ -672,3 +733,6 @@ private const val REQUEST_SEND_SMS = 41
 private const val REQUEST_LOCATION = 42
 private const val REQUEST_MIC = 43
 private const val REQUEST_CAMERA = 44
+// Inline send-outcome colors (readable on the default light theme).
+private const val COLOR_OK = 0xFF2E7D32.toInt()
+private const val COLOR_FAIL = 0xFFC62828.toInt()

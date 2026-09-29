@@ -194,7 +194,10 @@ object DeviceSmsSender {
             "responders" to synchronized(lock) { batch.remainingByRecipient.size },
         ))
         finalizeIfComplete(appContext, sendId)
-        return "sent to ${responders.size} responder(s); awaiting radio results"
+        // The ONLY outcome meaning parts reached the radio; built from the
+        // shared prefix SendOutcomeStatus.smsDispatched classifies on, so the
+        // inline button status can never drift from this string.
+        return "${SendOutcomeStatus.SMS_DISPATCHED_PREFIX}${responders.size} responder(s); awaiting radio results"
     }
 
     /** Entry point for SmsResultReceiver; runs on the main thread. */

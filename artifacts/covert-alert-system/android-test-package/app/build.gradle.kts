@@ -61,4 +61,7 @@ dependencies {
     // unaffected.
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // JVM unit tests for the android-free cores (SendOutcomeStatus,
+    // ReceiptDurability). Run with :app:testDebugUnitTest.
+    testImplementation("junit:junit:4.13.2")
 }
