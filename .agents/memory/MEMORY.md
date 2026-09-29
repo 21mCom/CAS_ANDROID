@@ -43,3 +43,4 @@
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
 - [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after.
 - [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.
+- [WriteFile NUL-escape trap](writefile-nul-escape-trap.md) — `\0` escapes become literal NUL bytes; file turns "binary" and later exact-match edits fail invisibly.

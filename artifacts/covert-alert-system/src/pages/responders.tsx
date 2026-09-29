@@ -246,7 +246,7 @@ export default function Responders() {
       <section className="fade-up fade-up-2 mt-5 border border-[#d7d8d0] bg-[#f4f3ed] p-5">
         <h2 className="font-display font-extrabold tracking-[-0.02em]">Boundary note</h2>
         <p className="mt-2 text-xs leading-5 text-[#687271]">
-          This page decides who is alerted and on which channels. How each channel is delivered (provider endpoints, credentials, device-direct SMS) stays in the server environment; the wording responders receive is edited under Alert text. In device-direct SMS mode the handset still sends from its own SIM.
+          This page decides who is alerted and on which channels. How each channel is delivered (provider endpoints, credentials, the email mailbox's SMTP login, device-direct SMS) stays in the server environment; the wording responders receive is edited under Alert text. In device-direct SMS mode the handset still sends from its own SIM.
         </p>
       </section>
     </div>

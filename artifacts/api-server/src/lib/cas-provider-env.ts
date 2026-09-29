@@ -59,3 +59,81 @@ export function readProviderRecipients(
 ): string[] {
   return parseRecipientList(env[`${TRANSPORT_ENV[transport].prefix}_RECIPIENTS`]);
 }
+
+/**
+ * Direct-SMTP configuration for the email channel — the alternative to an
+ * HTTPS mail-submission provider for personal-scale deployments (a dedicated
+ * mailbox with an app password, e.g. Gmail's smtp.gmail.com:465).
+ *
+ *   CAS_EMAIL_SMTP_HOST      submission host; presence enables the SMTP path
+ *   CAS_EMAIL_SMTP_PORT      default 465 (implicit TLS); 587 uses STARTTLS.
+ *                            TLS is mandatory either way — a server that
+ *                            cannot encrypt fails loudly, never cleartext.
+ *   CAS_EMAIL_SMTP_USER      mailbox login (usually the full address)
+ *   CAS_EMAIL_SMTP_PASSWORD  app password for that mailbox
+ *   CAS_EMAIL_SMTP_CA_FILE   optional PEM bundle for relays on internal CAs
+ *   CAS_EMAIL_FROM           sender address; defaults to the SMTP user
+ *
+ * "Configured" means the host is set; missing user/password fail loudly at
+ * send time (not-configured) so a half-written env block is never silently
+ * treated as "email disabled".
+ */
+export type EmailSmtpEnvConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user?: string;
+  password?: string;
+  from?: string;
+  caFile?: string;
+};
+
+export const DEFAULT_SMTP_PORT = 465;
+
+export function readEmailSmtpConfig(
+  env: NodeJS.ProcessEnv,
+): EmailSmtpEnvConfig | undefined {
+  const host = env.CAS_EMAIL_SMTP_HOST?.trim();
+  if (!host) return undefined;
+  const rawPort = env.CAS_EMAIL_SMTP_PORT?.trim();
+  let port = DEFAULT_SMTP_PORT;
+  if (rawPort) {
+    const parsed = Number(rawPort);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+      throw new Error(
+        `Invalid CAS_EMAIL_SMTP_PORT value: "${rawPort}" (expected a port number 1-65535)`,
+      );
+    }
+    port = parsed;
+  }
+  return {
+    host,
+    port,
+    // 465 is the implicit-TLS submission port; anything else upgrades via
+    // STARTTLS (and the client refuses servers that cannot).
+    secure: port === 465,
+    user: env.CAS_EMAIL_SMTP_USER?.trim() || undefined,
+    password: env.CAS_EMAIL_SMTP_PASSWORD || undefined,
+    from: env.CAS_EMAIL_FROM?.trim() || env.CAS_EMAIL_SMTP_USER?.trim() || undefined,
+    caFile: env.CAS_EMAIL_SMTP_CA_FILE?.trim() || undefined,
+  };
+}
+
+/**
+ * Email delivery is configured when EITHER transport is present. Setting
+ * both is contradictory — which one should send? — and fails loudly at boot
+ * (the same posture as an unknown CAS_SMS_DELIVERY_MODE) instead of
+ * silently picking one.
+ */
+export function assertUnambiguousEmailConfig(env: NodeJS.ProcessEnv): void {
+  if (readEmailSmtpConfig(env) && readProviderEndpoint(env, "EMAIL")) {
+    throw new Error(
+      "CAS email is configured twice: set either CAS_EMAIL_SMTP_HOST (direct SMTP through a mailbox) or CAS_EMAIL_PROVIDER_URL (HTTPS mail provider), not both.",
+    );
+  }
+}
+
+/** True when the email channel has any working delivery path configured. */
+export function emailChannelConfigured(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(readEmailSmtpConfig(env) ?? readProviderEndpoint(env, "EMAIL"));
+}

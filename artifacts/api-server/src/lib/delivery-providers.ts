@@ -6,10 +6,21 @@ import type { CasOutbox } from "@workspace/db/schema";
 import { maskRecipient } from "./cas-device-delivery";
 import {
   GATEWAY_TRANSPORTS,
+  assertUnambiguousEmailConfig,
+  emailChannelConfigured,
+  readEmailSmtpConfig,
   readProviderEndpoint,
   readProviderRecipients,
   type GatewayTransport,
 } from "./cas-provider-env";
+import {
+  CasProviderError,
+  type ProviderErrorClassification,
+} from "./cas-provider-error";
+import { readSmtpCaPem, sendSmtpMessage } from "./cas-smtp";
+import { accountToSmtpConfig, getEmailAccount } from "./cas-email-accounts";
+
+export { CasProviderError, type ProviderErrorClassification };
 import {
   DEFAULT_TEMPLATE_BODY,
   renderTemplate,
@@ -45,11 +56,26 @@ import type { CasDeliverySender } from "../routes/cas";
  *   CAS_XMPP_FROM_JID       sender JID (optional)
  *   CAS_XMPP_RECIPIENTS     comma-separated recipient JIDs (required)
  *
- * EMAIL:
- *   CAS_EMAIL_PROVIDER_URL   HTTPS endpoint of the mail submission API
- *   CAS_EMAIL_PROVIDER_TOKEN bearer token for the provider (optional)
- *   CAS_EMAIL_FROM           sender address (optional)
- *   CAS_EMAIL_RECIPIENTS     comma-separated recipient addresses (required)
+ * EMAIL — two mutually exclusive configuration paths (setting both aborts
+ * boot rather than silently picking one):
+ *   Direct SMTP through a real mailbox (recommended for personal scale; a
+ *   dedicated account with an app password). TLS is mandatory — implicit on
+ *   port 465, STARTTLS otherwise; a server that cannot encrypt fails loudly:
+ *     CAS_EMAIL_SMTP_HOST      submission host; presence selects this path
+ *     CAS_EMAIL_SMTP_PORT      default 465; 587 uses STARTTLS
+ *     CAS_EMAIL_SMTP_USER / CAS_EMAIL_SMTP_PASSWORD   mailbox login + app password
+ *     CAS_EMAIL_SMTP_CA_FILE   optional PEM bundle for relays on internal CAs
+ *   HTTPS mail-submission API (Resend-style):
+ *     CAS_EMAIL_PROVIDER_URL   HTTPS endpoint of the mail submission API
+ *     CAS_EMAIL_PROVIDER_TOKEN bearer token for the provider (optional)
+ *   Shared:
+ *     CAS_EMAIL_FROM           sender address (SMTP default: the login user)
+ *     CAS_EMAIL_RECIPIENTS     comma-separated recipient addresses
+ *   SMTP has no idempotency contract (like the WhatsApp Cloud API), so
+ *   duplicate suppression is durable on our side via the
+ *   cas_provider_deliveries ledger: every accepted (recipient, outbox item)
+ *   pair is recorded and a retried send skips it. The RFC Message-ID
+ *   carries the stable key hash so the mailbox side can be traced.
  *
  * WHATSAPP (server-side only — the handset never opens the WhatsApp UI):
  *   CAS_WHATSAPP_PROVIDER_URL   full HTTPS URL of the WhatsApp Business
@@ -83,44 +109,9 @@ import type { CasDeliverySender } from "../routes/cas";
  * and the provider URL must be updated in configuration instead.
  */
 
-export type ProviderErrorClassification =
-  | "not-configured"
-  | "network"
-  | "socket-timeout"
-  | "rate-limited"
-  | "server-outage"
-  | "authentication"
-  | "rejected";
-
-export class CasProviderError extends Error {
-  readonly classification: ProviderErrorClassification;
-  readonly retryable: boolean;
-  readonly status?: number;
-  /**
-   * Minimum delay the provider asked for before the next attempt (from its
-   * Retry-After header), when the hint was present and sane. The outbox
-   * worker treats this as a lower bound on top of its own backoff.
-   */
-  readonly retryAfterMs?: number;
-
-  constructor(
-    classification: ProviderErrorClassification,
-    message: string,
-    options: {
-      retryable: boolean;
-      status?: number;
-      cause?: unknown;
-      retryAfterMs?: number;
-    },
-  ) {
-    super(message, { cause: options.cause });
-    this.name = "CasProviderError";
-    this.classification = classification;
-    this.retryable = options.retryable;
-    this.status = options.status;
-    this.retryAfterMs = options.retryAfterMs;
-  }
-}
+// CasProviderError and ProviderErrorClassification live in
+// cas-provider-error.ts (extracted so the SMTP client shares one definition
+// without an import cycle) and are re-exported above.
 
 // A Retry-After hint beyond this bound is clamped to the cap rather than
 // dropped: a throttling provider asking for an extreme wait still means
@@ -429,6 +420,40 @@ async function submitToProvider(
   }
 }
 
+/**
+ * Durable duplicate suppression for providers with no idempotency contract
+ * (WhatsApp Cloud API, direct SMTP). Every accepted (recipient, outbox
+ * item) pair is recorded; a retried send skips recipients whose acceptance
+ * is already recorded. If the process dies between provider acceptance and
+ * this insert, one duplicate is possible on retry — the ledger makes the
+ * common retry paths duplicate-free; only a crash inside that narrow window
+ * can still double-send.
+ */
+async function deliveryAcceptanceRecorded(keyHash: string): Promise<boolean> {
+  const [recorded] = await db
+    .select({ keyHash: casProviderDeliveries.keyHash })
+    .from(casProviderDeliveries)
+    .where(eq(casProviderDeliveries.keyHash, keyHash));
+  return Boolean(recorded);
+}
+
+async function recordDeliveryAcceptance(
+  transport: "EMAIL" | "WHATSAPP",
+  incidentId: string,
+  keyHash: string,
+  recipient: string,
+): Promise<void> {
+  await db
+    .insert(casProviderDeliveries)
+    .values({
+      keyHash,
+      transport,
+      incidentId,
+      recipientMasked: maskRecipient(recipient),
+    })
+    .onConflictDoNothing();
+}
+
 export function createSmsProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "SMS",
@@ -494,6 +519,153 @@ export function createEmailProvider(config: ProviderConfig): ProviderAdapter {
   };
 }
 
+/**
+ * Direct-SMTP email adapter. Selected when CAS_EMAIL_SMTP_HOST is set (the
+ * HTTPS provider path above stays untouched when CAS_EMAIL_PROVIDER_URL is
+ * set instead). Duplicate suppression is ledger-based like WhatsApp's —
+ * SMTP acceptance has no replay contract — and every failure is a
+ * classified CasProviderError from cas-smtp.ts, so a misconfigured mailbox
+ * fails loudly in the journal, never silently.
+ */
+export type SmtpProviderConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user?: string;
+  password?: string;
+  from?: string;
+  caFile?: string;
+  recipients: string[];
+};
+
+export function createSmtpEmailProvider(config: SmtpProviderConfig): ProviderAdapter {
+  // The sender address defaults to the mailbox login (many providers,
+  // Gmail included, refuse any other From). Read the optional CA bundle
+  // eagerly so a bad CAS_EMAIL_SMTP_CA_FILE path fails at boot, not
+  // mid-incident.
+  const from = config.from ?? config.user ?? "";
+  const caPem = readSmtpCaPem(config.caFile);
+  return {
+    transport: "EMAIL",
+    send: async (message, idempotencyKey, recipientsOverride) => {
+      const recipients = requireRecipients("EMAIL", recipientsOverride ?? config.recipients);
+      for (const recipient of recipients) {
+        const key = `${idempotencyKey}:${recipient}`;
+        const keyHash = createHash("sha256").update(key).digest("hex");
+        if (await deliveryAcceptanceRecorded(keyHash)) continue;
+        try {
+          await sendSmtpMessage(
+            {
+              host: config.host,
+              port: config.port,
+              secure: config.secure,
+              user: config.user,
+              password: config.password,
+              from,
+              caPem,
+            },
+            {
+              to: recipient,
+              subject: `CAS ${message.priority} alert ${message.incidentId}`,
+              bodyText: message.body,
+              messageId: keyHash,
+            },
+          );
+        } catch (error) {
+          // The journaled error names the masked recipient so responders can
+          // tell whose delivery failed without the journal storing addresses.
+          if (error instanceof CasProviderError) {
+            throw new CasProviderError(
+              error.classification,
+              `${error.message} (recipient ${maskRecipient(recipient)})`,
+              { retryable: error.retryable, cause: error },
+            );
+          }
+          throw error;
+        }
+        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient);
+      }
+    },
+  };
+}
+
+/**
+ * Console-managed email adapter: the Email delivery page's account rows are
+ * resolved per send (console edits apply without a restart), the optional
+ * fallback account gets one attempt per recipient when the primary fails,
+ * and with no console primary the env-configured path (direct SMTP or the
+ * HTTPS provider) behaves exactly as before. Duplicate suppression is the
+ * same ledger as the env SMTP adapter — keyed by (outbox item, recipient) —
+ * so a fallback re-send can never duplicate a primary acceptance.
+ */
+export function createConsoleEmailProvider(
+  env: NodeJS.ProcessEnv,
+  envAdapter: ProviderAdapter | undefined,
+): ProviderAdapter {
+  // The optional internal-CA bundle applies to console accounts too (same
+  // CAS_EMAIL_SMTP_CA_FILE); read eagerly so a bad path fails at boot.
+  const caPem = readSmtpCaPem(env.CAS_EMAIL_SMTP_CA_FILE);
+  return {
+    transport: "EMAIL",
+    send: async (message, idempotencyKey, recipientsOverride) => {
+      const primary = await getEmailAccount("primary");
+      if (!primary) {
+        if (!envAdapter) {
+          throw new CasProviderError(
+            "not-configured",
+            "No EMAIL delivery is configured — add an account on the console's Email delivery page or set CAS_EMAIL_SMTP_* / CAS_EMAIL_PROVIDER_URL.",
+            { retryable: false },
+          );
+        }
+        return envAdapter.send(message, idempotencyKey, recipientsOverride);
+      }
+      const fallback = await getEmailAccount("fallback");
+      const recipients = requireRecipients("EMAIL", recipientsOverride ?? readProviderRecipients(env, "EMAIL"));
+      for (const recipient of recipients) {
+        const keyHash = createHash("sha256").update(`${idempotencyKey}:${recipient}`).digest("hex");
+        if (await deliveryAcceptanceRecorded(keyHash)) continue;
+        const payload = {
+          to: recipient,
+          subject: `CAS ${message.priority} alert ${message.incidentId}`,
+          bodyText: message.body,
+          messageId: keyHash,
+        };
+        try {
+          await sendSmtpMessage({ ...accountToSmtpConfig(primary), caPem }, payload);
+        } catch (primaryError) {
+          if (!(primaryError instanceof CasProviderError)) throw primaryError;
+          if (!fallback) {
+            // The journaled error names the masked recipient, never the address.
+            throw new CasProviderError(
+              primaryError.classification,
+              `${primaryError.message} (recipient ${maskRecipient(recipient)})`,
+              { retryable: primaryError.retryable, cause: primaryError },
+            );
+          }
+          try {
+            await sendSmtpMessage({ ...accountToSmtpConfig(fallback), caPem }, payload);
+          } catch (fallbackError) {
+            const fb =
+              fallbackError instanceof CasProviderError
+                ? fallbackError
+                : new CasProviderError("network", "unknown fallback failure", { retryable: true });
+            // Both accounts refused this recipient: report the primary's
+            // classification with the fallback's outcome appended; retryable
+            // when either leg was transient, since a retry could catch a
+            // recovered account.
+            throw new CasProviderError(
+              primaryError.classification,
+              `${primaryError.message} (recipient ${maskRecipient(recipient)}); fallback account also failed — ${fb.classification}: ${fb.message}`,
+              { retryable: primaryError.retryable || fb.retryable, cause: primaryError },
+            );
+          }
+        }
+        await recordDeliveryAcceptance("EMAIL", message.incidentId, keyHash, recipient);
+      }
+    },
+  };
+}
+
 export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter {
   return {
     transport: "WHATSAPP",
@@ -514,11 +686,7 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
       for (const recipient of recipients) {
         const key = `${idempotencyKey}:${recipient}`;
         const keyHash = createHash("sha256").update(key).digest("hex");
-        const [recorded] = await db
-          .select({ keyHash: casProviderDeliveries.keyHash })
-          .from(casProviderDeliveries)
-          .where(eq(casProviderDeliveries.keyHash, keyHash));
-        if (recorded) continue;
+        if (await deliveryAcceptanceRecorded(keyHash)) continue;
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -550,19 +718,7 @@ export function createWhatsAppProvider(config: ProviderConfig): ProviderAdapter 
         }
 
         if (response.status >= 200 && response.status < 300) {
-          // Record acceptance before moving on. If the process dies between
-          // the provider's 2xx and this insert, one duplicate is possible on
-          // retry — the ledger makes the common retry paths duplicate-free;
-          // only a crash inside this narrow window can still double-send.
-          await db
-            .insert(casProviderDeliveries)
-            .values({
-              keyHash,
-              transport: "WHATSAPP",
-              incidentId: message.incidentId,
-              recipientMasked: maskRecipient(recipient),
-            })
-            .onConflictDoNothing();
+          await recordDeliveryAcceptance("WHATSAPP", message.incidentId, keyHash, recipient);
           continue;
         }
         const detail = await response.text().catch(() => "");
@@ -606,14 +762,31 @@ export type CasProviderAdapters = {
 export function loadConfiguredProviders(
   env: NodeJS.ProcessEnv = process.env,
 ): CasProviderAdapters {
+  // Both email paths set at once is contradictory; abort loudly (this runs
+  // at boot via the outbox worker wiring) instead of silently picking one.
+  assertUnambiguousEmailConfig(env);
   const sms = readConfig(env, "SMS");
   const xmpp = readConfig(env, "XMPP");
   const email = readConfig(env, "EMAIL");
+  const emailSmtp = readEmailSmtpConfig(env);
   const whatsapp = readConfig(env, "WHATSAPP");
   return {
     sms: sms ? createSmsProvider(sms) : undefined,
     xmpp: xmpp ? createXmppProvider(xmpp) : undefined,
-    email: email ? createEmailProvider(email) : undefined,
+    // Always present: console account rows (Email delivery page) are
+    // resolved per send, with the env-configured adapter as the fallback
+    // path when no console primary exists.
+    email: createConsoleEmailProvider(
+      env,
+      emailSmtp
+        ? createSmtpEmailProvider({
+            ...emailSmtp,
+            recipients: readProviderRecipients(env, "EMAIL"),
+          })
+        : email
+          ? createEmailProvider(email)
+          : undefined,
+    ),
     whatsapp: whatsapp ? createWhatsAppProvider(whatsapp) : undefined,
   };
 }
@@ -628,11 +801,13 @@ export function loadConfiguredProviders(
 export function configuredProviderTransports(
   env: NodeJS.ProcessEnv = process.env,
 ): Array<"SMS" | "XMPP" | "EMAIL" | "WHATSAPP"> {
-  return GATEWAY_TRANSPORTS.filter(
-    (transport) =>
-      readProviderEndpoint(env, transport) !== undefined &&
-      readProviderRecipients(env, transport).length > 0,
-  );
+  return GATEWAY_TRANSPORTS.filter((transport) => {
+    const configured =
+      transport === "EMAIL"
+        ? emailChannelConfigured(env)
+        : readProviderEndpoint(env, transport) !== undefined;
+    return configured && readProviderRecipients(env, transport).length > 0;
+  });
 }
 
 /**

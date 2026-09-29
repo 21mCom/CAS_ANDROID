@@ -9,10 +9,12 @@ import { eq } from "drizzle-orm";
 import { maskRecipient } from "./cas-device-delivery";
 import {
   GATEWAY_TRANSPORTS,
+  emailChannelConfigured,
   readProviderEndpoint,
   readProviderRecipients,
   type GatewayTransport,
 } from "./cas-provider-env";
+import { getEmailAccount } from "./cas-email-accounts";
 import { DEFAULT_TEMPLATE_BODY, type CasTemplateChannel } from "./cas-message-template";
 
 /**
@@ -126,9 +128,19 @@ export async function deliverableGatewayTransports(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<GatewayTransport[]> {
   const rows = await db.select().from(casResponders);
+  // Console-managed email accounts (Email delivery page) count as configured
+  // the moment a primary row exists — the same precedence the sender applies.
+  const consoleEmail = await getEmailAccount("primary");
   const deliverable: GatewayTransport[] = [];
   for (const transport of GATEWAY_TRANSPORTS) {
-    if (!readProviderEndpoint(env, transport)) continue;
+    // Email is deliverable through any of its paths: console SMTP accounts,
+    // direct SMTP (CAS_EMAIL_SMTP_HOST), or the HTTPS mail provider
+    // (CAS_EMAIL_PROVIDER_URL).
+    const configured =
+      transport === "EMAIL"
+        ? emailChannelConfigured(env) || Boolean(consoleEmail)
+        : readProviderEndpoint(env, transport) !== undefined;
+    if (!configured) continue;
     if (rows.length === 0) {
       if (readProviderRecipients(env, transport).length > 0) deliverable.push(transport);
     } else if (rows.some((row) => row.enabled && responderAddressFor(row, transport))) {

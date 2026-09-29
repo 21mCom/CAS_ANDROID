@@ -1,5 +1,8 @@
 import { casAuthedFetch } from '@/hooks/use-field-test';
 import {
+  parseCasEmailAccountInfo,
+  parseCasEmailAccountsResponse,
+  parseCasEmailAccountTestResult,
   parseCasRespondersResponse,
   parseCasTemplateInfo,
   parseCasTemplatePreviewResult,
@@ -119,4 +122,71 @@ export async function previewTemplate(channel: string, body: string): Promise<Te
   });
   await expectOk(response, 'Unable to render the preview');
   return parseCasTemplatePreviewResult(await response.json());
+}
+
+// ---- Email delivery accounts (SMTP) -----------------------------------------
+// The console-managed mailbox settings for the email channel. Passwords are
+// write-only: the server never returns one, so the form stays blank after
+// save and "Test connection" can fall back to the stored password.
+
+export type EmailAccountSlot = 'primary' | 'fallback';
+
+export type EmailAccountInfo = {
+  slot: EmailAccountSlot;
+  host: string;
+  port: number;
+  user: string;
+  fromAddress: string | null;
+  updatedAt: string;
+};
+
+export type EmailAccountsResponse = {
+  /** Which configuration owns the channel: console rows, server env, or nothing. */
+  source: 'console' | 'environment' | 'none';
+  environment: { smtpConfigured: boolean; providerConfigured: boolean };
+  accounts: EmailAccountInfo[];
+};
+
+export type EmailAccountPayload = {
+  host: string;
+  port?: number;
+  user: string;
+  /** Omit on update to keep the stored password. */
+  password?: string;
+  fromAddress?: string | null;
+};
+
+export type EmailAccountTestResult =
+  | { ok: true }
+  | { ok: false; classification: string; message: string };
+
+export async function fetchEmailAccounts(): Promise<EmailAccountsResponse> {
+  const response = await casAuthedFetch('/api/cas/config/email-accounts');
+  await expectOk(response, 'Unable to load email delivery settings');
+  return parseCasEmailAccountsResponse(await response.json());
+}
+
+export async function saveEmailAccount(slot: EmailAccountSlot, payload: EmailAccountPayload): Promise<EmailAccountInfo> {
+  const response = await casAuthedFetch(`/api/cas/config/email-accounts/${slot}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await expectOk(response, 'Unable to save the email account');
+  return parseCasEmailAccountInfo(await response.json());
+}
+
+export async function deleteEmailAccount(slot: EmailAccountSlot): Promise<void> {
+  const response = await casAuthedFetch(`/api/cas/config/email-accounts/${slot}`, { method: 'DELETE' });
+  await expectOk(response, 'Unable to remove the email account');
+}
+
+export async function testEmailAccount(slot: EmailAccountSlot, payload: Partial<EmailAccountPayload> = {}): Promise<EmailAccountTestResult> {
+  const response = await casAuthedFetch(`/api/cas/config/email-accounts/${slot}/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await expectOk(response, 'Unable to test the connection');
+  return parseCasEmailAccountTestResult(await response.json());
 }

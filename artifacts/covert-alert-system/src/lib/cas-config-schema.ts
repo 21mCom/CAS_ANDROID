@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { casResponseShapeError } from '@/lib/cas-state-schema';
-import type { Responder, TemplateInfo, TemplatePreviewResult } from '@/lib/cas-config-api';
+import type {
+  EmailAccountInfo,
+  EmailAccountTestResult,
+  EmailAccountsResponse,
+  Responder,
+  TemplateInfo,
+  TemplatePreviewResult,
+} from '@/lib/cas-config-api';
 
 /**
  * Console-side mirror of the API's delivery-configuration response
@@ -72,6 +79,47 @@ export function parseCasTemplatePreviewResult(body: unknown): TemplatePreviewRes
   return result.data;
 }
 
+const emailAccountInfoSchema = z.object({
+  slot: z.enum(['primary', 'fallback']),
+  host: z.string(),
+  port: z.number(),
+  user: z.string(),
+  fromAddress: z.string().nullable(),
+  updatedAt: z.string(),
+}).strict();
+
+const emailAccountsResponseSchema = z.object({
+  source: z.enum(['console', 'environment', 'none']),
+  environment: z.object({
+    smtpConfigured: z.boolean(),
+    providerConfigured: z.boolean(),
+  }).strict(),
+  accounts: z.array(emailAccountInfoSchema),
+}).strict();
+
+const emailAccountTestResultSchema = z.union([
+  z.object({ ok: z.literal(true) }).strict(),
+  z.object({ ok: z.literal(false), classification: z.string(), message: z.string() }).strict(),
+]);
+
+export function parseCasEmailAccountsResponse(body: unknown): EmailAccountsResponse {
+  const result = emailAccountsResponseSchema.safeParse(body);
+  if (!result.success) throw casResponseShapeError('email accounts', result.error);
+  return result.data;
+}
+
+export function parseCasEmailAccountInfo(body: unknown): EmailAccountInfo {
+  const result = emailAccountInfoSchema.safeParse(body);
+  if (!result.success) throw casResponseShapeError('email account', result.error);
+  return result.data;
+}
+
+export function parseCasEmailAccountTestResult(body: unknown): EmailAccountTestResult {
+  const result = emailAccountTestResultSchema.safeParse(body);
+  if (!result.success) throw casResponseShapeError('email account test', result.error);
+  return result.data;
+}
+
 // Compile-time lockstep with the client's configuration types: assigning
 // in both directions fails typecheck the moment a mirror schema and the
 // corresponding cas-config-api declaration disagree.
@@ -81,9 +129,21 @@ const _templateMatchesClient: TemplateInfo = null as unknown as z.infer<typeof t
 const _schemaMatchesTemplate: z.infer<typeof templateInfoSchema> = null as unknown as TemplateInfo;
 const _previewMatchesClient: TemplatePreviewResult = null as unknown as z.infer<typeof templatePreviewResultSchema>;
 const _schemaMatchesPreview: z.infer<typeof templatePreviewResultSchema> = null as unknown as TemplatePreviewResult;
+const _emailAccountMatchesClient: EmailAccountInfo = null as unknown as z.infer<typeof emailAccountInfoSchema>;
+const _schemaMatchesEmailAccount: z.infer<typeof emailAccountInfoSchema> = null as unknown as EmailAccountInfo;
+const _emailAccountsMatchesClient: EmailAccountsResponse = null as unknown as z.infer<typeof emailAccountsResponseSchema>;
+const _schemaMatchesEmailAccounts: z.infer<typeof emailAccountsResponseSchema> = null as unknown as EmailAccountsResponse;
+const _emailTestMatchesClient: EmailAccountTestResult = null as unknown as z.infer<typeof emailAccountTestResultSchema>;
+const _schemaMatchesEmailTest: z.infer<typeof emailAccountTestResultSchema> = null as unknown as EmailAccountTestResult;
 void _responderMatchesClient;
 void _schemaMatchesResponder;
 void _templateMatchesClient;
 void _schemaMatchesTemplate;
 void _previewMatchesClient;
 void _schemaMatchesPreview;
+void _emailAccountMatchesClient;
+void _schemaMatchesEmailAccount;
+void _emailAccountsMatchesClient;
+void _schemaMatchesEmailAccounts;
+void _emailTestMatchesClient;
+void _schemaMatchesEmailTest;

@@ -44,7 +44,7 @@ Vocabulary:
 | SMS | The Pixel itself, over its own SIM | Handset reported radio success per responder | Console's Responders page (handed to the phone with every trigger and re-queue pickup); the phone's own list is only the offline/unseeded fallback. Server runs `CAS_SMS_DELIVERY_MODE=device` |
 | WHATSAPP | The console's outbox worker → WhatsApp Business Cloud API messages endpoint | Provider accepted the message (HTTPS POST, idempotency-keyed) | `CAS_WHATSAPP_PROVIDER_URL` + `CAS_WHATSAPP_PROVIDER_TOKEN`; recipients from the console's Responders page |
 | XMPP | The console's outbox worker → configured provider endpoint | Provider accepted the stanza (HTTPS POST, idempotency-keyed) | `CAS_XMPP_PROVIDER_URL`; recipients from the console's Responders page |
-| EMAIL | The console's outbox worker → configured provider endpoint | Provider accepted the message | `CAS_EMAIL_PROVIDER_URL`; recipients from the console's Responders page |
+| EMAIL | The console's outbox worker → dedicated mailbox over SMTP, or a configured HTTPS provider endpoint | The mailbox's SMTP server (or HTTPS provider) accepted the message — the last hop into the inbox is the responder's spam filtering | `CAS_EMAIL_SMTP_HOST/PORT/USER/PASSWORD` (direct SMTP, TLS mandatory) **or** `CAS_EMAIL_PROVIDER_URL`; recipients from the console's Responders page |
 
 **Who gets alerted and what it says are console settings, not secrets.** The
 console's **Responders** page holds the responder circle (per-person SMS /

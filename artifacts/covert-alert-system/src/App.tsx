@@ -15,6 +15,7 @@ import Incidents from '@/pages/incidents';
 import Setup from '@/pages/setup';
 import Responders from '@/pages/responders';
 import Messages from '@/pages/messages';
+import EmailDelivery from '@/pages/email';
 import {
   Route,
   Switch,
@@ -47,6 +48,7 @@ function RoutedApp() {
           <Route path="/setup" component={Setup} />
           <Route path="/responders" component={Responders} />
           <Route path="/messages" component={Messages} />
+          <Route path="/email" component={EmailDelivery} />
           <Route component={NotFound} />
         </Switch>
       </RoutedErrorBoundary>

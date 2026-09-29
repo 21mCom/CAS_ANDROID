@@ -19,6 +19,17 @@ import {
   type CasTemplateChannel,
 } from "../lib/cas-message-template";
 import { buildLocationClause, type CasIncidentLocation } from "../lib/delivery-providers";
+import {
+  deleteEmailAccount,
+  emailDeliverySource,
+  getEmailAccount,
+  isEmailAccountSlot,
+  listEmailAccounts,
+  saveEmailAccount,
+  type EmailAccountRow,
+} from "../lib/cas-email-accounts";
+import { probeSmtpAccount } from "../lib/cas-smtp";
+import { CasProviderError } from "../lib/cas-provider-error";
 
 /**
  * Console-managed delivery configuration: the responder circle (who gets
@@ -267,6 +278,124 @@ router.delete("/cas/config/templates/:channel", requireCasCredential, async (req
     await db.delete(casMessageTemplates).where(eq(casMessageTemplates.channel, channel));
     return res.json(shapeTemplate(channel, undefined));
   } catch (error) { return next(error); }
+});
+
+// ---- Email delivery accounts (SMTP) -----------------------------------------
+// Console-managed mailbox settings for the email channel: a primary account
+// plus an optional fallback for redundancy. Passwords are write-only — reads
+// return metadata only — and every route is credential-gated like the rest of
+// this surface. When a primary row exists it owns the channel (the CAS_EMAIL_*
+// environment config is ignored for sends); deleting it reverts to the
+// environment.
+
+const emailAccountBodySchema = z.object({
+  host: z.string().trim().min(1).max(200),
+  port: z.number().int().min(1).max(65535).optional(),
+  user: z.string().trim().min(1).max(200),
+  // Optional on update (kept from the stored row), required on create.
+  password: z.string().min(1).max(200).optional(),
+  fromAddress: emailSchema.nullable().optional(),
+});
+
+const emailAccountTestSchema = z.object({
+  host: z.string().trim().min(1).max(200).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  user: z.string().trim().min(1).max(200).optional(),
+  password: z.string().min(1).max(200).optional(),
+  fromAddress: emailSchema.nullable().optional(),
+});
+
+function shapeEmailAccount(row: EmailAccountRow) {
+  // Never the password: the API is write-only for credentials.
+  return {
+    slot: row.slot,
+    host: row.host,
+    port: row.port,
+    user: row.smtpUser,
+    fromAddress: row.fromAddress,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+router.get("/cas/config/email-accounts", requireCasCredential, async (_req, res, next) => {
+  try {
+    const rows = await listEmailAccounts();
+    const status = await emailDeliverySource();
+    return res.json({ ...status, accounts: rows.map(shapeEmailAccount) });
+  } catch (error) { return next(error); }
+});
+
+router.put("/cas/config/email-accounts/:slot", requireCasCredential, async (req: Request<{ slot: string }>, res, next) => {
+  try {
+    if (!isEmailAccountSlot(req.params.slot)) {
+      return res.status(404).json({ error: `Unknown account slot "${req.params.slot}" (known: primary, fallback)` });
+    }
+    const parsed = emailAccountBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid email account", issues: parsed.error.issues });
+    }
+    const existing = await getEmailAccount(req.params.slot);
+    const password = parsed.data.password ?? existing?.password;
+    if (!password) {
+      return res.status(400).json({
+        error: "An app password is required when adding an account (it may only be omitted when updating an existing one).",
+      });
+    }
+    await saveEmailAccount(req.params.slot, {
+      host: parsed.data.host,
+      port: parsed.data.port ?? 465,
+      user: parsed.data.user,
+      password,
+      fromAddress: parsed.data.fromAddress,
+    });
+    const saved = await getEmailAccount(req.params.slot);
+    return res.json(shapeEmailAccount(saved!));
+  } catch (error) { return next(error); }
+});
+
+router.delete("/cas/config/email-accounts/:slot", requireCasCredential, async (req: Request<{ slot: string }>, res, next) => {
+  try {
+    if (!isEmailAccountSlot(req.params.slot)) {
+      return res.status(404).json({ error: `Unknown account slot "${req.params.slot}"` });
+    }
+    const deleted = await deleteEmailAccount(req.params.slot);
+    if (!deleted) return res.status(404).json({ error: "No account stored in that slot" });
+    return res.json({ ok: true as const });
+  } catch (error) { return next(error); }
+});
+
+// Connect + authenticate probe: proves TLS and the app password without
+// sending mail. Unsaved form values may be supplied; anything omitted falls
+// back to the stored row, so a saved password never needs to round-trip.
+router.post("/cas/config/email-accounts/:slot/test", requireCasCredential, async (req: Request<{ slot: string }>, res, next) => {
+  try {
+    if (!isEmailAccountSlot(req.params.slot)) {
+      return res.status(404).json({ error: `Unknown account slot "${req.params.slot}"` });
+    }
+    const parsed = emailAccountTestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid test request", issues: parsed.error.issues });
+    }
+    const stored = await getEmailAccount(req.params.slot);
+    const host = parsed.data.host ?? stored?.host;
+    const user = parsed.data.user ?? stored?.smtpUser;
+    const password = parsed.data.password ?? stored?.password;
+    const port = parsed.data.port ?? stored?.port ?? 465;
+    const fromAddress =
+      parsed.data.fromAddress === undefined ? stored?.fromAddress : parsed.data.fromAddress;
+    if (!host || !user || !password) {
+      return res.status(400).json({
+        error: "Nothing to test: save the account first or provide host, user, and password.",
+      });
+    }
+    await probeSmtpAccount({ host, port, secure: port === 465, user, password, from: fromAddress ?? user });
+    return res.json({ ok: true as const });
+  } catch (error) {
+    if (error instanceof CasProviderError) {
+      return res.json({ ok: false as const, classification: error.classification, message: error.message });
+    }
+    return next(error);
+  }
 });
 
 export default router;

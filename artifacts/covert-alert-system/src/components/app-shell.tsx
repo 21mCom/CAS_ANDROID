@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
+import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, Mail, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 
 const navItems = [
@@ -10,6 +10,7 @@ const navItems = [
   { href: '/setup', label: 'Owner setup', icon: ClipboardCheck },
   { href: '/responders', label: 'Responders', icon: Users },
   { href: '/messages', label: 'Alert text', icon: MessageSquareText },
+  { href: '/email', label: 'Email delivery', icon: Mail },
 ];
 
 export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTest: () => void }) {

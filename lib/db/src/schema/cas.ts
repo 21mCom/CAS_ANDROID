@@ -20,6 +20,23 @@ export const casIncidents = pgTable("cas_incidents", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const casEmailAccounts = pgTable("cas_email_accounts", {
+  // Console-managed SMTP accounts for the email alert channel: a primary
+  // mailbox and an optional fallback for redundancy. When a primary row
+  // exists it takes precedence over the CAS_EMAIL_SMTP_* environment
+  // secrets (the console shows which source is live); deleting it reverts
+  // to the environment. The app password is stored here so the server can
+  // authenticate — it is write-only over the API and never returned by
+  // reads. Two fixed slots, not a list: primary + one fallback.
+  slot: text("slot").primaryKey(),
+  host: text("host").notNull(),
+  port: integer("port").notNull(),
+  smtpUser: text("smtp_user").notNull(),
+  password: text("password").notNull(),
+  fromAddress: text("from_address"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const casIncidentEvents = pgTable("cas_incident_events", {
   id: text("id").primaryKey(),
   // Cascade: app code never deletes incidents (the journal is append-only),

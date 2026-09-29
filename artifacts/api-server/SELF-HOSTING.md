@@ -154,14 +154,25 @@ CAS_DEVICE_TOKEN=CHANGE_ME
 
 # --- Optional: server-side delivery channels --------------------------------
 # Only set a channel if you want the server (not the phone) to deliver it.
-# Each needs an HTTPS endpoint; tokens optional; recipients optional now that
-# the console manages the responder circle.
 # CAS_SMS_PROVIDER_URL=        (only when CAS_SMS_DELIVERY_MODE=gateway)
 # CAS_SMS_PROVIDER_TOKEN=
 # CAS_XMPP_PROVIDER_URL= / CAS_XMPP_PROVIDER_TOKEN= / CAS_XMPP_FROM_JID=
-# CAS_EMAIL_PROVIDER_URL= / CAS_EMAIL_PROVIDER_TOKEN= / CAS_EMAIL_FROM=
 # CAS_WHATSAPP_PROVIDER_URL= / CAS_WHATSAPP_PROVIDER_TOKEN=
 #   (full Cloud API messages URL, e.g. https://graph.facebook.com/v22.0/<phone-number-id>/messages)
+#
+# EMAIL — pick ONE of the two paths (setting both aborts boot with a clear
+# error rather than silently picking one):
+#   a) Direct SMTP through a dedicated mailbox — the simplest option; see
+#      "Optional: email alerts through a dedicated mailbox" below for the
+#      10-minute Gmail app-password setup. TLS is mandatory.
+# CAS_EMAIL_SMTP_HOST=smtp.gmail.com
+# CAS_EMAIL_SMTP_PORT=465            (default; 587 also works via STARTTLS)
+# CAS_EMAIL_SMTP_USER=               (the mailbox address)
+# CAS_EMAIL_SMTP_PASSWORD=           (the app password, not the login password)
+#   b) An HTTPS mail-submission API (Resend-style):
+# CAS_EMAIL_PROVIDER_URL= / CAS_EMAIL_PROVIDER_TOKEN= / CAS_EMAIL_FROM=
+# Recipients for every channel are managed in the console's Responders page;
+# the CAS_*_RECIPIENTS lists are only the first-run seed/fallback.
 ```
 
 Rules worth knowing (the server enforces them loudly at boot or first use):
@@ -170,6 +181,61 @@ Rules worth knowing (the server enforces them loudly at boot or first use):
   content never travel cleartext.
 - Unknown `CAS_SMS_DELIVERY_MODE` / `CAS_DEVICE_CHANNELS` values abort boot
   instead of silently guessing a delivery behavior.
+- SMTP is TLS-only: port 465 encrypts from connect, any other port requires
+  the server to offer STARTTLS, and the certificate must verify. A mail
+  server that cannot do this fails the delivery loudly (visible in the
+  console's outbox status) — credentials never cross a cleartext connection.
+
+### Optional: email alerts through a dedicated mailbox (SMTP)
+
+The simplest way to activate the email channel: a free dedicated Gmail
+account that exists only to send alerts. Google carries the sender
+reputation, so no mail server or provider account to run. About 10 minutes:
+
+1. **Create a dedicated Gmail account**, e.g. `cas-alerts-<yours>@gmail.com`.
+   Do not reuse a personal account — this mailbox's only job is sending
+   alerts, which keeps the app password's blast radius small and makes the
+   sender address obvious in a responder's inbox.
+2. **Turn on 2-Step Verification** for it (myaccount.google.com → Security).
+   Google requires this before it will issue app passwords.
+3. **Create an app password** (myaccount.google.com/apppasswords), name it
+   e.g. `cas-server`, and copy the 16-character password. This is the value
+   of `CAS_EMAIL_SMTP_PASSWORD` — not the account's login password.
+4. Set the env block from Step 4 (`CAS_EMAIL_SMTP_HOST=smtp.gmail.com`,
+   user = the mailbox address, password = the app password) and restart the
+   service: `sudo systemctl restart cas-api`.
+5. **Tell every responder to add the mailbox address to their contacts.** A
+   brand-new low-volume sender has no reputation history, and an alert that
+   lands in spam is an alert nobody sees; a contact entry is the reliable
+   mitigation on every mainstream mail provider.
+
+**Console alternative (no restart needed):** instead of setting the env
+block, open the console's **Email delivery** page and save the same values
+as the *primary mailbox* — host, port, login, and the app password. The
+password is write-only: the console never displays it after saving. Console
+settings take precedence over the env block while a primary account exists
+(removing it hands the channel back to the environment), and the page also
+holds an optional **fallback mailbox** for redundancy: when the primary
+refuses or cannot reach a recipient, that recipient is tried once through
+the fallback — never duplicated. The page's **Test connection** button
+verifies TLS and credentials without sending mail. Note that in this mode
+the app password lives in the server database, so anyone with database
+access can read it — the same exposure as the env file on the host.
+
+Verify it end to end: add your own address on the console's **Responders**
+page, trigger a test alert from the phone, and watch the incident's outbox
+row reach `SENT` (console → incident detail). A misconfigured mailbox shows
+up there as a named, journaled failure — e.g. `authentication` means the
+app password is wrong or revoked, `not-configured` means host set without
+user/password. Retries are automatic with backoff; a permanently refused
+message dead-letters instead of looping forever.
+
+What `SENT` means for email: the mailbox's SMTP server accepted the message
+for that responder. The final hop into the responder's inbox is their
+provider's spam filtering — which is exactly what the contact-list step
+above covers. Other mailbox providers work too (any submission host with
+TLS + AUTH PLAIN); if yours uses an internal certificate authority, point
+`CAS_EMAIL_SMTP_CA_FILE` at its PEM bundle.
 
 ## Step 5 — Build, install the service, and first start (auto-restart on crash and reboot)
 
