@@ -2,7 +2,9 @@
   "_doc": "Exclusions for scripts/check-merge-clobber.mjs. Use this file for deliberate reverts/break-proofs whose commit message cannot carry the [no-clobber-check] marker (e.g. already-landed history). commits: sha prefix (>=7 chars) -> reason, skips that commit in both checks. paths: glob -> reason, always ignores matching paths. reversions: suppress a specific A->B->A blob reversion; path is a glob, by is the reverting commit's sha prefix.",
   "commits": {
     "559bf4c": "Deliberate add-then-remove scratch pair with 0536cd8 (.push-files.txt push scratch); nothing was meant to survive to HEAD.",
-    "8a09f04": "Deliberately superseded by 47044d0 in the same task: code review required the watchdog to stop referencing the push-capable PAT, so 47044d0 rewrote the rotation note and auth comment lines 8a09f04 had added."
+    "8a09f04": "Deliberately superseded by 47044d0 in the same task: code review required the watchdog to stop referencing the push-capable PAT, so 47044d0 rewrote the rotation note and auth comment lines 8a09f04 had added.",
+    "1413253": "Accidental rebase damage: this completion commit restored pre-28498ee blobs for the cas-config files after 28498ee (responder-seeding removal) landed mid-completion. Fully superseded by 6a077ff's deliberate repair — HEAD's cas-config.ts and cas-delivery-config.ts are diff-empty against 28498ee, and cas-config.test.ts is a verified reconstruction (28498ee's own blob failed tsc with TS1128); contract suite 255/255 green at HEAD.",
+    "6a077ff": "Deliberate repair of 1413253's accidental discard of 28498ee: restores 28498ee's cas-config.ts and cas-delivery-config.ts blobs verbatim and reconstructs cas-config.test.ts (28498ee's blob was itself rebase-mangled garbage — stray for-loops, undefined identifiers) with the no-seed guard test; non-incremental typecheck clean, contract suite 255/255 green."
   },
   "paths": {},
   "reversions": [

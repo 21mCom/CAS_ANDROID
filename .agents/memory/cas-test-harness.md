@@ -32,15 +32,13 @@ DB-touching suites REFUSE to boot outside the contract runner: a shared boot gua
 
 **Why:** an automated suite once ran against the dev DB with live SMTP secrets in the environment and emailed real responders ~20 times.
 
-**How to apply:** always run DB suites via the contract runner; never hand a suite the dev DATABASE_URL. New DB-touching suites must call the guard at module top, before any credential issuance. The guard must fail closed: the harness flag alone is trivially forgeable by hand, so every runner marker is mandatory, not optional.
-
-**How to apply:** when verifying a suite-heavy change, run the API typecheck with `--incremental false`; incremental tsc hid a mangled cas.ts here while the runtime suite still passed on a stale build-info.
+**How to apply:** always run DB suites via the contract runner; never hand a suite the dev DATABASE_URL. New DB-touching suites must invoke the shared boot guard at module top, before any credential issuance. The guard must fail closed: the harness flag alone is trivially forgeable by hand, so every runner marker is mandatory, not optional.
 
 In test runs, the app's default delivery wiring forces every provider channel onto the in-process dev sink and the scheduled mailbox health probe is skipped, regardless of configured secrets. Suite-spawned child API processes inherit the markers, so their workers are forced too.
 
 **Why:** the sink only caught gateway channels when credentials were absent; with live secrets configured, tests sent for real.
 
-**How to apply:** when adding a delivery path, route it through the default sender wiring so the forcing covers it; the end-to-end canary lives in the route suite (burst with live-looking secrets, recording stubs must stay untouched). Keep the forcing at the app-wiring layer, not inside the config loader — unit tests drive the loader directly with fixture envs.
+**How to apply:** when adding a delivery path, route it through the default sender wiring so the forcing covers it. Keep the forcing at the app-wiring layer, not inside the config loader — unit tests drive the loader directly with fixture envs.
 
 Ambient workspace provider secrets leak into test processes and would arm the real channels — the delivery forcing is the control, not per-suite env hygiene.
 

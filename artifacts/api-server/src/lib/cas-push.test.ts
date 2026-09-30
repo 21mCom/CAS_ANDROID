@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import {
   deliverCaptureRequestMessage,
+  deliverIncidentResolvedMessage,
   fetchFcmAccessToken,
   resolveCasPushConfig,
   type CasPushConfig,
@@ -221,6 +222,47 @@ test("redirects are never followed — a redirecting endpoint is a failure, not 
       await assert.rejects(
         () => deliverCaptureRequestMessage(config, "tok", payload),
         /redirect|unexpected|fetch failed/i,
+      );
+    },
+  );
+});
+
+test("deliverIncidentResolvedMessage sends a high-priority, data-only stand-down addressed to the registration token", async () => {
+  await withStub(
+    (req, respond) => {
+      if (req.url === "/token") return respond(200, { access_token: "stub-access-token" });
+      respond(200, { name: "projects/cas-test-project/messages/2" });
+    },
+    async (baseUrl, requests) => {
+      const config = sendConfig(baseUrl, "stub-access-token");
+      const outcome = await deliverIncidentResolvedMessage(config, "fcm-registration-token-xyz", { incidentId: "inc-9" });
+      assert.equal(outcome, "delivered");
+      const send = requests.find((req) => req.url === "/send")!;
+      assert.equal(send.headers.authorization, "Bearer stub-access-token");
+      const body = JSON.parse(send.body);
+      assert.equal(body.message.token, "fcm-registration-token-xyz");
+      assert.equal(body.message.android.priority, "HIGH");
+      assert.deepEqual(body.message.data, {
+        type: "cas-incident-resolved",
+        incidentId: "inc-9",
+      });
+      // Data-only: no notification key, so nothing is ever shown on screen.
+      assert.equal(body.message.notification, undefined);
+    },
+  );
+});
+
+test("deliverIncidentResolvedMessage classifies an unregistered token as stale", async () => {
+  await withStub(
+    (req, respond) => {
+      if (req.url === "/token") return respond(200, { access_token: "stub-access-token" });
+      respond(404, { error: { status: "NOT_FOUND" } });
+    },
+    async (baseUrl) => {
+      const config = sendConfig(baseUrl, "stub-access-token");
+      assert.equal(
+        await deliverIncidentResolvedMessage(config, "tok", { incidentId: "inc-9" }),
+        "stale-token",
       );
     },
   );

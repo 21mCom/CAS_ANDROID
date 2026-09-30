@@ -144,11 +144,17 @@ Proves the fix responders receive is trustworthy, not just present.
    you walk; standing still still re-baselines every 5 minutes
    (`POSTED_PERIODIC`).
 5. **Stop on resolve**: resolve the incident in the console, then walk
-   another 100+ m. Pass: no new `LOCATION_UPDATED` entries appear; within
-   one movement (or one 5-minute periodic cycle) the phone's debug journal
-   shows `LOCATION_RECAPTURE_STOPPED` with reason `incident no longer
-   active on the server`. The watch never runs longer than 2 hours per
-   incident (`duration cap reached`) even if nobody resolves it.
+   another 100+ m. Pass: no new `LOCATION_UPDATED` entries appear, and the
+   phone's debug journal shows `LOCATION_RECAPTURE_STOPPED`. On a
+   push-enabled build (google-services.json in the kit) the watch tears
+   down within seconds of the resolve — reason `push`, preceded by
+   `RESOLVE_PUSH_RECEIVED`; the console incident journal shows
+   `RESOLVE_PUSH_SENT` at resolve time. On a push-less build the stop lands
+   within one movement (or one 5-minute periodic cycle) with reason
+   `incident no longer active on the server`, and the console journal shows
+   `RESOLVE_PUSH_UNAVAILABLE` at resolve time. The watch never runs longer
+   than 2 hours per incident (`duration cap reached`) even if nobody
+   resolves it.
 
 ## T3 — SMS dead-letter drill (phone required)
 
@@ -383,7 +389,7 @@ T2b outdoors:        PASS/FAIL — <accuracy radius ±Nm; fix age; distance link
 T2b indoors:         PASS/FAIL — <which behavior: coarser fix (radius/age) / +last-known (age) / no-fix sentence; alert left within ~8s?; incident id>
 T2b location-off (opt.): PASS/FAIL/SKIP — <alert left immediately? SMS + console both said no fix captured?>
 T2b movement re-capture: PASS/FAIL — <LOCATION_UPDATED entries with ±Nm + age? console moved to newest fix? POSTED_MOVEMENT/POSTED_PERIODIC on phone; incident id>
-T2b stop on resolve: PASS/FAIL — <no updates after resolve? LOCATION_RECAPTURE_STOPPED reason seen>
+T2b stop on resolve: PASS/FAIL — <no updates after resolve? LOCATION_RECAPTURE_STOPPED reason seen (`push` within seconds on a push-enabled build, else `incident no longer active on the server`); RESOLVE_PUSH_SENT/UNAVAILABLE in console journal>
 T3 SMS dead-letter:  PASS/FAIL — <journal sequence seen>
 T4 WhatsApp sink:      PASS/FAIL — <messaging_product/idempotency key seen>
 T5 WhatsApp off-phone: PASS/FAIL — <409 seen? pending list SMS-only?>

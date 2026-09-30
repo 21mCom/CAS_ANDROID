@@ -33,6 +33,7 @@ import {
   type ProviderDeliveryReceipt,
 } from "../lib/delivery-providers";
 import { getCasOutboxWorkerHeartbeat } from "../lib/cas-outbox-status";
+import { sendIncidentResolvedPush } from "../lib/cas-push";
 import { getCasEmailChannelHealth } from "../lib/cas-email-health";
 import { deviceAccessToken, deviceChannels, maskRecipient, smsDeliveryMode, type DeviceChannel } from "../lib/cas-device-delivery";
 import { deliverableGatewayTransports, resolveDbRecipients, resolveTemplateBody } from "../lib/cas-delivery-config";
@@ -1216,6 +1217,50 @@ async function appendTransition(id: string, from: string, to: string, type: stri
     return true;
   });
   if (!result) return res.status(409).json({ error: `Incident is not ${from}` });
+
+  if (to === "RESOLVED") {
+    // Immediate stand-down signal: a high-priority FCM data message lets a
+    // handset running the location re-capture watch tear it down within
+    // seconds instead of on its next post rejection (409/404) — bounded by
+    // the 5-minute periodic cycle on a stationary phone. Runs after the
+    // commit so the resolution is durable no matter what the push does;
+    // post-rejection stays as the fallback and the journal records which
+    // path was live for this resolution. Acknowledgement deliberately does
+    // NOT push: the watch keeps running while the incident stays active.
+    const push = await sendIncidentResolvedPush({ incidentId: id });
+    const pushEvent = push.status === "sent"
+      ? {
+          type: "RESOLVE_PUSH_SENT",
+          priority: "P2",
+          detail: `High-priority incident-resolved push sent to ${push.delivered} enrolled handset(s)${push.staleRemoved ? ` (${push.staleRemoved} stale registration(s) dropped)` : ""}; a watching handset stops location re-capture on receipt. If no handset receives it, the next location post rejection remains the fallback.`,
+        }
+      : push.status === "unconfigured"
+        ? {
+            type: "RESOLVE_PUSH_UNAVAILABLE",
+            priority: "P2",
+            detail: "Push is not configured on this server (no Firebase service account); a watching handset stops location re-capture on its next location post or server contact. See SELF-HOSTING.md to enable instant stop.",
+          }
+        : push.status === "no-registrations"
+          ? {
+              type: "RESOLVE_PUSH_UNAVAILABLE",
+              priority: "P2",
+              detail: "No enrolled handset has registered a push token, so no incident-resolved push was sent; a watching handset stops location re-capture on its next location post or server contact.",
+            }
+          : {
+              type: "RESOLVE_PUSH_FAILED",
+              priority: "P1",
+              detail: `Incident-resolved push failed (${push.detail}); a watching handset still stops location re-capture on its next location post or server contact.`,
+            };
+    await db.insert(casIncidentEvents).values({
+      id: `${id}-resolve-push-${push.status}-${Date.now()}`,
+      incidentId: id,
+      type: pushEvent.type,
+      priority: pushEvent.priority,
+      detail: pushEvent.detail,
+      createdAt: new Date(),
+    });
+  }
+
   return res.json({ id, status: to });
 }
 

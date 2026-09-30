@@ -7,9 +7,12 @@ import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject
 
 /**
- * Responder-requested capture wake. The server sends a high-priority,
- * data-only FCM message when a responder creates a capture request; the
- * message wakes the phone immediately and is the documented exemption that
+ * Push handling for two high-priority, data-only FCM messages the server
+ * sends: the responder-requested capture wake and the incident-resolved
+ * stand-down.
+ *
+ * Capture wake: when a responder creates a capture request, the message
+ * wakes the phone immediately and is the documented exemption that
  * lets an idle app start the mic/camera foreground service from the
  * background. The handler deliberately reuses the polling pickup flow
  * (CaptureRequests.checkPending, via = "push") so request pickup, acks, and
@@ -24,6 +27,21 @@ import org.json.JSONObject
  */
 class CapturePushService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
+        // Incident stand-down: tear the location re-capture watch down within
+        // seconds of the console resolve instead of waiting for the next
+        // location post to be rejected (up to one 5-minute periodic cycle on
+        // a stationary phone). Only a push naming the watched incident stops
+        // the watch — a stale push for an older incident is ignored.
+        if (message.data["type"] == "cas-incident-resolved") {
+            val resolvedIncidentId = message.data["incidentId"]
+            TestStore.record(this, "RESOLVE_PUSH_RECEIVED", mapOf(
+                "incidentId" to resolvedIncidentId,
+            ))
+            if (resolvedIncidentId != null) {
+                LocationWatchdog.stopForIncident(this, resolvedIncidentId, "push")
+            }
+            return
+        }
         if (message.data["type"] != "cas-capture-request") return
         TestStore.record(this, "CAPTURE_PUSH_RECEIVED", mapOf(
             "requestId" to message.data["requestId"],

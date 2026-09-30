@@ -26,6 +26,20 @@ committed silently when nothing re-validates the post-rebase tree.
   (git log/reflog names it) and confirm none of mainline's changes were lost;
   rebuild damaged files as "mainline's version + your genuine hunks" (recover
   your hunks from the pre-rebase tip in the reflog).
+- Mainline can move DURING your completion: another task's merge can land
+  after your rebase base, and restoring files to your base's blobs then
+  silently discards the newcomer's work (the clobber sweep catches this as
+  "reverted blob"). Always restore from the CURRENT main tip, not the base
+  you rebased onto — and check the tip again right before marking complete.
+- The mangling can also ship in the OTHER task's completion: observed a
+  merged mainline commit whose own test file was splice-corrupted (stray
+  loop fragments, undefined identifiers) yet landed. If restoring a file
+  from a main tip fails typecheck, that commit is itself damaged —
+  reconstruct the file as "last clean blob + the change's behavioral intent"
+  and let that task's contract suite verify the reconstruction.
+- A deliberate repair commit that restores an older blob looks like a revert
+  to the clobber sweep; suppress it with a `scripts/merge-clobber-allowlist.json`
+  `commits` entry documenting which blob HEAD provably matches.
 - When reconstructing a mangled file, treat the affected task's own test
   suite on main as the behavioral spec: if it passes against the
   reconstruction, the reconstruction preserves that task's changes.

@@ -11,6 +11,13 @@ import {
   resetCasAuthFailureTracking,
   revokeDeviceCredential,
 } from "../lib/cas-auth";
+import { assertDisposableTestDatabase } from "../lib/cas-test-db-guard";
+
+// This suite writes to whatever DATABASE_URL points at (it deletes
+// cas_app_updates rows in setup and teardown): refuse to boot unless the
+// contract runner's disposable review database is provably the target —
+// before any credential is issued or any row is touched.
+assertDisposableTestDatabase();
 
 // Publishing takes the enrollment credential; manifest/download take any
 // enrolled device credential. Set up one of each, like the main CAS suite.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
@@ -22,6 +23,7 @@ import {
   casIncidents,
   casOutbox,
   casProviderDeliveries,
+  casPushRegistrations,
   casResponders,
   casSetupReadiness,
   casTransportCooldowns,
@@ -52,6 +54,7 @@ import {
   resetCasOutboxWorkerHeartbeat,
 } from "../lib/cas-outbox-status";
 import { findJournalSecretLeaks } from "../lib/journal-secret-audit";
+import { resetCasPushTokenCache } from "../lib/cas-push";
 import { casStateResponseSchema } from "../lib/cas-readiness-schema";
 import {
   casAuthFailureDelayMs,
@@ -634,6 +637,224 @@ test("concurrent triggers reuse one incident and preserve both observations", as
   ).map((event) => event.type);
   assert.ok(transitionTypes.includes("RESPONDER_ACK"));
   assert.ok(transitionTypes.includes("RESPONDER_RESOLVE"));
+});
+
+// --- Incident-resolved push (location re-capture stand-down) ---------------
+
+const PUSH_ENV_KEYS = [
+  "CAS_FCM_SERVICE_ACCOUNT_JSON",
+  "CAS_FCM_SERVICE_ACCOUNT_FILE",
+  "CAS_FCM_TOKEN_URI",
+  "CAS_FCM_SEND_URL",
+];
+
+/** Run a block with the push env replaced; the real env is restored after. */
+async function withPushEnv(values: Record<string, string | undefined>, run: () => Promise<void>) {
+  const saved = Object.fromEntries(PUSH_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of PUSH_ENV_KEYS) {
+    if (values[key] === undefined) delete process.env[key];
+    else process.env[key] = values[key]!;
+  }
+  resetCasPushTokenCache();
+  try {
+    await run();
+  } finally {
+    for (const key of PUSH_ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key]!;
+    }
+    resetCasPushTokenCache();
+  }
+}
+
+async function triggerAckedIncident(): Promise<string> {
+  const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+    method: "POST",
+    headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(trigger.status, 201);
+  const { id } = (await trigger.json()) as { id: string };
+  const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+  });
+  assert.equal(ack.status, 200);
+  return id;
+}
+
+test("resolve without push configured journals the post-rejection fallback", async () => {
+  await withPushEnv({}, async () => {
+    const id = await triggerAckedIncident();
+    const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    assert.equal(resolve.status, 200);
+    // The transition response is unchanged — push status lives in the journal.
+    assert.deepEqual(await resolve.json(), { id, status: "RESOLVED" });
+    const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    const event = journal.find((entry) => entry.type === "RESOLVE_PUSH_UNAVAILABLE");
+    assert.ok(event, "journal must record that no resolved push was sent");
+    assert.match(event.detail, /next location post or server contact/);
+  });
+});
+
+test("ack does not send the resolved push — the watch keeps running while the incident stays active", async () => {
+  await withPushEnv({}, async () => {
+    const trigger = await fetch(`${baseUrl}/cas/incidents/trigger`, {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const { id } = (await trigger.json()) as { id: string };
+    const ack = await fetch(`${baseUrl}/cas/incidents/${id}/ack`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    assert.equal(ack.status, 200);
+    const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+    assert.ok(!journal.some((entry) => entry.type.startsWith("RESOLVE_PUSH")), "ack must not signal stand-down");
+  });
+});
+
+test("resolve with push configured sends a high-priority stand-down to the registered handset", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const serviceAccount = {
+    project_id: "cas-test-project",
+    client_email: "cas-push@cas-test-project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
+  };
+  const sent: { authorization?: string; body: string }[] = [];
+  const stub: HttpServer = createHttpServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      if (req.url === "/token") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "stub-access-token", expires_in: 3599 }));
+        return;
+      }
+      sent.push({ authorization: req.headers.authorization, body });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ name: "projects/cas-test-project/messages/1" }));
+    });
+  });
+  stub.listen(0, "127.0.0.1");
+  await once(stub, "listening");
+  const stubPort = (stub.address() as AddressInfo).port;
+  try {
+    await withPushEnv({
+      CAS_FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(serviceAccount),
+      CAS_FCM_SERVICE_ACCOUNT_FILE: undefined,
+      CAS_FCM_TOKEN_URI: `http://127.0.0.1:${stubPort}/token`,
+      CAS_FCM_SEND_URL: `http://127.0.0.1:${stubPort}/send`,
+    }, async () => {
+      assert.equal((await fetch(`${baseUrl}/cas/devices/push-token`, {
+        method: "PUT",
+        headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+        body: JSON.stringify({ token: "live-token" }),
+      })).status, 200);
+
+      const id = await triggerAckedIncident();
+      const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, {
+        method: "POST",
+        headers: AUTH_HEADERS,
+      });
+      assert.equal(resolve.status, 200);
+
+      assert.equal(sent.length, 1, "the registered handset's token receives the stand-down");
+      assert.equal(sent[0].authorization, "Bearer stub-access-token");
+      const message = JSON.parse(sent[0].body).message;
+      assert.equal(message.token, "live-token");
+      assert.equal(message.android.priority, "HIGH");
+      assert.deepEqual(message.data, { type: "cas-incident-resolved", incidentId: id });
+      // Data-only: no notification key, so nothing is ever shown on screen.
+      assert.equal(message.notification, undefined);
+
+      const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+      const pushEvent = journal.find((entry) => entry.type === "RESOLVE_PUSH_SENT");
+      assert.ok(pushEvent);
+      assert.match(pushEvent.detail, /1 enrolled handset/);
+    });
+  } finally {
+    stub.close();
+    await db.delete(casPushRegistrations);
+  }
+});
+
+test("resolve push isolates a hung registration: the other handset still gets the stand-down", { timeout: 30_000 }, async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const serviceAccount = {
+    project_id: "cas-test-project",
+    client_email: "cas-push@cas-test-project.iam.gserviceaccount.com",
+    private_key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
+  };
+  const sent: string[] = [];
+  const stub: HttpServer = createHttpServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      if (req.url === "/token") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "stub-access-token", expires_in: 3599 }));
+        return;
+      }
+      // The slow token's send never answers: the per-send timeout aborts it
+      // after 10s. The bug this guards against: that abort propagating out
+      // of the fan-out and leaving the OTHER handset unattempted.
+      if (body.includes("slow-token")) return;
+      sent.push(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ name: "projects/cas-test-project/messages/1" }));
+    });
+  });
+  stub.listen(0, "127.0.0.1");
+  await once(stub, "listening");
+  const stubPort = (stub.address() as AddressInfo).port;
+  try {
+    await withPushEnv({
+      CAS_FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(serviceAccount),
+      CAS_FCM_SERVICE_ACCOUNT_FILE: undefined,
+      CAS_FCM_TOKEN_URI: `http://127.0.0.1:${stubPort}/token`,
+      CAS_FCM_SEND_URL: `http://127.0.0.1:${stubPort}/send`,
+    }, async () => {
+      for (const token of ["slow-token", "fast-token"]) {
+        assert.equal((await fetch(`${baseUrl}/cas/devices/push-token`, {
+          method: "PUT",
+          headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+          body: JSON.stringify({ token }),
+        })).status, 200);
+      }
+
+      const id = await triggerAckedIncident();
+      const startedAt = Date.now();
+      const resolve = await fetch(`${baseUrl}/cas/incidents/${id}/resolve`, {
+        method: "POST",
+        headers: AUTH_HEADERS,
+      });
+      assert.equal(resolve.status, 200);
+      const elapsedMs = Date.now() - startedAt;
+
+      // The hung token's abort is isolated: the healthy handset still
+      // receives its stand-down, and the journal reports the partial send
+      // honestly instead of an all-or-nothing failure.
+      assert.equal(sent.length, 1, "the healthy handset must still be attempted despite the hung one");
+      assert.ok(sent[0].includes("fast-token"));
+      const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, id));
+      const pushEvent = journal.find((entry) => entry.type === "RESOLVE_PUSH_SENT");
+      assert.ok(pushEvent, "one delivered + one timed out still journals RESOLVE_PUSH_SENT");
+      assert.match(pushEvent.detail, /1 enrolled handset/);
+      // Fan-out is parallel: two sequential sends would cost the hung
+      // token's timeout PLUS the healthy send; parallel costs the slowest.
+      // The 10s timeout dominates either way, so only assert the resolve
+      // did not stack two timeouts' worth of latency.
+      assert.ok(elapsedMs < 19_000, `resolve took ${elapsedMs}ms — fan-out may be sequential`);
+    });
+  } finally {
+    stub.close();
+    await db.delete(casPushRegistrations);
+  }
 });
 
 test("trigger accepts a location fix, persists it with accuracy and capture time, and the state endpoint shows it", async () => {

@@ -21,10 +21,14 @@ import android.os.Looper
  *
  * Battery and privacy posture, by contract:
  *  - The watch exists only while an incident is active. It is started from
- *    the trigger path and stops on the first server contact after the
- *    incident resolves (the location endpoint answers 409/404 and the watch
- *    tears down immediately), bounded by the periodic cycle when the handset
- *    never moves. It is never general background tracking.
+ *    the trigger path and stops the moment the handset learns the incident
+ *    resolved: a push-enabled build receives the server's high-priority
+ *    incident-resolved FCM message (CapturePushService → stopForIncident,
+ *    journaled with reason "push"), and every build stops on the first
+ *    server contact after resolution (the location endpoint answers
+ *    409/404 and the watch tears down immediately), bounded by the periodic
+ *    cycle when the handset never moves. It is never general background
+ *    tracking.
  *  - Hard cap: the watch tears itself down after RECAPTURE_MAX_DURATION_MS
  *    even if the incident never resolves.
  *  - Process death ends the watch (it is in-process by design — no
@@ -38,6 +42,7 @@ import android.os.Looper
 object LocationWatchdog {
 
     @Volatile private var watchedIncidentId: String? = null
+    private val resolvedGuard = ResolvedWatchGuard()
     @Volatile private var baseUrl: String? = null
     @Volatile private var anchor: AlertLocation.Fix? = null
     @Volatile private var startedAtMs: Long = 0L
@@ -85,6 +90,13 @@ object LocationWatchdog {
     fun start(context: Context, serverBaseUrl: String, incidentId: String) {
         if (watchedIncidentId == incidentId) return
         if (watchedIncidentId != null) stop(context, "superseded by incident $incidentId")
+        // The resolved push can beat the trigger response that brings us
+        // here (responder acked and resolved mid-send): never start a watch
+        // for an incident the server already closed.
+        if (resolvedGuard.blocksStart(incidentId, System.currentTimeMillis())) {
+            TestStore.record(context, "LOCATION_RECAPTURE_SKIPPED", mapOf("incidentId" to incidentId, "reason" to "incident already resolved (push)"))
+            return
+        }
         val fine = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val coarse = context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!fine && !coarse) {
@@ -120,6 +132,22 @@ object LocationWatchdog {
             "periodicS" to AlertLocation.RECAPTURE_PERIODIC_MS / 1000L,
             "maxDurationMin" to AlertLocation.RECAPTURE_MAX_DURATION_MS / 60_000L,
         ))
+    }
+
+    /**
+     * The incident-resolved push names its incident. Record the resolution
+     * FIRST so a start that has not run yet (push beat the trigger
+     * response) is blocked by the guard, then tear the watch down only if
+     * it is currently watching this incident — a stale push for an older
+     * incident must not kill a newer watch. Journals
+     * LOCATION_RECAPTURE_STOPPED with the given reason when it stops, and
+     * otherwise only leaves the start-blocking marker.
+     */
+    @Synchronized
+    fun stopForIncident(context: Context, incidentId: String, reason: String) {
+        resolvedGuard.markResolved(incidentId, System.currentTimeMillis())
+        if (watchedIncidentId != incidentId) return
+        stop(context, reason)
     }
 
     /** Tear the watch down. Safe to call from any thread, any number of times. */

@@ -136,6 +136,9 @@ object AlertLocation {
     fun recaptureExpired(startedAtMs: Long, nowMs: Long): Boolean =
         nowMs - startedAtMs >= RECAPTURE_MAX_DURATION_MS
 
+    /** A resolved marker blocks a late watch start for this long. */
+    const val RESOLVED_MARKER_TTL_MS = 10L * 60L * 1000L // 10 min
+
     /** Human fix age, matching the console's buildLocationClause phrasing. */
     fun formatAge(nowMs: Long, capturedAtMs: Long): String {
         val ageSeconds = maxOf(0L, (nowMs - capturedAtMs) / 1000L)
@@ -166,4 +169,40 @@ object AlertLocation {
         .put("accuracyM", fix.accuracyM.toDouble())
         .put("capturedAt", java.time.Instant.ofEpochMilli(fix.capturedAtMs).toString())
         .put("provider", fix.provider)
+}
+
+/**
+ * Short-lived record of incidents the server has resolved, so the resolved
+ * push wins however it interleaves with LocationWatchdog.start: the FCM
+ * message can arrive BEFORE the trigger response reaches the phone
+ * (responder acks and resolves while the handset is still sending), and
+ * without this record a late start would begin watching a dead incident —
+ * on a stationary phone it would then run until the next periodic post is
+ * rejected. Android-free so the JVM suite can prove both arrival orders.
+ */
+class ResolvedWatchGuard(private val ttlMs: Long = AlertLocation.RESOLVED_MARKER_TTL_MS) {
+    private val markedAtMs = mutableMapOf<String, Long>()
+
+    /** Record that the incident resolved; called when the resolved push arrives. */
+    @Synchronized
+    fun markResolved(incidentId: String, nowMs: Long) {
+        prune(nowMs)
+        markedAtMs[incidentId] = nowMs
+    }
+
+    /**
+     * True when a watch for this incident must not start — a resolved push
+     * for it arrived within the TTL. Markers expire so a recycled id (or a
+     * phone that lives long enough) is never blocked forever.
+     */
+    @Synchronized
+    fun blocksStart(incidentId: String, nowMs: Long): Boolean {
+        prune(nowMs)
+        return markedAtMs.containsKey(incidentId)
+    }
+
+    private fun prune(nowMs: Long) {
+        val stale = markedAtMs.filterValues { nowMs - it >= ttlMs }.keys
+        for (id in stale) markedAtMs.remove(id)
+    }
 }

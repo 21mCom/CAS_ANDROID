@@ -6,7 +6,9 @@ import { casDeviceCredentials, casPushRegistrations } from "@workspace/db/schema
 import { logger } from "./logger";
 
 /**
- * Responder-requested capture wake: high-priority FCM dispatch.
+ * High-priority FCM dispatch for two handset signals: the responder-
+ * requested capture wake and the incident-resolved stand-down that stops
+ * location re-capture immediately.
  *
  * Without a push message the handset only honors a responder's capture
  * request on its next server contact (trigger, app resume, or the manual
@@ -160,11 +162,11 @@ async function accessToken(config: CasPushConfig): Promise<string> {
   return value;
 }
 
-/** Deliver one high-priority, data-only capture-request message to one token. */
-export async function deliverCaptureRequestMessage(
+/** Deliver one high-priority, data-only message with the given data payload to one token. */
+async function deliverDataMessage(
   config: CasPushConfig,
   token: string,
-  payload: { requestId: string; incidentId: string; kind: string },
+  data: Record<string, string>,
 ): Promise<"delivered" | "stale-token" | { failed: string }> {
   const response = await fetch(config.sendUrl, {
     method: "POST",
@@ -181,12 +183,7 @@ export async function deliverCaptureRequestMessage(
         // documented exemption lets it start the mic/camera foreground
         // service from the background.
         android: { priority: "HIGH" },
-        data: {
-          type: "cas-capture-request",
-          requestId: payload.requestId,
-          incidentId: payload.incidentId,
-          kind: payload.kind,
-        },
+        data,
       },
     }),
     signal: AbortSignal.timeout(10_000),
@@ -199,6 +196,100 @@ export async function deliverCaptureRequestMessage(
     return "stale-token";
   }
   return { failed: `FCM send HTTP ${response.status}${detail ? `: ${detail}` : ""}` };
+}
+
+/** Deliver one high-priority, data-only capture-request message to one token. */
+export async function deliverCaptureRequestMessage(
+  config: CasPushConfig,
+  token: string,
+  payload: { requestId: string; incidentId: string; kind: string },
+): Promise<"delivered" | "stale-token" | { failed: string }> {
+  return deliverDataMessage(config, token, {
+    type: "cas-capture-request",
+    requestId: payload.requestId,
+    incidentId: payload.incidentId,
+    kind: payload.kind,
+  });
+}
+
+/**
+ * Deliver one high-priority, data-only incident-resolved message to one
+ * token. The handset tears its location re-capture watch down on receipt
+ * (LocationWatchdog.stop, journaled with reason "push") instead of waiting
+ * for its next location post to be rejected.
+ */
+export async function deliverIncidentResolvedMessage(
+  config: CasPushConfig,
+  token: string,
+  payload: { incidentId: string },
+): Promise<"delivered" | "stale-token" | { failed: string }> {
+  return deliverDataMessage(config, token, {
+    type: "cas-incident-resolved",
+    incidentId: payload.incidentId,
+  });
+}
+
+type DeliverOne = (
+  config: CasPushConfig,
+  token: string,
+) => Promise<"delivered" | "stale-token" | { failed: string }>;
+
+/**
+ * Fan one message out to every non-revoked registered handset, dropping
+ * stale registrations as FCM reports them. Shared by the capture-request
+ * wake and the incident-resolved stand-down push.
+ */
+async function fanOutToRegistrations(
+  config: CasPushConfig,
+  deliver: DeliverOne,
+  logContext: Record<string, string>,
+  logLabel: string,
+): Promise<CasPushDispatch> {
+  const registrations = await db
+    .select({ id: casPushRegistrations.id, token: casPushRegistrations.token })
+    .from(casPushRegistrations)
+    .innerJoin(
+      casDeviceCredentials,
+      and(
+        eq(casPushRegistrations.deviceCredentialId, casDeviceCredentials.id),
+        isNull(casDeviceCredentials.revokedAt),
+      ),
+    );
+  if (registrations.length === 0) return { status: "no-registrations" };
+  // Fan out in parallel with per-registration isolation: one token's
+  // failure — including its 10-second send timeout aborting the fetch —
+  // must neither abort nor delay the stand-down to the other handsets, and
+  // the whole dispatch is then bounded by the slowest single send instead
+  // of the sum.
+  const outcomes = await Promise.all(
+    registrations.map(async (registration) => {
+      try {
+        return { registration, outcome: await deliver(config, registration.token) };
+      } catch (error) {
+        return { registration, outcome: { failed: (error as Error).message } };
+      }
+    }),
+  );
+  let delivered = 0;
+  let staleRemoved = 0;
+  const failures: string[] = [];
+  for (const { registration, outcome } of outcomes) {
+    if (outcome === "delivered") {
+      delivered += 1;
+    } else if (outcome === "stale-token") {
+      await db.delete(casPushRegistrations).where(eq(casPushRegistrations.id, registration.id));
+      staleRemoved += 1;
+    } else {
+      failures.push(outcome.failed);
+    }
+  }
+  if (delivered === 0 && failures.length > 0) {
+    return { status: "failed", detail: failures.join("; ") };
+  }
+  if (failures.length > 0) {
+    logger.warn({ failures, ...logContext }, `Some FCM ${logLabel} sends failed`);
+  }
+  return { status: "sent", delivered, staleRemoved };
 }
 
 /**
@@ -219,40 +310,44 @@ export async function sendCaptureRequestPush(payload: {
   }
   if (!config) return { status: "unconfigured" };
   try {
-    const registrations = await db
-      .select({ id: casPushRegistrations.id, token: casPushRegistrations.token })
-      .from(casPushRegistrations)
-      .innerJoin(
-        casDeviceCredentials,
-        and(
-          eq(casPushRegistrations.deviceCredentialId, casDeviceCredentials.id),
-          isNull(casDeviceCredentials.revokedAt),
-        ),
-      );
-    if (registrations.length === 0) return { status: "no-registrations" };
-    let delivered = 0;
-    let staleRemoved = 0;
-    const failures: string[] = [];
-    for (const registration of registrations) {
-      const outcome = await deliverCaptureRequestMessage(config, registration.token, payload);
-      if (outcome === "delivered") {
-        delivered += 1;
-      } else if (outcome === "stale-token") {
-        await db.delete(casPushRegistrations).where(eq(casPushRegistrations.id, registration.id));
-        staleRemoved += 1;
-      } else {
-        failures.push(outcome.failed);
-      }
-    }
-    if (delivered === 0 && failures.length > 0) {
-      return { status: "failed", detail: failures.join("; ") };
-    }
-    if (failures.length > 0) {
-      logger.warn({ failures, requestId: payload.requestId }, "Some FCM capture wakes failed");
-    }
-    return { status: "sent", delivered, staleRemoved };
+    return await fanOutToRegistrations(
+      config,
+      (resolvedConfig, token) => deliverCaptureRequestMessage(resolvedConfig, token, payload),
+      { requestId: payload.requestId },
+      "capture wake",
+    );
   } catch (error) {
     logger.error({ err: error, requestId: payload.requestId }, "FCM capture wake dispatch failed");
+    return { status: "failed", detail: (error as Error).message };
+  }
+}
+
+/**
+ * Tell every non-revoked registered handset that an incident resolved, so a
+ * running location re-capture watch tears down within seconds instead of
+ * waiting for its next post to be rejected (bounded by the 5-minute
+ * periodic cycle on a stationary phone). Never throws — the caller journals
+ * the outcome and the post-rejection path stays as the fallback regardless.
+ */
+export async function sendIncidentResolvedPush(payload: {
+  incidentId: string;
+}): Promise<CasPushDispatch> {
+  let config: CasPushConfig | null;
+  try {
+    config = resolveCasPushConfig();
+  } catch (error) {
+    return { status: "failed", detail: (error as Error).message };
+  }
+  if (!config) return { status: "unconfigured" };
+  try {
+    return await fanOutToRegistrations(
+      config,
+      (resolvedConfig, token) => deliverIncidentResolvedMessage(resolvedConfig, token, payload),
+      { incidentId: payload.incidentId },
+      "incident-resolved",
+    );
+  } catch (error) {
+    logger.error({ err: error, incidentId: payload.incidentId }, "FCM incident-resolved dispatch failed");
     return { status: "failed", detail: (error as Error).message };
   }
 }
