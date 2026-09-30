@@ -1,17 +1,22 @@
-// Drives the committed real-browser console proof
-// (artifacts/covert-alert-system/e2e/console-mid-session-lock.spec.ts):
-// provisions a disposable PostgreSQL cluster, boots the api-server with a
-// fixed test-only enrollment credential and this console's built bundle
-// behind `vite preview` with /api proxied, then runs the Playwright suite.
-// Everything is torn down on pass or fail.
+// Drives the committed real-browser console proofs
+// (artifacts/covert-alert-system/e2e/*.spec.ts): provisions a disposable
+// PostgreSQL cluster, boots the api-server with a fixed test-only enrollment
+// credential and this console's built bundle behind `vite preview` with /api
+// proxied, then runs the Playwright suite. For the email-probe proof it also
+// generates a throwaway TLS identity and serves a fake SMTP endpoint that
+// always refuses AUTH. Everything is torn down on pass or fail.
 //
 // Prerequisites: pnpm install, Playwright's chromium (`pnpm --filter
 // @workspace/covert-alert-system exec playwright install chromium`, or set
-// CAS_E2E_CHROMIUM_PATH to an existing executable), and initdb/pg_ctl/psql on
+// CAS_E2E_CHROMIUM_PATH to an existing executable), openssl on PATH
+// (throwaway cert for the fake SMTP server), and initdb/pg_ctl/psql on
 // PATH (same as scripts/run-cas-contract-tests.mjs).
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runWithDisposableReviewDatabase } from "./disposable-review-database.mjs";
 
@@ -69,6 +74,65 @@ function stopProcess(child, label) {
   });
 }
 
+/**
+ * Throwaway TLS identity for the fake SMTP server: the api-server's probe
+ * client never disables certificate verification, so the STARTTLS handshake
+ * needs a cert the server explicitly trusts (CAS_EMAIL_SMTP_CA_FILE). The
+ * self-signed cert doubles as its own CA; it lives only for this run.
+ */
+function generateThrowawaySmtpIdentity(run) {
+  const directory = mkdtempSync(join(tmpdir(), "cas-e2e-smtp-"));
+  const keyFile = join(directory, "key.pem");
+  const certFile = join(directory, "cert.pem");
+  run("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", keyFile,
+    "-out", certFile,
+    "-days", "3650",
+    "-subj", "/CN=127.0.0.1",
+    "-addext", "subjectAltName=IP:127.0.0.1",
+    "-addext", "basicConstraints=critical,CA:TRUE",
+    "-addext", "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign",
+  ]);
+  return { keyFile, certFile };
+}
+
+/**
+ * Starts the fake SMTP server (scripts/fake-smtp-auth-refusal-server.mjs) as
+ * its own process and resolves with its port once it reports listening. It
+ * cannot live in this process: the harness drives the proof with synchronous
+ * spawns, which would freeze an in-process server's event loop for the whole
+ * Playwright run and every probe would socket-timeout.
+ */
+function startFakeSmtpServer({ keyFile, certFile }) {
+  const child = spawn(
+    "node",
+    [join(import.meta.dirname, "fake-smtp-auth-refusal-server.mjs"), keyFile, certFile],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  return new Promise((resolvePromise, rejectPromise) => {
+    let stdout = "";
+    const onData = (chunk) => {
+      stdout += chunk;
+      const match = /FAKE_SMTP_PORT=(\d+)/.exec(stdout);
+      if (match) {
+        cleanup();
+        resolvePromise({ port: Number(match[1]), child });
+      }
+    };
+    const onExit = (code) => {
+      cleanup();
+      rejectPromise(new Error(`Fake SMTP server exited before listening (code ${code}): ${stdout}`));
+    };
+    const cleanup = () => {
+      child.stdout.off("data", onData);
+      child.off("exit", onExit);
+    };
+    child.stdout.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
 try {
   await runWithDisposableReviewDatabase(async ({ run, environment }) => {
     // The disposable-DB callback is async-aware: it awaits the returned
@@ -94,6 +158,11 @@ try {
     const apiOrigin = `http://127.0.0.1:${apiPort}`;
     const webOrigin = `http://127.0.0.1:${webPort}`;
 
+    // Fake SMTP endpoint for the email-probe proof: always refuses AUTH, so
+    // a console mailbox saved at it produces a failed probe within seconds.
+    const smtpIdentity = generateThrowawaySmtpIdentity(run);
+    const fakeSmtp = await startFakeSmtpServer(smtpIdentity);
+
     const apiServer = spawn(
       "node",
       ["--enable-source-maps", "artifacts/api-server/dist/index.mjs"],
@@ -104,6 +173,28 @@ try {
           HOST: "127.0.0.1",
           CAS_ALERT_TOKEN: ALERT_TOKEN,
           SESSION_SECRET: "e2e-browser-proof-session-secret",
+          // The disposable-database environment sets NODE_ENV=test and
+          // CAS_TEST_DISPOSABLE_DB=1, under which the api-server disables
+          // the mailbox probe worker — but the email-probe proof exists to
+          // watch that worker fail against a bad password, so this process
+          // runs with the test-harness forcing off. Safety is preserved by
+          // construction: no proof ever triggers an alert (the incident row
+          // is seeded directly), so no delivery can fire, and the probe's
+          // only mail server is the fake one below.
+          NODE_ENV: "production",
+          CAS_TEST_DISPOSABLE_DB: "0",
+          // Clear any live CAS_EMAIL_* secrets so the pre-save probe ticks
+          // skip instead of AUTHing against the real mailbox on a fast
+          // cadence; the proof's saved console account owns the channel.
+          CAS_EMAIL_SMTP_HOST: "",
+          CAS_EMAIL_PROVIDER_URL: "",
+          // Fast probe cadence so the saved bad-password account is probed
+          // seconds after the spec saves it, not 15s/weekly.
+          CAS_EMAIL_PROBE_DELAY_MS: "1000",
+          CAS_EMAIL_PROBE_INTERVAL_MS: "2000",
+          // Trust the fake SMTP server's throwaway self-signed cert for the
+          // mandatory STARTTLS handshake.
+          CAS_EMAIL_SMTP_CA_FILE: smtpIdentity.certFile,
         },
         stdio: ["ignore", "inherit", "inherit"],
       },
@@ -137,16 +228,18 @@ try {
           CAS_E2E_API_ORIGIN: apiOrigin,
           CAS_E2E_WEB_ORIGIN: webOrigin,
           CAS_E2E_ALERT_TOKEN: ALERT_TOKEN,
+          CAS_E2E_SMTP_PORT: String(fakeSmtp.port),
           // Pass the optional local browser override through if set.
           ...(process.env.CAS_E2E_CHROMIUM_PATH
             ? { CAS_E2E_CHROMIUM_PATH: process.env.CAS_E2E_CHROMIUM_PATH }
             : {}),
         },
       });
-      console.log("Console browser proof passed: mid-session revocation locked the console.");
+      console.log("Console browser proofs passed: mid-session revocation lock and failed mailbox login check.");
     } finally {
       await stopProcess(webServer, "console preview");
       await stopProcess(apiServer, "api-server");
+      await stopProcess(fakeSmtp.child, "fake smtp server");
     }
   });
 } catch (error) {

@@ -3,10 +3,10 @@ name: Console browser proofs
 # Runs the committed real-browser console proofs
 # (artifacts/covert-alert-system/e2e/*.spec.ts) against a disposable
 # PostgreSQL + api-server + built console, so a change that breaks the
-# operator-facing lock surfaces (first-load, drift, mid-session revocation)
-# cannot merge green. The first committed proof is the mid-session
-# credential-revocation lock; earlier console browser proofs were one-off
-# sessions and are being committed alongside this harness.
+# operator-facing lock surfaces (mid-session revocation) or the Email
+# delivery page's failed mailbox login check cannot merge green. Earlier
+# console browser proofs were one-off sessions and are being committed
+# alongside this harness.
 on:
   push:
     paths:
@@ -14,6 +14,7 @@ on:
       - "artifacts/api-server/**"
       - "lib/db/**"
       - "scripts/run-console-browser-proof.mjs"
+      - "scripts/fake-smtp-auth-refusal-server.mjs"
       - "scripts/disposable-review-database.mjs"
       - ".github/workflows/console-browser-proofs.yml"
   pull_request:
@@ -22,6 +23,7 @@ on:
       - "artifacts/api-server/**"
       - "lib/db/**"
       - "scripts/run-console-browser-proof.mjs"
+      - "scripts/fake-smtp-auth-refusal-server.mjs"
       - "scripts/disposable-review-database.mjs"
       - ".github/workflows/console-browser-proofs.yml"
 
