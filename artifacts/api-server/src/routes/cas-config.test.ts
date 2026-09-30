@@ -106,15 +106,40 @@ async function api(path: string, init: RequestInit = {}, authed = true) {
 // ---------------------------------------------------------------------------
 
 test("config routes reject unauthenticated requests", async () => {
-  const response = await api("/cas/config/templates");
+  const response = await api("/cas/config/responders", {}, false);
+  assert.equal(response.status, 401);
+});
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-    const created = await api("/cas/config/responders", {
-      method: "POST",
-      body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
-    });
+test("responder reads never seed rows from the environment recipient lists", async () => {
+  // The CAS_*_RECIPIENTS lists are a delivery-time fallback only. An earlier
+  // first-read seed silently created ENABLED rows holding real addresses, so
+  // every incident (test or real) delivered to them; reads must stay
+  // side-effect free and the `seeded` flag stays false.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await api("/cas/config/responders");
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      seeded: boolean;
+      responders: Array<{ id: string }>;
+    };
+    assert.equal(body.seeded, false, "first-read env seeding is retired");
+    assert.equal(body.responders.length, 0, "reads must not create responder rows");
+  }
+  const rows = await db.select({ id: casResponders.id }).from(casResponders);
+  assert.deepEqual(
+    rows.filter((row) => row.id.startsWith("seed-")),
+    [],
+    "no seed-* rows appear in the responders table",
+  );
+});
+
+test("responder create/validate/edit/disable cycle", async () => {
+  const created = await api("/cas/config/responders", {
+    method: "POST",
+    body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321", emailAddress: "alex@example.org" }),
+  });
   assert.equal(created.status, 201);
-    const responder = (await created.json()) as { id: string };
+  const responder = (await created.json()) as { id: string; enabled: boolean; channels: Record<string, string | null> };
   assert.equal(responder.enabled, true);
   assert.equal(responder.channels.sms, "+15557654321");
   assert.equal(responder.channels.email, "alex@example.org");
@@ -174,7 +199,10 @@ test("config responses satisfy the console mirror schemas", async () => {
   assert.equal(templates.status, 200);
   mirrors.parseCasTemplatesResponse(await templates.json());
 
-  const saved = (await custom.json()) as { source: string; preview: string };
+  const saved = await api("/cas/config/templates/SMS", {
+    method: "PUT",
+    body: JSON.stringify({ body: "Help needed: {{incident_id}} at {{time}}. {{location}}" }),
+  });
   assert.equal(saved.status, 200);
   mirrors.parseCasTemplateInfo(await saved.json());
 
@@ -195,10 +223,10 @@ test("config responses satisfy the console mirror schemas", async () => {
 
 test("templates default to the built-in wording and render a preview", async () => {
   const response = await api("/cas/config/templates");
-
-    for (let attempt = 0; attempt < 2; attempt++) {
   assert.equal(response.status, 200);
-  const { templates } = (await listed.json()) as { templates: Array<{ channel: string; source: string }> };
+  const { templates } = (await response.json()) as {
+    templates: Array<{ channel: string; source: string; body: string; preview: string; warnings: string[] }>;
+  };
   assert.deepEqual(templates.map((t) => t.channel), ["SMS", "XMPP", "EMAIL", "WHATSAPP"]);
   for (const template of templates) {
     assert.equal(template.source, "default");
@@ -309,11 +337,11 @@ test("fan-out queues only channels with an enabled responder", async () => {
 });
 
 test("disabling every responder on a channel stops its fan-out", async () => {
-    const created = await api("/cas/config/responders", {
-      method: "POST",
-      body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
-    });
-    const responder = (await created.json()) as { id: string };
+  const created = await api("/cas/config/responders", {
+    method: "POST",
+    body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
+  });
+  const responder = (await created.json()) as { id: string };
   await api(`/cas/config/responders/${responder.id}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
   const { reused } = await trigger();
   assert.equal(reused, false);
@@ -373,6 +401,7 @@ test("delivery sends to console-managed recipients with the custom template", as
     body: JSON.stringify({ body: "Custom wording for {{incident_id}}. {{location}}" }),
   });
   const { id, item } = await insertIncidentWithSmsOutbox();
+
   await withStubProvider(async (url, posts) => {
     const sender = createCasDeliverySender({
       sms: createSmsProvider({ url, recipients: ["+10000000000"] }),
@@ -381,8 +410,6 @@ test("delivery sends to console-managed recipients with the custom template", as
     assert.equal(posts.length, 1, "only the enabled responder receives the alert");
     assert.equal(posts[0].body.to, "+15557654321");
     const body = posts[0].body.body as string;
-
-    const rows = await db.select({ id: casResponders.id, enabled: casResponders.enabled }).from(casResponders);
     assert.match(body, new RegExp(`^Custom wording for ${id}\\. `));
     assert.match(body, /no fix captured/);
     assert.ok(!body.includes("Begin response protocol"), "custom template replaces the default wording");
@@ -393,7 +420,7 @@ test("delivery falls back to env recipients and default wording with an empty ci
   const { id, item } = await insertIncidentWithSmsOutbox();
   await withStubProvider(async (url, posts) => {
     const sender = createCasDeliverySender({
-      sms: createSmsProvider({ url, recipients: ["+10000000000"] }),
+      sms: createSmsProvider({ url, recipients: ["+1555000111"] }),
     });
     await sender(item, item.id);
     assert.equal(posts.length, 1);
@@ -403,11 +430,11 @@ test("delivery falls back to env recipients and default wording with an empty ci
 });
 
 test("an empty enabled circle fails loudly instead of silently sending nothing", async () => {
-    const created = await api("/cas/config/responders", {
-      method: "POST",
-      body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
-    });
-    const responder = (await created.json()) as { id: string };
+  const created = await api("/cas/config/responders", {
+    method: "POST",
+    body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
+  });
+  const responder = (await created.json()) as { id: string };
   await api(`/cas/config/responders/${responder.id}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
   const { item } = await insertIncidentWithSmsOutbox();
   await withStubProvider(async (url, posts) => {
@@ -483,7 +510,9 @@ test("device-mode trigger hands the handset the console circle and template", as
 
 test("device-mode trigger with an unseeded circle keeps the handset list authoritative", async () => {
   await withEnv(DEVICE_ENV, async () => {
-  const { deviceSms } = (await trigger()) as unknown as { deviceSms?: unknown };
+    const { deviceSms } = (await trigger()) as unknown as {
+      deviceSms?: { recipients: string[] | null; message: string };
+    };
     assert.equal(deviceSms?.recipients, null, "null means: handset's own list stays authoritative");
     assert.match(deviceSms?.message ?? "", /^CAS P1 alert sim-/, "default wording renders");
     // SMS goes to the handset; XMPP still fans out server-side from the env
@@ -500,7 +529,9 @@ test("a managed circle with no enabled SMS numbers queues nothing and tells the 
     });
     const responder = (await created.json()) as { id: string };
     await api(`/cas/config/responders/${responder.id}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
-  const { deviceSms } = (await trigger()) as unknown as { deviceSms?: unknown };
+    const { deviceSms } = (await trigger()) as unknown as {
+      deviceSms?: { recipients: string[] | null; message: string };
+    };
     assert.deepEqual(deviceSms?.recipients, [], "explicitly nobody — distinct from the null legacy case");
     assert.deepEqual(await outboxTransports(), [], "no SMS row is queued to sit QUEUED forever");
   });
@@ -622,5 +653,3 @@ test("default template renders byte-identical legacy wording", () => {
     "CAS P1 alert sim-1 at 2026-09-27 10:15Z. Begin response protocol. Do not call handset. Location: no fix captured for this alert.",
   );
 });
-
-    const seededRows = rows.filter((row) => row.id.startsWith("seed-"));
