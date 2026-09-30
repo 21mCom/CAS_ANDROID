@@ -191,8 +191,14 @@ jobs:
           $rebuildOutput = & pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $rebuildZip 2>&1 | Out-String
           $rebuildCode = $LASTEXITCODE
           Write-Host $rebuildOutput
+          # Out-String renders errors in ConciseView: wrapped at the
+          # non-interactive host width with a " | " prefix per line, which
+          # splits multi-word phrases. Strip the prefixes and collapse
+          # whitespace before phrase matching so wrapping can never break
+          # the assertion (the packager messages contain no '|' characters).
+          $rebuildFlat = (($rebuildOutput -replace '\|', ' ') -replace '\s+', ' ')
           if ($rebuildCode -ne 0) { throw "The packager refused an identical-content rebuild to the same path (exit $rebuildCode)." }
-          if ($rebuildOutput -notmatch 'identical content') { throw 'The rebuild succeeded without the guard reporting identical content; the same-path overwrite guard is not engaging.' }
+          if ($rebuildFlat -notmatch 'identical content') { throw 'The rebuild succeeded without the guard reporting identical content; the same-path overwrite guard is not engaging.' }
           Write-Host 'An identical-content rebuild to the same path succeeded, as required.'
           exit 0
 
@@ -236,9 +242,15 @@ jobs:
           $output = & pwsh -NoLogo -NoProfile -NonInteractive -File artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1 -SkipApkBuild -SkipWindowsEntryPointGate -OutputPath $targetZip 2>&1 | Out-String
           $code = $LASTEXITCODE
           Write-Host $output
+          # Out-String renders errors in ConciseView: wrapped at the
+          # non-interactive host width with a " | " prefix per line, which
+          # splits the refusal phrase. Strip the prefixes and collapse
+          # whitespace before phrase matching so wrapping can never break
+          # the assertion (the packager messages contain no '|' characters).
+          $flatOutput = (($output -replace '\|', ' ') -replace '\s+', ' ')
           if ($code -eq 0) { throw 'The packager overwrote an existing ZIP holding different content, re-opening the 2026-09-27 same-filename incident.' }
-          if ($output -notmatch 'Refusing to overwrite') { throw 'The packager failed without the same-path refusal message.' }
-          if ($output -notmatch 'two different kits must never share one filename') { throw 'The packager failed without explaining why the overwrite was refused.' }
+          if ($flatOutput -notmatch 'Refusing to overwrite') { throw 'The packager failed without the same-path refusal message.' }
+          if ($flatOutput -notmatch 'two different kits must never share one filename') { throw 'The packager failed without explaining why the overwrite was refused.' }
           $afterZipHash = (Get-FileHash -LiteralPath $targetZip -Algorithm SHA256).Hash
           if ($afterZipHash -ne $originalZipHash) { throw 'The packager modified the existing ZIP it claimed to refuse.' }
           Write-Host 'Different content under one filename was refused and the existing ZIP was left untouched, as required.'
