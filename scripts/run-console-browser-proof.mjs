@@ -4,7 +4,12 @@
 // credential and this console's built bundle behind `vite preview` with /api
 // proxied, then runs the Playwright suite. For the email-probe proof it also
 // generates a throwaway TLS identity and serves a fake SMTP endpoint that
-// always refuses AUTH. Everything is torn down on pass or fail.
+// always refuses AUTH. The api-server runs in device-direct SMS mode
+// (CAS_SMS_DELIVERY_MODE=device) so the handset-SIM chip proof can exercise
+// the real trigger → device receipt path; no proof's trigger queues a
+// gateway channel (email provider variables are cleared and the responders
+// table is empty), so no server-side delivery can fire. Everything is torn
+// down on pass or fail.
 //
 // Prerequisites: pnpm install, Playwright's chromium (`pnpm --filter
 // @workspace/covert-alert-system exec playwright install chromium`, or set
@@ -183,11 +188,43 @@ try {
           // only mail server is the fake one below.
           NODE_ENV: "production",
           CAS_TEST_DISPOSABLE_DB: "0",
-          // Clear any live CAS_EMAIL_* secrets so the pre-save probe ticks
-          // skip instead of AUTHing against the real mailbox on a fast
-          // cadence; the proof's saved console account owns the channel.
-          CAS_EMAIL_SMTP_HOST: "",
+          // Device-direct SMS mode: the handset-SIM chip proof triggers an
+          // incident and posts the handset's receipt through the real
+          // device-receipt endpoint, which stays 409-closed in gateway mode.
+          // Safe here because the trigger only queues handset-delivered SMS
+          // (every gateway channel is undeliverable with the email provider
+          // variables cleared and no responder rows), and the outbox worker
+          // never claims device channels in this mode.
+          CAS_SMS_DELIVERY_MODE: "device",
+          // Clear every live gateway provider configuration: endpoint URLs,
+          // tokens, sender identities, and the env recipient fallbacks for
+          // all four transports. This is what makes the handset-SIM chip
+          // proof's real trigger safe — with no gateway endpoint configured
+          // and no responder rows in the disposable DB, the trigger queues
+          // only the handset-delivered SMS row, and the production-mode
+          // outbox worker (test-sink forcing is off here) can never contact
+          // a real provider. It also keeps the pre-save probe ticks skipping
+          // instead of AUTHing against the real mailbox on a fast cadence;
+          // the email-probe proof's saved console account owns the channel.
+          CAS_SMS_PROVIDER_URL: "",
+          CAS_SMS_PROVIDER_TOKEN: "",
+          CAS_SMS_FROM: "",
+          CAS_SMS_RECIPIENTS: "",
+          CAS_XMPP_PROVIDER_URL: "",
+          CAS_XMPP_PROVIDER_TOKEN: "",
+          CAS_XMPP_FROM_JID: "",
+          CAS_XMPP_RECIPIENTS: "",
+          CAS_WHATSAPP_PROVIDER_URL: "",
+          CAS_WHATSAPP_PROVIDER_TOKEN: "",
+          CAS_WHATSAPP_FROM: "",
+          CAS_WHATSAPP_RECIPIENTS: "",
           CAS_EMAIL_PROVIDER_URL: "",
+          CAS_EMAIL_PROVIDER_TOKEN: "",
+          CAS_EMAIL_RECIPIENTS: "",
+          CAS_EMAIL_SMTP_HOST: "",
+          CAS_EMAIL_SMTP_PORT: "",
+          CAS_EMAIL_SMTP_USER: "",
+          CAS_EMAIL_SMTP_PASSWORD: "",
           // Fast probe cadence so the saved bad-password account is probed
           // seconds after the spec saves it, not 15s/weekly.
           CAS_EMAIL_PROBE_DELAY_MS: "1000",
@@ -235,7 +272,7 @@ try {
             : {}),
         },
       });
-      console.log("Console browser proofs passed: mid-session revocation lock and failed mailbox login check.");
+      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, and handset-SIM chip tooltip.");
     } finally {
       await stopProcess(webServer, "console preview");
       await stopProcess(apiServer, "api-server");

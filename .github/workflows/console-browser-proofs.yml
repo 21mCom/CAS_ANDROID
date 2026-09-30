@@ -3,10 +3,11 @@ name: Console browser proofs
 # Runs the committed real-browser console proofs
 # (artifacts/covert-alert-system/e2e/*.spec.ts) against a disposable
 # PostgreSQL + api-server + built console, so a change that breaks the
-# operator-facing lock surfaces (mid-session revocation) or the Email
-# delivery page's failed mailbox login check cannot merge green. Earlier
-# console browser proofs were one-off sessions and are being committed
-# alongside this harness.
+# operator-facing lock surfaces (mid-session revocation), the Email
+# delivery page's failed mailbox login check, or the incidents console's
+# handset-SIM delivery chip cannot merge green. Earlier console browser
+# proofs were one-off sessions and are being committed alongside this
+# harness.
 on:
   push:
     paths:
@@ -29,7 +30,7 @@ on:
 
 jobs:
   console-browser-proofs:
-    name: Prove the mid-session credential lock in a real browser
+    name: Prove the console's lock, mailbox-probe, and handset-SIM chip surfaces in a real browser
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
