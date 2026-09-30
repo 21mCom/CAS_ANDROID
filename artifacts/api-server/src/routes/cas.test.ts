@@ -16,6 +16,7 @@ import { after, beforeEach, test } from "node:test";
 import app from "../app";
 import { db, pool } from "@workspace/db";
 import {
+  casAuthFailureStreaks,
   casDeviceCredentials,
   casEmailAccounts,
   casGateEvidence,
@@ -195,7 +196,7 @@ beforeEach(async () => {
   await clearCasData();
   // Keep each test's rejection streaks independent: the tarpit is per-IP and
   // every request here shares 127.0.0.1.
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
 });
 
 const validGate0aReport = {
@@ -4094,7 +4095,7 @@ test("repeated credential rejections from one IP are tarpitted with a doubling d
   // Measurable schedule: failure #1 free, then 50ms, 100ms, 200ms, ... and a
   // burst alert at every 3 consecutive failures.
   setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
   const bursts: CasAuthFailureBurst[] = [];
   setCasAuthBurstRecorder((burst) => bursts.push(burst));
   try {
@@ -4166,7 +4167,7 @@ test("repeated credential rejections from one IP are tarpitted with a doubling d
   } finally {
     setCasAuthBurstRecorder();
     setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
-    resetCasAuthFailureTracking();
+    await resetCasAuthFailureTracking();
   }
 });
 
@@ -4177,7 +4178,7 @@ test("without trust proxy, X-Forwarded-For is ignored: spoofed distinct headers 
   // dodge the delay, or an innocent shared proxy could pool everyone's
   // streak into one.
   setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 1_000, resetWindowMs: 60_000 });
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
   try {
     const badGuessFrom = (spoofedIp: string) =>
       fetch(`${baseUrl}/cas/incidents/trigger`, {
@@ -4205,7 +4206,7 @@ test("without trust proxy, X-Forwarded-For is ignored: spoofed distinct headers 
     );
   } finally {
     setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
-    resetCasAuthFailureTracking();
+    await resetCasAuthFailureTracking();
   }
 });
 
@@ -4213,8 +4214,8 @@ test("with CAS_TRUST_PROXY set, failures from two X-Forwarded-For addresses get 
   // The self-hosting runbook's topology: the API sits behind a proxy on the
   // same box, so CAS_TRUST_PROXY=loopback lets Express read the real visitor
   // IP the proxy forwards. Proven against a real server process (the env var
-  // is read at app construction, and the tarpit state is process-local), so
-  // this exercises the actual deployment wiring, not a test double.
+  // is read at app construction), so this exercises the actual deployment
+  // wiring, not a test double.
   const { child, baseUrl: childBaseUrl } = await startApiProcess({ CAS_TRUST_PROXY: "loopback" });
   try {
     const badGuessFrom = (clientIp: string) =>
@@ -4256,9 +4257,70 @@ test("with CAS_TRUST_PROXY set, failures from two X-Forwarded-For addresses get 
   }
 });
 
+test("two API replicas share one failure streak per visitor IP through the database", async () => {
+  // Multi-replica proof against a REAL second server process (the
+  // self-hosting scale-out topology): streaks live in the shared
+  // cas_auth_failure_streaks table, so a guesser's failures are never
+  // diluted by landing on different replicas. A failure recorded by the
+  // child process must count toward the streak this process enforces.
+  setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
+  await resetCasAuthFailureTracking();
+  const bursts: CasAuthFailureBurst[] = [];
+  setCasAuthBurstRecorder((burst) => bursts.push(burst));
+  // No CAS_TRUST_PROXY on either process: both replicas key the streak on the
+  // same client IP (here the loopback peer, standing in for "the same visitor
+  // reaching either replica through the balancer").
+  const { child, baseUrl: childBaseUrl } = await startApiProcess();
+  try {
+    const visitorIp = "127.0.0.1";
+    const guessAgainst = (target: string) =>
+      fetch(`${target}/cas/incidents/trigger`, {
+        method: "POST",
+        headers: { authorization: "Bearer casdev_cross-replica-guess" },
+      });
+
+    // Failure #1 lands on replica B (the child runs the production schedule;
+    // a first failure is free there too).
+    let started = performance.now();
+    let response = await guessAgainst(childBaseUrl);
+    assert.equal(response.status, 401);
+    assert.ok(performance.now() - started < 200, "first failure on replica B must not be delayed");
+
+    // Failure #2 lands on replica A (this process). With a shared store this
+    // is the visitor's SECOND consecutive failure and waits ~50ms; with
+    // process-local streaks replica A would see a first failure and answer
+    // instantly.
+    started = performance.now();
+    response = await guessAgainst(baseUrl);
+    assert.equal(response.status, 401);
+    const second = performance.now() - started;
+    assert.ok(second >= 45, `replica A must continue replica B's streak (~50ms), took ${second}ms`);
+
+    // Failure #3, again on replica A, crosses the burst threshold with a
+    // streak of 3 — counting the failure replica B recorded.
+    response = await guessAgainst(baseUrl);
+    assert.equal(response.status, 401);
+    assert.equal(bursts.length, 1);
+    assert.equal(bursts[0].failures, 3);
+    assert.equal(bursts[0].ip, visitorIp);
+
+    // The shared row reflects both replicas' failures.
+    const [row] = await db
+      .select()
+      .from(casAuthFailureStreaks)
+      .where(eq(casAuthFailureStreaks.ip, visitorIp));
+    assert.equal(row.count, 3);
+  } finally {
+    await stopApiProcess(child);
+    setCasAuthBurstRecorder();
+    setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
+    await resetCasAuthFailureTracking();
+  }
+});
+
 test("handset device-access rejections are tarpitted too, and the fail-closed 503 is not", async () => {
   setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
   const rejections: CasAuthRejection[] = [];
   setCasAuthRejectionRecorder((rejection) => rejections.push(rejection));
   try {
@@ -4303,7 +4365,7 @@ test("handset device-access rejections are tarpitted too, and the fail-closed 50
   } finally {
     setCasAuthRejectionRecorder();
     setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
-    resetCasAuthFailureTracking();
+    await resetCasAuthFailureTracking();
   }
 });
 

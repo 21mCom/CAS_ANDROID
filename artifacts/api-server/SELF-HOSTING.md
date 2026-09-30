@@ -515,6 +515,16 @@ console and phone traffic. If the recorded IP shows `127.0.0.1`, check that
 directly without a proxy, unset it, or clients could spoof X-Forwarded-For
 to dodge the tarpit.
 
+**Running more than one API replica is safe for the tarpit.** Each
+attacker's failure streak lives in the shared PostgreSQL database (the
+`cas_auth_failure_streaks` table), not in process memory, so replicas behind
+a load balancer enforce one global streak per visitor IP: failures split
+across replicas still accumulate, the doubling delay keeps pace, and the
+burst alert trips on the combined count. One caveat stays: with per-IP
+tracking, the load balancer must preserve the real visitor address (keep
+`CAS_TRUST_PROXY` pointed at it), or every attacker's streak pools into the
+balancer's own IP.
+
 
 ## Running the automated test suites safely
 

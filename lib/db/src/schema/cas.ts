@@ -147,6 +147,24 @@ export const casDeviceCredentials = pgTable("cas_device_credentials", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
+/**
+ * Per-visitor-IP credential-rejection streaks for the online-guessing
+ * tarpit (delayCasAuthRejection in the API server). Lives in the shared
+ * database — not in process memory — so when a self-hoster runs more than
+ * one API replica behind a load balancer, every replica enforces ONE streak
+ * per visitor IP: a guesser's failures cannot be diluted by being split
+ * across processes, and the burst alert trips on the global streak. Rows
+ * are upserted atomically on each rejection (safe under concurrent
+ * replicas), decay after the configured reset window, and stale rows are
+ * swept opportunistically so a spoofed-IP flood cannot grow the table
+ * without bound.
+ */
+export const casAuthFailureStreaks = pgTable("cas_auth_failure_streaks", {
+  ip: text("ip").primaryKey(),
+  count: integer("count").notNull(),
+  lastFailureAt: timestamp("last_failure_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const casSetupReadiness = pgTable("cas_setup_readiness", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -203,6 +221,7 @@ export type CasIncident = typeof casIncidents.$inferSelect;
 export type CasIncidentEvent = typeof casIncidentEvents.$inferSelect;
 export type CasOutbox = typeof casOutbox.$inferSelect;
 export type CasDeviceCredential = typeof casDeviceCredentials.$inferSelect;
+export type CasAuthFailureStreak = typeof casAuthFailureStreaks.$inferSelect;
 export type CasSetupReadiness = typeof casSetupReadiness.$inferSelect;
 export type CasGateEvidence = typeof casGateEvidence.$inferSelect;
 

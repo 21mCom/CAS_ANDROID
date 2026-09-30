@@ -1,8 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { RequestHandler, Response } from "express";
 import { db } from "@workspace/db";
-import { casDeviceCredentials } from "@workspace/db/schema";
+import { casAuthFailureStreaks, casDeviceCredentials } from "@workspace/db/schema";
 import { logger } from "./logger";
 
 /**
@@ -101,6 +101,12 @@ export function recordCasCredentialRejection(rejection: CasAuthRejection) {
  *
  * Keyed on req.ip: a self-hosting deployment behind a reverse proxy must set
  * Express `trust proxy` for the limiter to see real client addresses.
+ *
+ * Streaks live in the shared cas_auth_failure_streaks table, not in process
+ * memory: when a deployment runs more than one API replica behind a load
+ * balancer, every replica upserts the same row atomically, so a guesser's
+ * failures are never diluted across processes and the doubling delay and
+ * burst alert enforce one global streak per visitor IP.
  */
 export type CasAuthFailureBurst = {
   ip: string;
@@ -128,9 +134,6 @@ const DEFAULT_FAILURE_LIMIT_CONFIG: CasAuthFailureLimitConfig = {
 
 let failureLimitConfig: CasAuthFailureLimitConfig = { ...DEFAULT_FAILURE_LIMIT_CONFIG };
 
-type FailureStreak = { count: number; lastFailureAt: number };
-const failureStreaksByIp = new Map<string, FailureStreak>();
-
 // The burst sink is injectable for the same reason as the rejection sink:
 // tests prove the alert fires without scraping logs. The default is one
 // distinct structured warn line per threshold crossing.
@@ -153,22 +156,49 @@ export function setCasAuthFailureLimitConfig(config?: Partial<CasAuthFailureLimi
 }
 
 /** Test hook: forget all recorded failure streaks. */
-export function resetCasAuthFailureTracking() {
-  failureStreaksByIp.clear();
+export async function resetCasAuthFailureTracking() {
+  await db.delete(casAuthFailureStreaks);
 }
 
 function clientIpKey(req: Parameters<RequestHandler>[0]): string {
   return req.ip ?? "unknown";
 }
 
-function liveStreak(key: string, now: number): number {
-  const streak = failureStreaksByIp.get(key);
-  if (!streak) return 0;
-  if (now - streak.lastFailureAt > failureLimitConfig.resetWindowMs) {
-    failureStreaksByIp.delete(key);
-    return 0;
-  }
-  return streak.count;
+// The streak row is written with one atomic INSERT ... ON CONFLICT, so two
+// replicas (or two requests) rejecting at the same moment both count — a
+// read-modify-write here would let concurrent failures share one increment.
+// A streak whose last failure is older than the reset window decays back to
+// 1 on the next failure, matching the in-memory predecessor's semantics.
+async function recordFailureStreak(key: string): Promise<number> {
+  const windowMs = failureLimitConfig.resetWindowMs;
+  const [row] = await db
+    .insert(casAuthFailureStreaks)
+    .values({ ip: key, count: 1 })
+    .onConflictDoUpdate({
+      target: casAuthFailureStreaks.ip,
+      set: {
+        count: sql`case when now() - ${casAuthFailureStreaks.lastFailureAt} > (${windowMs}::double precision * interval '1 millisecond') then 1 else ${casAuthFailureStreaks.count} + 1 end`,
+        lastFailureAt: sql`now()`,
+      },
+    })
+    .returning({ count: casAuthFailureStreaks.count });
+  return row.count;
+}
+
+// Bound the table under a flood of spoofed/source-NATted addresses: stale
+// rows are worthless, so sweep them occasionally. Probabilistic (any replica
+// sweeping suffices) so the rejection path does not pay a DELETE per request.
+let sweepCounter = 0;
+function sweepStaleFailureStreaks() {
+  if (++sweepCounter % 64 !== 0) return;
+  const windowMs = failureLimitConfig.resetWindowMs;
+  db.delete(casAuthFailureStreaks)
+    .where(
+      sql`${casAuthFailureStreaks.lastFailureAt} < now() - (${windowMs}::double precision * interval '1 millisecond')`,
+    )
+    .catch((error) => {
+      logger.warn({ err: error }, "CAS auth failure-streak sweep failed");
+    });
 }
 
 /** Response delay for the n-th consecutive failure from one IP: the first is free, then doubling. */
@@ -186,19 +216,18 @@ export function casAuthFailureDelayMs(streak: number): number {
  * Call exactly once per rejection, before sending the 401 body.
  */
 export async function delayCasAuthRejection(req: Parameters<RequestHandler>[0]): Promise<void> {
-  const now = Date.now();
   const key = clientIpKey(req);
-  const streak = liveStreak(key, now) + 1;
-  failureStreaksByIp.set(key, { count: streak, lastFailureAt: now });
-  // Bound the map under a flood of spoofed/source-NATted addresses: stale
-  // entries are worthless, so evict them once the table grows past a
-  // generous working set.
-  if (failureStreaksByIp.size > 4096) {
-    for (const [ip, entry] of failureStreaksByIp) {
-      if (now - entry.lastFailureAt > failureLimitConfig.resetWindowMs) {
-        failureStreaksByIp.delete(ip);
-      }
-    }
+  let streak: number;
+  try {
+    streak = await recordFailureStreak(key);
+    sweepStaleFailureStreaks();
+  } catch (error) {
+    // The tarpit is hardening around the gate, not the gate itself: a
+    // streak-store outage must never turn a credential rejection into a
+    // 500. The 401 still goes out undelayed, and the warn line keeps the
+    // unprotected window visible to log monitoring.
+    logger.warn({ err: error }, "CAS auth failure-streak store unavailable; rejection not tarpitted");
+    return;
   }
   if (streak % failureLimitConfig.burstThreshold === 0) {
     recordBurst({ ip: key, failures: streak, windowMs: failureLimitConfig.resetWindowMs });

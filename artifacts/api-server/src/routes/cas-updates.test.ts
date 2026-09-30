@@ -55,7 +55,7 @@ async function publish(
 // several intentional 401s, so keep the schedule from snowballing.
 beforeEach(async () => {
   await db.delete(casAppUpdates);
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
 });
 
 after(async () => {

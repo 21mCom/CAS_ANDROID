@@ -229,7 +229,7 @@ test("evidence-gate rejections pass through the same per-IP tarpit and burst ale
   // delivery gates: repeated guesses against it must slow down and alert, or
   // it would be the fastest oracle on the box.
   setCasAuthFailureLimitConfig({ baseDelayMs: 50, maxDelayMs: 5_000, burstThreshold: 3, resetWindowMs: 60_000 });
-  resetCasAuthFailureTracking();
+  await resetCasAuthFailureTracking();
   const bursts: CasAuthFailureBurst[] = [];
   const rejections: CasAuthRejection[] = [];
   setCasAuthBurstRecorder((burst) => bursts.push(burst));
@@ -270,7 +270,7 @@ test("evidence-gate rejections pass through the same per-IP tarpit and burst ale
     setCasAuthBurstRecorder();
     setCasAuthRejectionRecorder();
     setCasAuthFailureLimitConfig(SUITE_FAILURE_LIMIT_CONFIG);
-    resetCasAuthFailureTracking();
+    await resetCasAuthFailureTracking();
   }
 });
 
