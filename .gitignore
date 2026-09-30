@@ -71,3 +71,7 @@ scripts/.cache/
 # Field-build-only Firebase config for the capture-request push wake
 # (deployment-specific; see app/build.gradle.kts) — never committed.
 /artifacts/covert-alert-system/android-test-package/app/google-services.json
+
+# Playwright output from the console browser-proof harness (local runs)
+/artifacts/covert-alert-system/test-results/
+/artifacts/covert-alert-system/playwright-report/
