@@ -30,6 +30,15 @@ if ($null -eq $gradleCommand) {
 }
 $gradle = $gradleCommand.Source
 
+$signingConfigured = -not [string]::IsNullOrWhiteSpace($env:CAS_RELEASE_KEYSTORE_B64)
+if ($signingConfigured -and [string]::IsNullOrWhiteSpace($env:CAS_RELEASE_KEYSTORE_PASSWORD)) {
+    throw 'CAS_RELEASE_KEYSTORE_B64 is set but CAS_RELEASE_KEYSTORE_PASSWORD is not; export both (see HANDOFF-TEST-KIT.md T1) or unset both for a debug-signed build.'
+}
+if (-not $signingConfigured) {
+    throw 'CAS_RELEASE_KEYSTORE_B64 is not set; refusing to package a DEBUG-signed APK — it could never take an in-place update on a field phone. Export CAS_RELEASE_KEYSTORE_B64 and CAS_RELEASE_KEYSTORE_PASSWORD (see HANDOFF-TEST-KIT.md T1) and rerun, or rerun the packager with -SkipApkBuild to bypass the APK build gate.'
+}
+Write-Host 'Field release signing key detected (CAS_RELEASE_KEYSTORE_B64); the APK will be signed with the pinned field key.'
+
 Write-Host ('Building Gate 0A debug APK with {0} ...' -f $gradle)
 Push-Location $PackageRoot
 try {
@@ -41,8 +50,21 @@ try {
     Pop-Location
 }
 
-$apkPath = Join-Path $PackageRoot 'app\build\outputs\apk\debug\app-debug.apk'
+$apkPath = Join-Path $PackageRoot 'app/build/outputs/apk/debug/app-debug.apk'
 if (-not (Test-Path $apkPath -PathType Leaf)) {
     throw ('Gradle reported success but the debug APK is missing: {0}' -f $apkPath)
+}
+
+# Signature identity gate: when the pinned field key is configured, the built
+# APK MUST be signed by exactly that certificate — a successful compile alone
+# says nothing about update compatibility with phones already in the field.
+if ($signingConfigured) {
+    $pinHelper = Join-Path $PackageRoot 'scripts/cas-signing-pin.ps1'
+    if (-not (Test-Path -LiteralPath $pinHelper -PathType Leaf)) {
+        throw ('The shared signature-pin check is missing: {0}. Restore the complete, unmodified test kit before packaging.' -f $pinHelper)
+    }
+    . $pinHelper
+    $verifiedDigest = Assert-ApkMatchesFieldSigningPin -ApkPath $apkPath -PackageRoot $PackageRoot
+    Write-Host ('Signature identity verified: APK signed with the pinned field key (SHA-256 {0}).' -f $verifiedDigest) -ForegroundColor Green
 }
 Write-Host ('Debug APK built: {0}' -f $apkPath) -ForegroundColor Green

@@ -37,12 +37,26 @@ if (-not (Test-Path $sharedParserPath -PathType Leaf)) {
     Stop-Run "The shared tool-requirements parser is missing at $sharedParserPath; restore the complete, unmodified test kit before installing the MVP app."
 }
 . $sharedParserPath
+$pinHelperPath = Join-Path $scriptDirectory 'cas-signing-pin.ps1'
+if (-not (Test-Path -LiteralPath $pinHelperPath -PathType Leaf)) {
+    Stop-Run "The shared signature-pin check is missing at $pinHelperPath; restore the complete, unmodified test kit before installing the MVP app."
+}
+. $pinHelperPath
 $toolRequirementsPath = Join-Path $scriptDirectory '..\tool-requirements.json'
 $toolRequirements = Get-ToolRequirements $toolRequirementsPath
 if ($null -eq $toolRequirements) {
     Stop-Run "tool-requirements.json is missing or invalid at $toolRequirementsPath; restore the complete, unmodified test kit before installing the MVP app."
 }
 $minimumApiLevel = $toolRequirements.apiLevel
+
+# Field phones must receive the pinned-key build: an APK signed with anything
+# else (including the default debug key) can never take an in-place update on
+# a phone that already runs the pinned-key build. The Gradle build signs with
+# the pinned field key only when these secrets are exported (see
+# HANDOFF-TEST-KIT.md T1), so refuse to install without them.
+if ([string]::IsNullOrWhiteSpace($env:CAS_RELEASE_KEYSTORE_B64) -or [string]::IsNullOrWhiteSpace($env:CAS_RELEASE_KEYSTORE_PASSWORD)) {
+    Stop-Run 'CAS_RELEASE_KEYSTORE_B64 / CAS_RELEASE_KEYSTORE_PASSWORD are not set, so the build would be DEBUG-signed and could never take an in-place update on a field phone. Export both (see HANDOFF-TEST-KIT.md T1) and rerun.'
+}
 
 Write-Host ''
 Write-Host 'CAS Pixel 11 - MVP app install' -ForegroundColor Cyan
@@ -101,6 +115,16 @@ try {
     if (-not (Test-Path $apk -PathType Leaf)) {
         Stop-Run "The build finished but the APK is missing: $apk"
     }
+    # The secrets being set is not enough: prove the built APK is signed with
+    # the PINNED key (not just any valid keystore) before it touches a field
+    # phone, or this install strands the phone on an incompatible signing
+    # identity that no future kit build can update.
+    try {
+        $null = Assert-ApkMatchesFieldSigningPin -ApkPath $apk -PackageRoot $packageRoot
+    } catch {
+        Stop-Run $_.Exception.Message
+    }
+    Write-Host 'Signature identity verified: the APK matches the pinned field key.' -ForegroundColor Green
     & $adb.Source -s $Serial install -r $apk
     if ($LASTEXITCODE -ne 0) {
         Stop-Run "adb install failed with exit code $LASTEXITCODE."

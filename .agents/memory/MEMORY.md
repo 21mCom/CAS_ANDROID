@@ -30,6 +30,7 @@
 - [Typecheck incremental staleness](typecheck-incremental-staleness.md) — incremental tsc can hide merge damage; verify with --incremental false before declaring done.
 - [Concurrent task merges can clobber files](concurrent-task-merge-clobber.md) — a stale snapshot can revert concurrent work, even committed; diff touched files against the parent before completing.
 - [Local APK build gate](local-apk-build-gate.md) — minimal SDK (cmdline-tools + platform + build-tools) fits the quota and builds the kit APK; Gradle must match gradle-version.txt.
+- [CAS field signing key](cas-field-signing-key.md) — field APKs pinned to one release key in workspace secrets; packaging gate fails closed without it; committed pin is the cert SHA-256.
 - [Drizzle raw execute timestamps](drizzle-raw-execute-timestamps.md) — raw sql`` rows return timestamptz as strings, unlike typed db.select(); coerce with new Date() before Date methods.
 - [drizzle-zod insert schemas vs route zod](drizzle-zod-route-mismatch.md) — generated insertCas*Schema exports fail in api-server route zod; hand-write route payload schemas.
 - [Kit gates first real CI run](kit-gates-first-ci-run.md) — the kit gates already ran green once on real CI; verify code identity before burning a duplicate run.

@@ -92,6 +92,33 @@ later; nothing else changes.
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
 prints `0.7.0-push`.
 
+**Field signing key (required for field builds):** every kit APK is signed with
+one pinned release key (the single key entry in the keystore stored in the
+workspace secrets). Android only accepts an update signed with the SAME
+certificate, so this key is what lets field phones take future kit builds as
+in-place updates instead of manual reinstalls. The key material is never
+committed — it lives in the workspace secrets
+`CAS_RELEASE_KEYSTORE_B64` (base64 of the keystore) and
+`CAS_RELEASE_KEYSTORE_PASSWORD`; export both as environment variables before
+building. The build then signs the APK with the pinned key, and the packaging
+gate (`scripts\build-android-test-apk.ps1`) verifies the APK's certificate
+SHA-256 against the committed pin in `signing\field-release-cert.sha256.txt` —
+it refuses to package an APK signed with any other key, and refuses to package
+at all when the key is absent. Without the secrets the Gradle build itself
+falls back to the debug key (fine for CI/emulator drills, never for a phone
+going to the field — those APKs can only come from a gated packaging run).
+
+**One-time migration — phones already running a debug-signed install:**
+Android will refuse `adb install -r` over the old debug-signed app
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`). On each such phone, once:
+1. `adb uninstall com.covertalert.pixeltest` (this wipes the app's stored
+   enrollment — expected),
+2. install the key-signed build (`scripts\run-mvp-install.cmd`),
+3. on the phone, re-enter the alert server URL and the device access token
+   (T2 step 1) and re-grant the SMS/location permissions.
+Every later build installs in place — no repeat of this migration as long as
+the pinned key stays the signing key.
+
 **Optional — push wake build:** to make responder-requested capture near-real-time
 (T10b), place the Firebase project's `google-services.json` (Android app
 `com.covertalert.pixeltest`) at `app\google-services.json` before building, and

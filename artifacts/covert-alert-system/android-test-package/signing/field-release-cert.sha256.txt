@@ -1,0 +1,16 @@
+# Pinned field release signing certificate — SHA-256 fingerprint.
+#
+# Every kit APK installed on a field phone is signed with this one key (the
+# single PrivateKeyEntry in the keystore). Android refuses an update signed
+# with a different certificate, so this fingerprint is the identity the
+# packaging gate (scripts/build-android-test-apk.ps1) checks every built APK
+# against.
+#
+# The key material itself is NEVER committed. It lives in the workspace
+# secrets CAS_RELEASE_KEYSTORE_B64 / CAS_RELEASE_KEYSTORE_PASSWORD; see
+# HANDOFF-TEST-KIT.md (T1) for how builds consume it and for the one-time
+# migration required on phones that still run a debug-signed install.
+#
+# Regenerate/verify with:
+#   keytool -list -v -keystore field-release.keystore
+SHA256: 48:99:B8:FD:93:1B:CF:71:EF:6B:B7:35:C9:2E:56:84:5C:53:A8:E9:BB:1B:16:CB:91:43:97:2F:64:B2:B5:91
