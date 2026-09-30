@@ -45,3 +45,4 @@
 - [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.
 - [WriteFile NUL-escape trap](writefile-nul-escape-trap.md) — `\0` escapes become literal NUL bytes; file turns "binary" and later exact-match edits fail invisibly.
 - [Async finalize vs summary status races](cas-status-line-finalize-races.md) — check-and-post of final-vs-interim status must be one UI-thread op; invalidate attempt ownership on every tap, incl. preflight early-returns.
+- [CI adbd post-reboot disconnect flake](ci-adbd-post-reboot-flake.md) — adb root after an emulator reboot needs a bounded retry; the fake-adb harness models the closed-connection window.
