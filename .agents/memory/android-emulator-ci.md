@@ -23,6 +23,22 @@ Two CI-only traps for CAS_ANDROID emulator jobs (neither reproduces locally):
    block that works on macOS (where sh is bash in POSIX mode) fails
    instantly on ubuntu.
 
+3. **The CI emulator's emulated radio ACCEPTS SMS sends; the workspace's
+   TCG AVD does not.** On ubuntu-latest+KVM, sendTextMessage returns result
+   OK (journal shows delivered:1); the workspace emulator's modem never
+   registers, so the same send fails fast with SEND_FAILED. Any harness
+   written against the workspace AVD that *asserts* send failure (e.g. a
+   "modem-less environment" gate) fails on CI even though nothing is broken.
+   **How to apply:** such probes must classify the radio and branch
+   expectations (SENT vs DEAD_LETTER), not gate on one environment.
+
+4. **ubuntu-latest ships kotlinc on PATH.** A script that downloads a pinned
+   kotlinc only when `command -v kotlinc` fails will never populate its
+   cache on CI, so a second script that hardcodes the cache path dies with
+   "No such file or directory".
+   **How to apply:** resolve the compiler with the same PATH-first logic at
+   every use site; never assume a sibling script's cache got primed.
+
 Known flake: any `adb root` in an emulator job (initial acquire or
 post-reboot re-acquire) can fail on a transient adbd disconnect — observed
 both as `adb: unable to connect for root: closed` and as a fast non-zero

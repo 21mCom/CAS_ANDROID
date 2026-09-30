@@ -5,14 +5,19 @@
 # -> receipt durability -> postReceipt), with no synthetic app state in the
 # primary scenario.
 #
-# Phase 0 (environment probe, machine-checked): a real alert send on this
-#   workspace's modem-less AVD must finalize with a NAMED failure within
-#   milliseconds — SmsManager.divideMessage throws "Sms is not supported",
-#   the non-blank body falls back to a single-part send (journaled as
-#   SMS_DIVIDE_FALLBACK), and the radio-less send call then fails immediately
-#   as SEND_FAILED:<exception> — i.e. production code CANNOT leave an
-#   unfinished batch here. This probe is why Scenario B
-#   below uses a seeded durable record while Scenario A does not.
+# Phase 0 (environment probe, machine-checked): a real alert send classifies
+#   this AVD's radio. On the workspace's modem-less AVD the send must finalize
+#   with a NAMED failure within milliseconds — SmsManager.divideMessage throws
+#   "Sms is not supported", the non-blank body falls back to a single-part
+#   send (journaled as SMS_DIVIDE_FALLBACK), and the radio-less send call then
+#   fails immediately as SEND_FAILED:<exception>. On GitHub's ubuntu-latest
+#   KVM image the emulated radio ACCEPTS the send (result OK), which is just
+#   as valid: the probe records which environment this is and downstream
+#   assertions (scenario A's final console state, the divide-fallback check)
+#   follow the classification. Either way the drill seeds scenario B: on a
+#   modem-less AVD the kill-before-radio-results window does not exist, and
+#   on a radio AVD catching it deterministically is racy — the seeded record
+#   produced by the production encoder is deterministic on both.
 #
 # Scenario A (PRIMARY, zero synthetic state, deterministic): all device
 #   traffic goes through cas-receipt-gate-proxy.py. With the HANG flag on,
@@ -334,7 +339,19 @@ gen_seed() { # batch <incident-id> | receipt <incident-id> <queuedAtMs>
 
 echo "== Build the production-encoder seed generator =="
 "$REPO_ROOT/scripts/test-receipt-durability.sh" > /dev/null   || { echo "::error::JVM receipt-durability harness failed — the encoder the seeds come from is broken."; exit 1; }
-"$DUR_CACHE/kotlinc/bin/kotlinc"   "$REPO_ROOT/artifacts/covert-alert-system/android-test-package/app/src/main/java/com/covertalert/pixeltest/ReceiptDurability.kt"   "$REPO_ROOT/scripts/receipt-durability/SeedFixtureGenerator.kt"   -cp "$DUR_CACHE/json-20240303.jar" -include-runtime   -d "$DUR_CACHE/build/seed-fixtures.jar"   || { echo "::error::seed fixture generator failed to compile against the production encoder."; exit 1; }
+# Resolve kotlinc the same way test-receipt-durability.sh's find_kotlinc does:
+# a system kotlinc on PATH wins, and only its absence makes that script prime
+# the pinned cache — so this compile must NOT hardcode the cache path (on
+# GitHub's ubuntu-latest image kotlinc is preinstalled, the cache is never
+# populated, and the hardcoded path fails with "No such file or directory").
+KOTLINC="$DUR_CACHE/kotlinc/bin/kotlinc"
+if command -v kotlinc > /dev/null 2>&1; then
+  KOTLINC="$(command -v kotlinc)"
+elif [ ! -x "$KOTLINC" ]; then
+  echo "::error::no kotlinc on PATH and the pinned cache was not primed by test-receipt-durability.sh."
+  exit 1
+fi
+"$KOTLINC"   "$REPO_ROOT/artifacts/covert-alert-system/android-test-package/app/src/main/java/com/covertalert/pixeltest/ReceiptDurability.kt"   "$REPO_ROOT/scripts/receipt-durability/SeedFixtureGenerator.kt"   -cp "$DUR_CACHE/json-20240303.jar" -include-runtime   -d "$DUR_CACHE/build/seed-fixtures.jar"   || { echo "::error::seed fixture generator failed to compile against the production encoder."; exit 1; }
 # Byte-exactness proof: the encoder's own round-trip must accept what we seed.
 gen_seed batch probe-incident | grep -q '"cycleToken"'   || echo "note: encoder emits no cycleToken field (pre-cycle-token build); fixtures match whatever the encoder emits."
 
@@ -386,12 +403,25 @@ start_flow \
 probe_incident="$(wait_new_incident "$prev_incident")" || fail "trigger never created an incident."
 send_line="$(wait_journal_match "SMS_SEND_OUTCOME[^}]*$probe_incident[^}]*" "$TIMEOUT_S")" \
   || fail "send never finalized on the environment probe."
-grep -q "SEND_FAILED:" <<< "$send_line" \
-  || fail "expected an immediate SEND_FAILED:<exception> on this modem-less AVD (divideMessage throws, single-part fallback reaches a radio-less send) — if the radio works here, re-derive scenario B without seeding."
-# The fallback must have fired first: it is what turns the modem-less AVD's
-# divideMessage failure into a send attempt at all.
-wait_journal_match "SMS_DIVIDE_FALLBACK" "$TIMEOUT_S" > /dev/null \
-  || fail "SMS_DIVIDE_FALLBACK was not journaled on this modem-less AVD — divideMessage no longer fails here; re-derive the probe."
+# Classify the radio instead of asserting it away: the workspace's modem-less
+# AVD fails the send immediately with a named exception, while the GitHub
+# runner's KVM image emulates a radio that accepts it (proven on the first
+# real CI run — SMS_PART_RESULT OK, delivered:1). Scenario A's final console
+# state and the divide-fallback check follow this classification; the
+# kill/receipt durability assertions are radio-independent.
+if grep -q "SEND_FAILED:" <<< "$send_line"; then
+  RADIO_WORKS=false
+  PROBE_EXPECTED_STATE="DEAD_LETTER"
+  # The fallback must have fired first: it is what turns the modem-less AVD's
+  # divideMessage failure into a send attempt at all.
+  wait_journal_match "SMS_DIVIDE_FALLBACK" "$TIMEOUT_S" > /dev/null \
+    || fail "SMS_DIVIDE_FALLBACK was not journaled on this modem-less AVD — divideMessage no longer fails here; re-derive the probe."
+elif grep -q '"delivered":1' <<< "$send_line"; then
+  RADIO_WORKS=true
+  PROBE_EXPECTED_STATE="SENT"
+else
+  fail "probe send finalized with an unrecognized outcome (neither SEND_FAILED nor delivered): $send_line"
+fi
 # The flow activity finishes right after the send, and on this emulator the
 # now-empty process is sometimes reaped before the receipt's HTTP response is
 # journaled — the server logs show the receipt POST accepted with a 200 while
@@ -405,8 +435,8 @@ if ! wait_journal "SMS_RECEIPT_OUTCOME[^}]*$probe_incident[^}]*REPORTED" 90; the
   wait_journal "SMS_RECEIPT_OUTCOME[^}]*$probe_incident[^}]*REPORTED" "$TIMEOUT_S" \
     || fail "probe receipt was not REPORTED even after a resume retried it."
 fi
-[ "$(sms_item_state "$probe_incident")" = "DEAD_LETTER" ] || fail "probe item not DEAD_LETTER: $(sms_item_state "$probe_incident")"
-echo "phase 0 OK: production code cannot leave an unfinished batch on this AVD (DIVIDE_FAILED finalizes in-line; $probe_incident DEAD_LETTER)."
+[ "$(sms_item_state "$probe_incident")" = "$PROBE_EXPECTED_STATE" ] || fail "probe item not $PROBE_EXPECTED_STATE: $(sms_item_state "$probe_incident")"
+echo "phase 0 OK: radio_works=$RADIO_WORKS — probe incident $probe_incident finalized $PROBE_EXPECTED_STATE (production code cannot leave an unfinished batch on either radio class)."
 
 # --- Scenario A: real pending receipt, kill, resume (no synthetic state) ------
 
@@ -493,7 +523,9 @@ wait_event_beyond "$retry_base" 'RECEIPT_RETRY_OUTCOME[^}]*"reported":1[,}]' "$T
 wait_journal "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*REPORTED" "$TIMEOUT_S" \
   || fail "receipt for $incident_a was not REPORTED after data returned."
 state_a="$(wait_console_state "$incident_a" QUEUED)" || fail "console item for $incident_a stuck QUEUED after the retried receipt."
-[ "$state_a" = "DEAD_LETTER" ] || fail "unexpected state $state_a (honest DIVIDE_FAILED failures must dead-letter)."
+EXPECTED_A_STATE="DEAD_LETTER"
+[ "$RADIO_WORKS" = "true" ] && EXPECTED_A_STATE="SENT"
+[ "$state_a" = "$EXPECTED_A_STATE" ] || fail "unexpected state $state_a (expected $EXPECTED_A_STATE for this AVD: a radio-less send's honest failures dead-letter, a working radio's delivered send lands SENT)."
 case "$(read_durable pending_receipts)" in *"receiptId"*) fail "acked receipt still persisted on device." ;; esac
 case "$(read_durable sms_batches)" in *"remaining"*) fail "batch record not drained after finalize." ;; esac
 echo "SCENARIO A PASSED: $incident_a — force-stop with the receipt POST in flight, honest offline retry while blocked, receipt delivered after data returned, console QUEUED -> $state_a, store drained. NO synthetic state."
@@ -509,7 +541,7 @@ adb shell am force-stop "$PKG"
 # Generated by the production ReceiptDurability encoder (see the generator
 # build above): one recipient with one part still awaiting a radio result.
 seed_durable sms_batches "$(gen_seed batch "$incident_b")"
-echo "seeded the unfinished-batch record via the production encoder (only state this AVD cannot produce — see phase 0)"
+echo "seeded the unfinished-batch record via the production encoder (deterministic stand-in for the kill-before-radio-results window — see phase 0)"
 launch_main || fail "relaunch failed"
 # SMS_BATCH_RECOVERY is an incident-less summary event (it carries only
 # recovered/droppedAlreadyReported counts), so it cannot be incident-scoped.
@@ -547,4 +579,4 @@ case "$(read_durable pending_receipts)" in *"receiptId"*) fail "acked receipt st
 echo "SCENARIO C PASSED: $incident_c — retried success receipt moved the console QUEUED -> SENT, store drained."
 
 resolve_active > /dev/null
-echo "Receipt-durability kill proof passed: scenario A via the real send path with no synthetic state; scenarios B/C with the seeded records this modem-less AVD cannot produce (hardware owns the full-fidelity run)."
+echo "Receipt-durability kill proof passed: scenario A via the real send path with no synthetic state (radio_works=$RADIO_WORKS); scenarios B/C with seeded production-encoder records (hardware owns the full-fidelity run)."
