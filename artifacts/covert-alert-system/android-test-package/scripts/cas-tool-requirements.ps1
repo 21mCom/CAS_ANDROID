@@ -51,11 +51,18 @@ function Get-ToolRequirements {
         # here — occurrences outnumber canonical matches — and the Bash
         # harness mirrors this with an explicit duplicate-key count, so both
         # sides fail closed on that class.
+        # The patterns use horizontal whitespace ONLY ([ \t], with an optional
+        # trailing CR for CRLF line endings): \s would match a newline, so a
+        # declaration reformatted with a line break after a field's colon
+        # ("apiLevel":\n 35) would pass here while the harness's single-line
+        # sed extraction rejects it — the same workstation-passes/field-fails
+        # drift class. Keeping the guard horizontal-only makes both sides
+        # reject that shape identically.
         $canonicalFields = @(
-            @{ Key = 'minimumMajor';      Pattern = '(?m)^\s*"minimumMajor"\s*:\s*\d+\s*,?\s*$' }
-            @{ Key = 'apiLevel';          Pattern = '(?m)^\s*"apiLevel"\s*:\s*\d+\s*,?\s*$' }
-            @{ Key = 'platform';          Pattern = '(?m)^\s*"platform"\s*:\s*"android-\d+"\s*,?\s*$' }
-            @{ Key = 'buildToolsMinimum'; Pattern = '(?m)^\s*"buildToolsMinimum"\s*:\s*"[^"]+"\s*,?\s*$' }
+            @{ Key = 'minimumMajor';      Pattern = '(?m)^[ \t]*"minimumMajor"[ \t]*:[ \t]*\d+[ \t]*,?[ \t]*\r?$' }
+            @{ Key = 'apiLevel';          Pattern = '(?m)^[ \t]*"apiLevel"[ \t]*:[ \t]*\d+[ \t]*,?[ \t]*\r?$' }
+            @{ Key = 'platform';          Pattern = '(?m)^[ \t]*"platform"[ \t]*:[ \t]*"android-\d+"[ \t]*,?[ \t]*\r?$' }
+            @{ Key = 'buildToolsMinimum'; Pattern = '(?m)^[ \t]*"buildToolsMinimum"[ \t]*:[ \t]*"[^"\r\n]+"[ \t]*,?[ \t]*\r?$' }
         )
         foreach ($field in $canonicalFields) {
             $occurrences = [regex]::Matches($raw, '"' + $field.Key + '"').Count

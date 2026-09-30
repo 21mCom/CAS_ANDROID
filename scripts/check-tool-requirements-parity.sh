@@ -41,7 +41,12 @@ set -euo pipefail
 # value to the Bash harness's sed extraction (which would accept it) while the
 # PowerShell parser's occurrence-vs-canonical guard rejects it. The deliberate
 # verdict is fail-closed REJECT on both sides, so the Bash harness carries an
-# explicit duplicate-key count. The remaining "invalid" fixtures use the
+# explicit duplicate-key count. newline-after-colon.json is the same
+# workstation-passes/field-fails drift class in the other direction of
+# tolerance: a line break after a field's colon ("apiLevel":\n 35) matched the
+# PowerShell guard's \s* patterns but not the single-line sed extraction, so
+# the guard now uses horizontal-whitespace-only patterns and both sides
+# reject it. The remaining "invalid" fixtures use the
 # canonical shape and are invalid in ways both validators are expected to
 # catch.
 #
@@ -96,6 +101,11 @@ readonly FIXTURES=(
     # guard rejects it (2 occurrences, 1 canonical match); the Bash harness
     # rejects it with an explicit duplicate-key count.
     "duplicate-key.json|reject"
+    # A line break after a field's colon ("apiLevel":\n 35) is valid JSON the
+    # PowerShell guard used to accept (\s* matched the newline) while the
+    # sed extraction rejected it. The guard's horizontal-whitespace-only
+    # patterns now reject it too.
+    "newline-after-colon.json|reject"
     "|reject"
 )
 readonly MISSING_FILE_PATH="$FIXTURE_DIR/no-such-declaration.json"

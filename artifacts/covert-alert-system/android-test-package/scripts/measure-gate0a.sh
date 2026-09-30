@@ -189,6 +189,10 @@ load_pinned_device_constants() {
     # PowerShell parser's occurrence-vs-canonical guard and fails closed on
     # the same class; a wholly absent field falls through to the empty-
     # extraction rejections, exactly as the parser's plausibility checks do.
+    # A line break after a field's colon ("apiLevel":\n 35) needs no handling
+    # here — the single-line sed extractions cannot match it — but the
+    # PowerShell parser's \s* patterns once did, so its canonical-shape guard
+    # is deliberately horizontal-whitespace-only to reject it identically.
     [[ -f "$TOOL_REQUIREMENTS_JSON" ]] ||
         die "tool-requirements.json is missing at $TOOL_REQUIREMENTS_JSON; restore the complete, unmodified test kit before running this harness."
     local declared_api declared_platform_api declared_jdk_major declared_build_tools

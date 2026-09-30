@@ -33,10 +33,12 @@ mechanics included — on 2026-09-27, so it can be trusted as a gate).
   guard in the PowerShell parser must let a wholly absent field fall through
   to the plausibility checks (rather than rejecting it itself), or that
   negative step stops going red.
-- Known residual gap (from completion review): the PowerShell guard's `\s*`
-  matches newlines, so a newline-after-colon reformat passes PowerShell but
-  fails the sed parse. Fix = horizontal-whitespace-only patterns (mind CRLF)
-  plus a rejecting fixture.
+- Any regex added to the PowerShell canonical-shape guard must use
+  horizontal-whitespace-only classes (`[ \t]`, optional trailing `\r` for
+  CRLF) — `\s` matches newlines, which reopens a one-sided accept the
+  single-line sed parse can never produce. The parity fixture set pins the
+  newline-after-colon verdict; extend the set whenever a new reformat class
+  is found.
 - The parity script needs one pwsh invocation (use `PARITY_PWSH` locally); it
   extracts `load_pinned_device_constants` from the harness the same way the
   hardware-fixture generator extracts `write_report`, so keep both extraction
