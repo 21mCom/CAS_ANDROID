@@ -34,6 +34,7 @@
 - [CI gate red-proof technique](ci-red-proof-technique.md) — throwaway branch from the workspace tip (remote main may lack the job while diverged), push break + revert immediately for parallel runs, keep job logs as evidence, delete branch after.
 - [CAS console read posture](cas-console-read-posture.md) — console GETs are credentialed like mutations; anonymous reads were retired for self-hosting (healthz stays open).
 - [CAS console load-failure routing](cas-console-load-failure-routing.md) — load failures route to mismatch / credential-lock / labeled-offline-demo; a cancelled prompt must never show the demo seed.
+- [Test bursts email real responders](cas-test-burst-real-email.md) — live SMTP secrets make any incident-creating process email real responders; env recipient lists are delivery fallback only, never seeded into cas_responders.
 - [Fix a risk class at a shared boundary](fix-risk-class-at-shared-boundary.md) — enumerate every caller of the underlying primitive; page-level catches bypass provider-level handling and review rejects partial coverage.
 - [CAS revocation fallback gap](cas-revocation-fallback-gap.md) — closed server-side: the shared device token is retired once any credential row exists, so a revoked handset cannot resume with it.
 - [Runbook alert recipes coupled to log keys](cas-runbook-log-key-coupling.md) — runbook grep recipes match literal log keys; a drift gate must isolate the *watchdog* grep, not pool all greps in the section.

@@ -110,22 +110,25 @@ test("config routes reject unauthenticated requests", async () => {
   assert.equal(response.status, 401);
 });
 
+// Reading the responder circle must NEVER copy the CAS_*_RECIPIENTS
+// environment lists into cas_responders: an earlier first-read seed created
+// ENABLED rows holding real addresses without any operator action, so every
+// incident (test or real) delivered to them. The env lists are a
+// delivery-time fallback only; rows appear only via an authenticated POST.
 test("responder reads never seed rows from the environment recipient lists", async () => {
-  // The CAS_*_RECIPIENTS lists are a delivery-time fallback only. An earlier
-  // first-read seed silently created ENABLED rows holding real addresses, so
-  // every incident (test or real) delivered to them; reads must stay
-  // side-effect free and the `seeded` flag stays false.
+  // This suite's env configures SMS and XMPP recipient lists
+  // (CAS_SMS_RECIPIENTS / CAS_XMPP_RECIPIENTS above); with the retired seed,
+  // these reads would have created enabled rows from them.
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await api("/cas/config/responders");
     assert.equal(response.status, 200);
-    const body = (await response.json()) as {
-      seeded: boolean;
-      responders: Array<{ id: string }>;
-    };
+    const body = (await response.json()) as { seeded: boolean; responders: unknown[] };
     assert.equal(body.seeded, false, "first-read env seeding is retired");
-    assert.equal(body.responders.length, 0, "reads must not create responder rows");
+    assert.equal(body.responders.length, 0, "env recipient lists must not become responder rows");
   }
+
   const rows = await db.select({ id: casResponders.id }).from(casResponders);
+  assert.equal(rows.length, 0, "the responder table stays empty until an operator POSTs");
   assert.deepEqual(
     rows.filter((row) => row.id.startsWith("seed-")),
     [],
