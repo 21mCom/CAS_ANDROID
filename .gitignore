@@ -75,3 +75,10 @@ scripts/.cache/
 # Playwright output from the console browser-proof harness (local runs)
 /artifacts/covert-alert-system/test-results/
 /artifacts/covert-alert-system/playwright-report/
+
+# Field release signing key — key material lives only in the workspace secrets
+# CAS_RELEASE_KEYSTORE_B64 / CAS_RELEASE_KEYSTORE_PASSWORD (see
+# HANDOFF-TEST-KIT.md T1). Never commit a keystore or a staging copy of one.
+*.keystore
+*.jks
+/artifacts/covert-alert-system/android-test-package/signing/staging/
