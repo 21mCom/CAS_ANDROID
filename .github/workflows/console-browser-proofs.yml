@@ -1,0 +1,75 @@
+name: Console browser proofs
+
+# Runs the committed real-browser console proofs
+# (artifacts/covert-alert-system/e2e/*.spec.ts) against a disposable
+# PostgreSQL + api-server + built console, so a change that breaks the
+# operator-facing lock surfaces (first-load, drift, mid-session revocation)
+# cannot merge green. The first committed proof is the mid-session
+# credential-revocation lock; earlier console browser proofs were one-off
+# sessions and are being committed alongside this harness.
+on:
+  push:
+    paths:
+      - "artifacts/covert-alert-system/**"
+      - "artifacts/api-server/**"
+      - "lib/db/**"
+      - "scripts/run-console-browser-proof.mjs"
+      - "scripts/disposable-review-database.mjs"
+      - ".github/workflows/console-browser-proofs.yml"
+  pull_request:
+    paths:
+      - "artifacts/covert-alert-system/**"
+      - "artifacts/api-server/**"
+      - "lib/db/**"
+      - "scripts/run-console-browser-proof.mjs"
+      - "scripts/disposable-review-database.mjs"
+      - ".github/workflows/console-browser-proofs.yml"
+
+jobs:
+  console-browser-proofs:
+    name: Prove the mid-session credential lock in a real browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Put the preinstalled PostgreSQL server binaries on PATH
+        run: |
+          set -euo pipefail
+          # Same disposable-cluster pattern as the api-server route-tests job:
+          # the harness bootstraps its own throwaway cluster via
+          # scripts/disposable-review-database.mjs, which needs initdb, pg_ctl,
+          # createdb, and psql. ubuntu-latest ships PostgreSQL but keeps the
+          # server binaries off PATH, so expose them here.
+          pgbin="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          if [ ! -x "$pgbin/initdb" ]; then
+            echo "::error::No initdb found under /usr/lib/postgresql — runner image changed?"
+            exit 1
+          fi
+          echo "$pgbin" >> "$GITHUB_PATH"
+          echo "Using PostgreSQL binaries from $pgbin"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --filter @workspace/api-server... --filter @workspace/covert-alert-system...
+
+      - name: Install the Playwright chromium browser
+        run: pnpm --filter @workspace/covert-alert-system exec playwright install --with-deps chromium
+
+      - name: Run the console browser proofs
+        # Provisions the disposable cluster, pushes the drizzle schema, seeds
+        # one incident row directly (never via the trigger endpoint, so no
+        # alert delivery can fire), boots api + console, drives the browser,
+        # and tears everything down.
+        run: node scripts/run-console-browser-proof.mjs

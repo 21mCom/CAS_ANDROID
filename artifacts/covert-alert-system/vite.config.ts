@@ -27,6 +27,15 @@ if (!basePath) {
   );
 }
 
+// Real-browser proof harness (scripts/run-console-browser-proof.mjs) only:
+// when CAS_E2E_API_ORIGIN is set, route /api to the harness's api-server so
+// the built console can be exercised outside the platform's path-based
+// routing. Unset everywhere else, so dev and preview behavior is unchanged.
+const e2eApiOrigin = process.env.CAS_E2E_API_ORIGIN;
+const e2eProxy = e2eApiOrigin
+  ? { '/api': { target: e2eApiOrigin, changeOrigin: true } }
+  : undefined;
+
 export default defineConfig({
   base: basePath,
   plugins: [
@@ -72,10 +81,12 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    ...(e2eProxy ? { proxy: e2eProxy } : {}),
   },
   preview: {
     port,
     host: '0.0.0.0',
     allowedHosts: true,
+    ...(e2eProxy ? { proxy: e2eProxy } : {}),
   },
 });
