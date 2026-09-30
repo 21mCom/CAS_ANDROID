@@ -52,3 +52,4 @@
 - [Async finalize vs summary status races](cas-status-line-finalize-races.md) — check-and-post of final-vs-interim status must be one UI-thread op; invalidate attempt ownership on every tap, incl. preflight early-returns.
 - [CI adbd post-reboot disconnect flake](ci-adbd-post-reboot-flake.md) — adb root after an emulator reboot needs a bounded retry; the fake-adb harness models the closed-connection window.
 - [Spawned-server log assertions](cas-spawned-server-log-assertions.md) — pino-pretty's async transport means child-process log assertions must poll with a deadline; boot proofs must strip test-harness markers or index.ts disables the probe worker.
+- [uiautomator harness lessons](uiautomator-harness-lessons.md) — Button labels dump as ALL-CAPS; dumps show only the visible viewport; input swipe always flings → sweep-with-reversal + digest logging.

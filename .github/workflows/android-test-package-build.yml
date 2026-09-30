@@ -11,6 +11,8 @@ on:
       - ".github/scripts/verify-sms-flow.sh"
       - ".github/scripts/verify-receipt-durability-kill.sh"
       - ".github/scripts/verify-pushless-capture-flow.sh"
+      - ".github/scripts/verify-send-outcome-line.sh"
+      - ".github/scripts/hold_connection_server.py"
       - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
@@ -33,6 +35,8 @@ on:
       - ".github/scripts/verify-sms-flow.sh"
       - ".github/scripts/verify-receipt-durability-kill.sh"
       - ".github/scripts/verify-pushless-capture-flow.sh"
+      - ".github/scripts/verify-send-outcome-line.sh"
+      - ".github/scripts/hold_connection_server.py"
       - ".github/scripts/cas-receipt-gate-proxy.py"
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
@@ -735,3 +739,52 @@ jobs:
           # on ubuntu-latest), so the committed harness owns its own strict
           # mode and wires adb reverse itself.
           script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-pushless-capture-flow.sh
+
+  send-outcome-line-test:
+    name: Tap Send MVP alert and assert the inline NOT_SENT/FAILED/'Already sending' outcome line
+    needs: assemble-debug
+    # ubuntu-latest for the same reason as the sibling emulator jobs: macOS
+    # runners have no nested virtualization and the emulator dies with
+    # "HVF error: HV_UNSUPPORTED"; Linux exposes KVM.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read tool requirements
+        id: tool-requirements
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: |
+          set -euo pipefail
+          # Same source of truth as the assemble job and the Windows preflight.
+          echo "api-level=$(jq -er '.androidSdk.apiLevel' tool-requirements.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: gate0a-app-debug-apk
+          path: apk
+
+      - name: Boot emulator, tap Send in NOT_SENT/FAILED/double-tap configurations, assert the inline outcome line
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ steps.tool-requirements.outputs.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # Same single-line, dash-safe pattern as the sibling emulator jobs:
+          # the committed harness owns its strict mode, its run-as preference
+          # seeding, and the hold-connection server behind adb reverse.
+          script: bash .github/scripts/verify-send-outcome-line.sh

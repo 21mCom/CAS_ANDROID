@@ -298,6 +298,43 @@ supported` for every send) cannot complete the SENT leg — the harness fails
 there loudly, as designed. Use CI or a workstation whose emulator has a
 working fake modem for the full pass.
 
+## CI: Send-button outcome line on the emulator
+
+The `send-outcome-line-test` job in
+`.github/workflows/android-test-package-build.yml` proves the inline
+SENT/FAILED/NOT_SENT line under the "Send MVP alert now" button actually
+appears when the button is tapped — a refactor that broke the status line,
+or re-introduced a stuck in-flight guard, fails the job. It runs
+`.github/scripts/verify-send-outcome-line.sh`, which drives the UI with
+uiautomator dumps and `input tap` (configuration is seeded into the app's
+SharedPreferences via `run-as` while force-stopped, the same mechanism the
+kill/pushless harnesses use, so the only UI interaction under test is the
+Send tap itself). Four phases:
+
+1. **NOT_SENT, nothing configured** — fresh install, tap Send, expect
+   `NOT_SENT: no responder numbers configured …`.
+2. **NOT_SENT, no SMS permission** — a responder is seeded but SEND_SMS is
+   not granted; tap Send, deny the system permission prompt, expect
+   `NOT_SENT: SMS permission not granted …`.
+3. **FAILED, unreachable server** — URL + enrollment credential point at a
+   closed loopback port; tap Send, expect `FAILED: …` with the handset-SMS
+   fallback line.
+4. **Double-tap guard** — the URL points at a loopback port whose server
+   accepts and never answers (`.github/scripts/hold_connection_server.py`
+   behind `adb reverse`), keeping the attempt in flight for its 10s read
+   timeout. A second tap must show `Already sending — wait for the current
+   attempt to finish`, the journal must record exactly one
+   `MVP_ALERT_ATTEMPT` (the guarded tap started none), and the line must
+   settle to `FAILED` — proving the guard released rather than sticking.
+
+Each phase asserts the outcome text and the Send button appear in the same
+UI dump (inline, no scrolling) and that the on-device journal recorded the
+matching `MVP_ALERT_OUTCOME`. The emulator's modem never registers, so the
+SENT-via-SMS line stays a hardware/console proof; everything that does not
+need a radio is gated here. The harness works against any ADB-attached
+emulator or device with a debuggable build installed:
+`CAS_OUTCOME_APK=path/to/app-debug.apk bash .github/scripts/verify-send-outcome-line.sh`.
+
 ## Windows workstation preflight
 
 Use the Windows entry point before building or running the disposable package.

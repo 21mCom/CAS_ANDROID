@@ -19,6 +19,7 @@ A full Android emulator CAN run in this workspace. Durable constraints:
 - **TCG codec readiness flakes:** `MediaRecorder: prepare failed` with `MediaRecorderService: OMX service is not available` in logcat is a transient emulator condition (intermittent, ~every other run under TCG), not a product bug. Any capture gate must retry once before going red.
 - **Reused-device journals are stale:** a smoke gate polling a device journal must wipe app state (`pm clear`) before EACH attempt, or it judges the previous run's events — a false-green hole on any non-fresh device.
 - **`pkill -f emulator` self-kills:** the wrapper shell's own command line contains the pattern, so pkill kills the calling task. Kill by exact process name or PID instead.
+- **UI driving is NOT viable on the TCG workspace emulator:** `uiautomator dump` takes minutes under TCG, the uiautomator process gets SIGKILLed device-side under load, and the Pixel Launcher ANR-loops over the app. Every existing harness avoids UI interaction (am start / broadcasts / journal polling) — that is why. Validate UI-driving harnesses (e.g. verify-send-outcome-line.sh) on a CI scratch branch instead (KVM: dumps ~1s); see ui-automator-harness-lessons.md.
 
 **Why:** these were each multi-hour dead ends; the recipe is reusable for any future Android verification task.
 
