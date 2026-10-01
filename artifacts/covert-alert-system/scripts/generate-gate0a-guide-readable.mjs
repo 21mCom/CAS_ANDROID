@@ -255,7 +255,7 @@ bash scripts/measure-gate0a.sh --target physical \
     <li>On the Pixel’s <strong>CAS Pixel Gate 0A</strong> screen, press <strong>Copy JSON report</strong>. The app copies the current device-local report to the Android clipboard.</li>
     <li>Prefer the workstation-generated <code>gate0a-results/.../report.json</code>. The in-app clipboard report is a secondary device-local record.</li>
     <li>Keep the entire result directory, matching Windows preflight JSON/Markdown, printed guide, observer notes, and any NO-GO reason together.</li>
-    <li>In the CAS console, open <strong>Feasibility gates</strong>. Choose the workstation-generated <code>report.json</code> and press <strong>Validate &amp; import report</strong>.</li>
+    <li>In the CAS console, open <strong>Readiness checks</strong>. Choose the workstation-generated <code>report.json</code> and press <strong>Validate &amp; import report</strong>.</li>
   </ol>
 
   <div class="box green avoid">
