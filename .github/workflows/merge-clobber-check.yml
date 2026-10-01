@@ -1,0 +1,103 @@
+name: Silently-reverted-work sweep
+
+# Runs scripts/check-merge-clobber.mjs against the full git history so a push
+# built from a stale snapshot — one that silently re-imposes an old file over a
+# concurrent task's newer work — fails CI even when no workspace merge follows
+# to trip the post-merge sweep. See .agents/memory/concurrent-task-merge-clobber.md
+# for the failure pattern this guards against.
+#
+# No path filter on purpose: the findings depend on the whole history, so every
+# push/PR to main must re-run the sweep regardless of which files it touched.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  merge-clobber:
+    name: Fail when recent history shows silently reverted work
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository with full history
+        uses: actions/checkout@v4
+        with:
+          # The sweep walks recent commits (blob timelines, git log -S traces);
+          # a shallow checkout would silently scan nothing.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: The sweep passes on the real history
+        # Zero-dependency script: no pnpm install needed. Exits 1 on any
+        # unexcluded finding; deliberate reverts carry [no-clobber-check] in
+        # the commit message or an entry in scripts/merge-clobber-allowlist.json.
+        run: |
+          set -euo pipefail
+          node scripts/check-merge-clobber.mjs --window 60
+
+      - name: An unmarked stale-snapshot reversion must turn the sweep red
+        # Negative test: fabricate the exact failure pattern in the local
+        # checkout — file blob goes A -> B -> A across three commits, the
+        # signature of a stale snapshot re-imposing old content over a
+        # concurrent change — and require the sweep to exit 1 naming it.
+        # The commits stay local to the runner; nothing is pushed.
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse HEAD)"
+          trap 'git reset --hard -q "$base"' EXIT
+          git config user.email "ci@example.invalid"
+          git config user.name "merge-clobber CI negative test"
+          f="scripts/.merge-clobber-negative-test.txt"
+          printf 'baseline content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test base content"
+          printf 'concurrent newer content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test concurrent change"
+          printf 'baseline content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test stale snapshot restores baseline"
+          set +e
+          output="$(node scripts/check-merge-clobber.mjs --window 10 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $rc -eq 0 ]]; then
+            echo "The sweep accepted a stale-snapshot A->B->A reversion." >&2
+            exit 1
+          fi
+          grep -q "RESULT: FINDINGS" <<<"$output" || {
+            echo "The sweep failed without reporting the reversion finding." >&2
+            exit 1
+          }
+          echo "An unmarked stale-snapshot reversion turned the sweep red, as required."
+
+      - name: A [no-clobber-check] marked reversion must stay green
+        # Negative test for the escape hatch: the same A -> B -> A pattern,
+        # but the reverting commit carries the marker, so the sweep must
+        # exclude it and exit 0. This keeps CI-only break/revert proof
+        # branches mergeable without drowning real findings in noise.
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse HEAD)"
+          trap 'git reset --hard -q "$base"' EXIT
+          git config user.email "ci@example.invalid"
+          git config user.name "merge-clobber CI negative test"
+          f="scripts/.merge-clobber-negative-test.txt"
+          printf 'baseline content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test base content"
+          printf 'concurrent newer content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test concurrent change"
+          printf 'baseline content\n' > "$f"
+          git add "$f"
+          git commit -q -m "negative-test deliberate revert [no-clobber-check]"
+          node scripts/check-merge-clobber.mjs --window 10
+          echo "A [no-clobber-check] marked reversion stayed green, as required."
