@@ -269,6 +269,19 @@ class MainActivity : Activity() {
             TestStore.record(this, "DEBUG_JOURNAL_COPIED")
             refreshReport()
         })
+        root.addView(button("Copy recent alert/SMS events (small paste)") {
+            // Field pastes of the FULL journal above truncate mid-stream in
+            // chats/reports because the journal is dominated by proxy/boot
+            // noise — the first Human-Sheet-1 failure report arrived without
+            // a single SMS event. This export keeps only the alert-send and
+            // incident-relevant families, bounded to the most recent matches,
+            // so the decisive events survive the paste. Same
+            // cas-debug-journal-v1 envelope — still NOT a Gate 0A report.
+            val clipboard = getSystemService<ClipboardManager>()
+            clipboard?.setPrimaryClip(ClipData.newPlainText("CAS debug journal (filtered)", buildFilteredDebugJournal().toString(2)))
+            TestStore.record(this, "DEBUG_JOURNAL_COPIED", mapOf("variant" to "filtered-alert-sms"))
+            refreshReport()
+        })
         root.addView(button("Clear local test journal") {
             TestStore.clear(this)
             refreshReport()
@@ -874,12 +887,37 @@ class MainActivity : Activity() {
     private fun buildDebugJournal(): JSONObject {
         val events = TestStore.events(this)
         return JSONObject()
-            .put("schema", "cas-debug-journal-v1")
-            .put("reportType", "debug-journal")
-            .put("note", "Raw on-device journal for field debugging (alert sends, SMS radio results, capture events). NOT a Gate 0A report — do not import it as one.")
+            .put("schema", DebugJournalExport.SCHEMA)
+            .put("reportType", DebugJournalExport.REPORT_TYPE)
+            .put("note", DebugJournalExport.FULL_NOTE)
             .put("exportedAtUtc", java.time.Instant.now().toString())
             .put("eventCount", events.length())
             .put("events", events)
+    }
+
+    /**
+     * Filtered, bounded variant of the debug journal for field pastes: only
+     * the alert-send and incident-relevant event families (see
+     * DebugJournalExport), most recent matches first kept, so the paste fits
+     * in a chat without losing the SMS events to proxy/boot noise. Same
+     * cas-debug-journal-v1 envelope as the full export.
+     */
+    private fun buildFilteredDebugJournal(): JSONObject {
+        val all = TestStore.events(this)
+        val types = (0 until all.length()).map { all.getJSONObject(it).optString("type", "") }
+        val kept = JSONArray()
+        for (index in DebugJournalExport.filteredIndices(types)) {
+            kept.put(all.getJSONObject(index))
+        }
+        return JSONObject()
+            .put("schema", DebugJournalExport.SCHEMA)
+            .put("reportType", DebugJournalExport.REPORT_TYPE)
+            .put("note", DebugJournalExport.FILTERED_NOTE)
+            .put("exportedAtUtc", java.time.Instant.now().toString())
+            .put("filtered", true)
+            .put("totalEventCount", all.length())
+            .put("eventCount", kept.length())
+            .put("events", kept)
     }
 
     private fun gate0aEventsOnly(events: JSONArray): JSONArray {
