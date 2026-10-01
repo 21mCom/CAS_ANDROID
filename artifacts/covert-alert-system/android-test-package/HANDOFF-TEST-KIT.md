@@ -202,9 +202,14 @@ Same shape as T6/T7 — WhatsApp is a server-side channel now:
 ```powershell
 Clear-CasProviderInbox
 Invoke-CasTrigger          # note the incident id
-Watch-CasOutbox -IncidentId <id>
+Watch-CasOutbox -IncidentId <id> -Transport WHATSAPP
 Get-CasProviderInbox
 ```
+
+`-Transport WHATSAPP` keeps the watch on the server-side item only: the
+trigger also queues the handset's SMS item, and with no phone polling in an
+API-only drill it stays `QUEUED`, so an unfiltered watch would burn its whole
+timeout and warn even on a pass.
 
 Pass: the incident's WHATSAPP item turns `SENT` within ~15 s (one worker
 tick), and the inbox shows a Cloud-API-shaped message
@@ -233,7 +238,7 @@ never treat WhatsApp as something the phone delivers.
 ```powershell
 Clear-CasProviderInbox
 Invoke-CasTrigger          # note the incident id
-Watch-CasOutbox -IncidentId <id>
+Watch-CasOutbox -IncidentId <id> -Transport XMPP
 Get-CasProviderInbox
 ```
 
@@ -243,7 +248,8 @@ and the inbox shows a `chat` stanza whose `stanzaId` equals the
 
 ## T7 — Email through the provider sink (API only)
 
-Same as T6. Pass: EMAIL item → `SENT`; inbox entry carries
+Same as T6, watching the EMAIL item (`Watch-CasOutbox -IncidentId <id>
+-Transport EMAIL`). Pass: EMAIL item → `SENT`; inbox entry carries
 `to`, `from`, `subject` = `CAS P1 alert <incident id>`, and the alert body.
 
 **Expected labeling for T4/T6/T7:** because these drills deliver to the
@@ -273,7 +279,7 @@ provider sink.
 
    ```powershell
    Invoke-CasTrigger          # note the incident id
-   Watch-CasOutbox -IncidentId <id> -TimeoutSeconds 600
+   Watch-CasOutbox -IncidentId <id> -Transport EMAIL -TimeoutSeconds 600
    ```
 
 3. Pass — the failure is loud and named:
@@ -293,7 +299,7 @@ provider sink.
 
    ```powershell
    Invoke-CasRequeue -OutboxItemId '<incidentId>-email'
-   Watch-CasOutbox -IncidentId <id>
+   Watch-CasOutbox -IncidentId <id> -Transport EMAIL
    ```
 
    (The console's **Re-queue** button on the EMAIL chip does the same.)

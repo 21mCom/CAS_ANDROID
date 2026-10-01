@@ -143,9 +143,15 @@ function Clear-CasProviderInbox {
 
 function Watch-CasOutbox {
   # Polls an incident's outbox until every item is terminal or time runs out.
+  # With -Transport, only that channel's item counts toward completion — use
+  # it for the API-only sink drills (T4/T6/T7), where the trigger also queues
+  # the handset's SMS item and, with no phone polling, that item stays QUEUED
+  # forever, so an unfiltered watch always burns the full timeout and warns
+  # even though the drill passed.
   param(
     [Parameter(Mandatory = $true)][string]$IncidentId,
-    [int]$TimeoutSeconds = 30
+    [int]$TimeoutSeconds = 30,
+    [ValidateSet('SMS', 'WHATSAPP', 'XMPP', 'EMAIL')][string]$Transport
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
@@ -154,8 +160,14 @@ function Watch-CasOutbox {
       Write-Host "incident $IncidentId is no longer active"
       return $incident
     }
-    $pending = @($incident.outbox | Where-Object { -not $_.terminal })
-    $incident.outbox | ForEach-Object { Write-Host ("  {0}: {1} (attempts {2})" -f $_.transport, $_.state, $_.attempts) }
+    $items = @($incident.outbox)
+    if ($Transport) { $items = @($items | Where-Object { $_.transport -eq $Transport }) }
+    if ($Transport -and $items.Count -eq 0) {
+      Write-Warning "incident $IncidentId has no $Transport outbox item to watch"
+      return $incident
+    }
+    $pending = @($items | Where-Object { -not $_.terminal })
+    $items | ForEach-Object { Write-Host ("  {0}: {1} (attempts {2})" -f $_.transport, $_.state, $_.attempts) }
     if ($pending.Count -eq 0) { return $incident }
     Start-Sleep -Seconds 3
     Write-Host '---'
