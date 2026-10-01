@@ -6,6 +6,7 @@ import { logCasAuthBurst, setCasAuthBurstRecorder } from "./lib/cas-auth";
 import { deviceAccessToken, deviceChannels, smsDeliveryMode } from "./lib/cas-device-delivery";
 import { testHarnessDeliveryForced } from "./lib/delivery-providers";
 import { logger } from "./lib/logger";
+import { ensureCasDatabaseSchema } from "./lib/db-schema-ensure";
 
 const rawPort = process.env["PORT"];
 
@@ -26,6 +27,19 @@ if (Number.isNaN(port) || port <= 0) {
 // Unset keeps the platform default (all interfaces), which the Replit
 // workspace preview needs.
 const host = process.env["HOST"]?.trim() || undefined;
+
+// Apply the committed drizzle migrations before accepting traffic: a fresh
+// production database (Replit "Create production database", or a new
+// self-hosted cluster) becomes fully usable with no manual schema step. This
+// is a no-op on an up-to-date database and only runs under
+// NODE_ENV=production. A failure here means the code and the schema disagree,
+// so boot aborts loudly instead of serving broken reads and writes.
+try {
+  await ensureCasDatabaseSchema();
+} catch (err) {
+  logger.fatal({ err }, "Database schema ensure failed; refusing to boot");
+  process.exit(1);
+}
 
 const onListen = (err?: Error) => {
   if (err) {

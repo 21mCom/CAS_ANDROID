@@ -34,7 +34,8 @@ pnpm --filter @workspace/scripts run rehearse:publish-readiness
 ```
 
 Builds the exact production bundles, boots them against a throwaway database,
-and proves the whole contract below (health check open, everything else 401
+and proves the whole contract below (boot applies the schema to a brand-new
+empty database with no manual step, health check open, everything else 401
 anonymous, enroll → read → revoke → locked, update endpoints 404 until the
 first APK is published, dev sink absent, Canvas not deployed). Safe to run
 anytime: the database is disposable and all provider/SMTP variables are
@@ -112,34 +113,35 @@ provisions a managed PostgreSQL database for the deployment and injects
 development database only holds test incidents, and the console seeds its own
 readiness catalog on first load.
 
-## Step 4 — Push the schema
 
-The server boots fine before the schema exists (the rehearsal proves it), so
-publish first, then push the schema into the still-empty database. Copy the
-production connection string from the Database tool's production settings,
-then from the workspace shell:
+## Step 4 — Schema: nothing to do
 
-```bash
-DATABASE_URL="<production connection string>" \
-  pnpm --filter @workspace/db run push-force
-```
+There is no schema step. On every boot the server applies the committed
+drizzle migrations (`lib/db/drizzle`) to the database `DATABASE_URL` points
+at, so the empty production database from Step 3 becomes fully usable on
+first boot — the startup probe only goes green once the schema is in place.
 
-`push-force` is safe **only against the brand-new, empty database** — it
-auto-approves whatever the schema diff requires, including drops. No restart
-is needed afterwards.
+**Already published with the old manual push?** Boot adopts that database
+only if it still matches the current schema exactly: it stamps the committed
+migrations as applied (one-time warning in the deployment logs) and carries
+on. If the database has drifted from the current schema, boot refuses and
+the logs name the missing tables/columns plus the one-time reconcile: run
+`DATABASE_URL="<production connection string>" pnpm --filter @workspace/db run push`
+from a workspace shell (read the printed diff before accepting), then
+redeploy.
 
-**Later schema changes, once the database holds real incidents:** take a
-backup first (the Database tool's export, or `pg_dump` against the production
-connection string), then run the *unforced* push so you review the plan:
+**Later schema changes** ship the same way: the developer regenerates the
+migrations in the workspace (`pnpm --filter @workspace/db run generate`),
+reviews the SQL, and commits it with the code — a CI gate
+(`scripts/check-db-migrations-freshness.sh`) blocks any schema edit that
+forgets to regenerate. The next publish applies them at boot. If a migration
+is destructive, that decision is reviewed at generation time in the
+workspace, never auto-decided against the live database; take a backup first
+(the Database tool's export) when a migration drops something.
 
-```bash
-DATABASE_URL="<production connection string>" \
-  pnpm --filter @workspace/db run push
-```
-
-Read the printed diff and confirm nothing you care about is being dropped
-before accepting. Never run `push-force` against a database that holds real
-incident data.
+If schema apply ever fails, the server exits before answering its startup
+probe, so the deployment shows the failure instead of serving a broken
+console, and the deployment logs name the failing migration.
 
 ## Step 5 — Post-publish smoke checks
 
@@ -251,9 +253,10 @@ just that one credential from the console's device list instead of rotating.
 ## If the publish fails
 
 - **Startup probe failing:** check the deployment logs for a boot error; the
-  probe path is `/api/healthz` and must answer 200. A missing schema does not
-  block it — anything else (bad `CAS_SMS_DELIVERY_MODE` value, missing
-  `DATABASE_URL`) aborts boot loudly by design.
+  probe path is `/api/healthz` and must answer 200. Boot aborts loudly by
+  design on a bad `CAS_SMS_DELIVERY_MODE` value, a missing `DATABASE_URL`, or
+  a schema migration that fails to apply (Step 4 — the logs name the failing
+  migration).
 - **401 on the phone's first alert:** the alert credential field holds
   something other than the current `CAS_ALERT_TOKEN` deployment secret.
 - **Outbox rows stuck at `not-configured`:** expected until Step 2's optional

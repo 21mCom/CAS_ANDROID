@@ -14964,6 +14964,11 @@
       "path": ".replit",
       "by": "06db32c",
       "reason": "Deliberate restore of the Reserved VM deployment target: a36294d (\"Published your App\", an automatic publish commit) flipped deploymentTarget to cloudrun, which would let autoscale freeze the in-process outbox/email-probe workers and fails scripts/rehearse-publish-readiness.mjs's Reserved VM assertion. Restores acd5f30's reviewed vm blob verbatim, comment included."
+    },
+    {
+      "path": ".replit",
+      "by": "3a6c064",
+      "reason": "Deliberate restore of the committed Reserved VM publish target (deploymentTarget=vm): a36294d 'Published your App' was an environment-generated flip to cloudrun that breaks the always-on workers contract the publish rehearsal asserts."
     }
   ]
 }

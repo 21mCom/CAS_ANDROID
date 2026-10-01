@@ -71,13 +71,15 @@ Your database URL is then:
 postgresql://cas:<the-password-above>@127.0.0.1:5432/cas
 ```
 
-Create the tables (safe to re-run; it only applies what's missing):
-
-```bash
-cd /opt/cas/repo
-DATABASE_URL="postgresql://cas:<password>@127.0.0.1:5432/cas" \
-  pnpm --filter @workspace/db run push-force
-```
+There is no separate "create the tables" step: the service applies the
+committed drizzle migrations (`lib/db/drizzle`) to `DATABASE_URL` on every
+boot, so the first `systemctl start cas-api` in Step 6 creates everything.
+If you originally set the database up with an older revision of this guide
+(manual `drizzle-kit push`), the first boot adopts it if it still matches
+the current schema exactly (it stamps the committed migrations as applied);
+if it has drifted, boot refuses and `journalctl -u cas-api` names the
+missing tables/columns and the one-time reconcile (`DATABASE_URL=... pnpm
+--filter @workspace/db run push` from a checkout, review the diff, restart).
 
 ## Step 4 — Configure environment variables
 
@@ -563,10 +565,15 @@ pnpm install --frozen-lockfile
 pnpm --filter @workspace/api-server run build
 pnpm --filter @workspace/covert-alert-system run build
 set -a; source /etc/cas/cas.env; set +a   # readable because Step 4 put you in the cas group
-pnpm --filter @workspace/db run push-force   # applies any new tables/columns
-sudo systemctl restart cas-api
+sudo systemctl restart cas-api              # boot applies any new committed migrations (lib/db/drizzle)
 sudo systemctl reload caddy
 curl -s https://cas.example.org/api/healthz   # confirm it's back
+```
+
+Schema changes are applied by that restart — no manual push. The migrations
+that will run are committed in `lib/db/drizzle`, so review them (`git diff`
+on that directory) before restarting; if one drops something, take a
+`pg_dump` backup first.
 ```
 
 ## Publishing one-tap phone updates
@@ -618,6 +625,7 @@ the phone records `UPDATE_CHECK` / `UPDATE_DOWNLOAD` / `UPDATE_INSTALL`.
 | --- | --- |
 | `systemctl status cas-api` not running | `journalctl -u cas-api -n 100 --no-pager` — usually a missing/typo'd env var in `/etc/cas/cas.env` |
 | `DATABASE_URL must be set` at boot | The env file wasn't loaded; check `EnvironmentFile=` path and that the file exists |
+| Boot fails with `Database schema ensure failed` | `journalctl -u cas-api` names the failing migration — usually the `cas` role lacks rights on its own database, or `lib/db/drizzle` in the checkout predates the code |
 | Phone gets 401 on trigger | Credential revoked, mistyped, or never enrolled — re-do Step 7 |
 | Phone gets 503 on receipt/pickup | `CAS_DEVICE_TOKEN` unset in the env file; handset endpoints stay closed by design |
 | Console loads but shows nothing | First load prompts for the enrollment credential (`CAS_ALERT_TOKEN`) to enroll that browser — enter it once per browser |

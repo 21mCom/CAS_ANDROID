@@ -7,10 +7,12 @@
 //      sets NODE_ENV=production, the console ships as a static build, and the
 //      mockup Canvas has no production service (so /__mockup is never
 //      deployed).
-//   2. First-publish boot: the server answers its health check and rejects
-//      anonymous callers even BEFORE the schema exists, so a fresh
-//      "Create production database" deployment can go live and have its
-//      schema pushed afterwards without a restart.
+//   2. First-publish boot: against a brand-new, EMPTY database (what
+//      "Create production database" hands the deployment) the server applies
+//      the committed drizzle migrations itself at boot
+//      (artifacts/api-server/src/lib/db-schema-ensure.ts) — no
+//      workspace-shell schema step exists anymore — and a restart against
+//      the now-migrated database is a clean no-op.
 //   3. Credential gate: enrollment with the deployment's CAS_ALERT_TOKEN
 //      works, state reads need the enrolled credential, revocation locks the
 //      device from its next request, and the management/update endpoints
@@ -168,7 +170,7 @@ try {
     const apiOrigin = `http://127.0.0.1:${apiPort}`;
     const webOrigin = `http://127.0.0.1:${webPort}`;
 
-    const apiServer = spawn(
+    const spawnApiServer = () => spawn(
       "node",
       ["--enable-source-maps", "artifacts/api-server/dist/index.mjs"],
       {
@@ -217,27 +219,31 @@ try {
       },
     );
 
+    let apiServer = spawnApiServer();
     let webServer = null;
     try {
-      // First-publish posture: the production database exists but the schema
-      // has NOT been pushed yet. The deployment's startup probe and the
-      // anonymous lockout must already hold in this state.
-      await waitForHttpOk(`${apiOrigin}/api/healthz`, "api-server (pre-schema)");
-      check(true, "server boots against a schema-less production database (startup probe passes)");
+      // First-publish posture: the production database is brand-new and
+      // EMPTY — this rehearsal deliberately never runs a schema command, so
+      // the boot-time ensure alone must make the database usable.
+      await waitForHttpOk(`${apiOrigin}/api/healthz`, "api-server (fresh empty database)");
+      check(true, "server boots against a brand-new empty production database (startup probe passes)");
       await expectStatus(
-        "anonymous state read is rejected even before the schema exists",
+        "anonymous state read is rejected",
         `${apiOrigin}/api/cas/state`,
         401,
       );
 
-      // The documented operator step: push the schema into the running
-      // deployment's database; no restart needed.
-      run("pnpm", ["--filter", "@workspace/db", "run", "push-force"], { env: environment });
-      check(true, "schema push against the live production-mode database succeeds");
-      // drizzle-kit can briefly sever the server's pooled connections while it
-      // rewrites the schema; poll the health check instead of trusting the
-      // very next request to land.
-      await waitForHttpOk(`${apiOrigin}/api/healthz`, "api-server (post-schema-push)");
+      // Proof that boot itself applied the committed migrations — no
+      // workspace-shell step ran in this rehearsal.
+      const journal = run(
+        "psql",
+        [environment.DATABASE_URL, "-tAc", "SELECT COUNT(*) FROM drizzle.__drizzle_migrations"],
+        { env: environment, stdio: "pipe" },
+      );
+      check(
+        Number(journal.stdout.trim()) >= 1,
+        `boot applied the committed migrations to the empty database (journal holds ${journal.stdout.trim()} entries) — no manual schema step`,
+      );
 
       await expectStatus(
         "anonymous enrollment is rejected",
@@ -335,6 +341,20 @@ try {
         deviceAuth,
       );
 
+      // Redeploy posture: a restart against the now-migrated database must
+      // be a clean no-op (drizzle records applied migrations), not a second
+      // schema rewrite, and the lockout must survive it.
+      await stopProcess(apiServer, "api-server (first boot)");
+      apiServer = spawnApiServer();
+      await waitForHttpOk(`${apiOrigin}/api/healthz`, "api-server (restart)");
+      check(true, "restart against the migrated database boots cleanly (schema ensure is idempotent)");
+      await expectStatus(
+        "the revoked credential stays locked after the restart",
+        `${apiOrigin}/api/cas/state`,
+        401,
+        deviceAuth,
+      );
+
       // Console: the static production build serves at /, and /api through
       // the same origin (what the deployment router provides) reaches the API.
       webServer = spawn(
@@ -380,7 +400,8 @@ try {
 
 if (process.exitCode !== 1) {
   console.log(
-    `Publish-readiness rehearsal passed (${passed} checks): Reserved VM target, schema-less boot, ` +
-    "enrollment gate, revocation lockout, update-endpoint 404s, dev-sink lockdown, and console serving.",
+    `Publish-readiness rehearsal passed (${passed} checks): Reserved VM target, automatic schema ` +
+    "apply on a fresh database (no manual step) with an idempotent restart, enrollment gate, " +
+    "revocation lockout, update-endpoint 404s, dev-sink lockdown, and console serving.",
   );
 }

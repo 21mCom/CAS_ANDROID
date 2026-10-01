@@ -11,6 +11,9 @@ on:
       - "lib/api-spec/**"
       - "lib/api-zod/**"
       - "lib/db/**"
+      # The migration-freshness gate reads the committed drizzle migrations
+      # and this script; an edit to either must re-run the gate.
+      - "scripts/check-db-migrations-freshness.sh"
       - "scripts/run-cas-contract-tests.mjs"
       - "scripts/disposable-review-database.mjs"
       # The burst-alert log-key drift gate reads this script; an edit to it
@@ -32,6 +35,9 @@ on:
       - "lib/api-spec/**"
       - "lib/api-zod/**"
       - "lib/db/**"
+      # The migration-freshness gate reads the committed drizzle migrations
+      # and this script; an edit to either must re-run the gate.
+      - "scripts/check-db-migrations-freshness.sh"
       - "scripts/run-cas-contract-tests.mjs"
       - "scripts/disposable-review-database.mjs"
       # The burst-alert log-key drift gate reads this script; an edit to it
@@ -192,3 +198,60 @@ jobs:
             exit 1
           }
           echo "A removed watchdog grep turned the gate red, as required."
+
+  db-migrations-freshness:
+    name: Committed drizzle migrations must match the schema
+    # The api-server applies lib/db/drizzle at boot in production
+    # (src/lib/db-schema-ensure.ts). A schema edit without a regenerated,
+    # committed migration would deploy green while the live database silently
+    # keeps the old shape. This job runs the freshness gate and then proves a
+    # schema-only edit turns it red.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Committed migrations match the schema
+        run: |
+          set -euo pipefail
+          bash scripts/check-db-migrations-freshness.sh
+
+      - name: A schema-only edit must turn the gate red
+        run: |
+          set -euo pipefail
+          # Negative test: rename a column in the schema WITHOUT regenerating
+          # migrations, then require the gate to fail. Only the checkout is
+          # modified; the workflow restores the file afterwards.
+          schema="lib/db/src/schema/cas.ts"
+          grep -q 'text("label")' "$schema"
+          sed -i 's/text("label")/text("label_renamed")/' "$schema"
+          trap 'git checkout -- "$schema"' EXIT
+          set +e
+          output="$(bash scripts/check-db-migrations-freshness.sh 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $rc -eq 0 ]]; then
+            echo "The freshness gate accepted a schema edit with stale committed migrations." >&2
+            exit 1
+          fi
+          grep -q 'MIGRATIONS_FRESHNESS_FAILED' <<<"$output" || {
+            echo "The freshness gate failed without reporting the migrations drift." >&2
+            exit 1
+          }
+          echo "A schema-only edit turned the gate red, as required."

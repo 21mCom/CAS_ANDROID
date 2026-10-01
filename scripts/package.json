@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:merge-clobber": "node ./check-merge-clobber.mjs",
+    "check:db-migrations": "bash ./check-db-migrations-freshness.sh",
     "test:merge-clobber": "node ./test-check-merge-clobber.mjs",
     "rehearse:publish-readiness": "node ./rehearse-publish-readiness.mjs"
   },
