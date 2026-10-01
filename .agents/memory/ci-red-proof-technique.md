@@ -9,6 +9,7 @@ For "prove gate X turns red" tasks on 21mCom/CAS_ANDROID:
 - Push the break commit, then **push the revert immediately after** — the android-test-package-build workflow has no `concurrency:` group and no branch filter on `push:`, so the red and green runs proceed in parallel instead of serially (~halves wall time).
 - Poll `/actions/runs?branch=<branch>` and the run's `/jobs` for the specific job's conclusion; fetch the failing job's log via `/actions/jobs/<job_id>/logs` and keep a local copy under `.local/tasks/` as evidence (branch deletion makes the branch ref disappear but runs/logs persist).
 - Delete the throwaway branch with `DELETE /git/refs/heads/<branch>` (204) once both runs are captured.
+- Force-pushing the branch BACK to an ancestor commit (the break) does NOT trigger path-filtered workflows: the push adds zero new commits, so the changed-file list is empty and `on: push` + `paths:` workflows skip (unfiltered watchdog workflows still run). Red and green commits must both be NEW commits on top of the current tip — break commit, push, wait for the run to register, then revert commit, push.
 - Expect blast radius: an app-crash break (e.g. unguarded Firebase) fails EVERY launch-based emulator job in the run, not just the gate under test — judge the proof by the target job's own diagnostics.
 
 **Why:** First red-proof (unguarded FirebaseMessaging in CapturePush.syncRegistration, 2026-09-28) went red with the FATAL EXCEPTION stack pointing at the exact call site and green again after revert, in two parallel ~5-minute runs.

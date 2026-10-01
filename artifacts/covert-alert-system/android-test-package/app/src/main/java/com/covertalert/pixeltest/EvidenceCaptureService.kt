@@ -160,7 +160,7 @@ class EvidenceCaptureService : Service() {
     }
 
     private fun stage(incident: String, kind: String, started: Long, sequence: Int, requestId: String?, file: File, camera: String? = null) {
-        val sidecar = EvidenceUploader.enqueue(this, EvidenceUploader.Meta(incident, kind, started, sequence, requestId, camera), file.readBytes())
+        val sidecar = EvidenceUploader.enqueue(this, EvidenceUploadCore.Meta(incident, kind, started, sequence, requestId, camera), file.readBytes())
         // Upload errors cannot erase the durable pair or block the next clip.
         try { EvidenceUploader.upload(this, sidecar) } catch (error: Exception) {
             TestStore.record(this, "EVIDENCE_UPLOAD", mapOf("kind" to kind, "outcome" to "RETRY_LATER", "detail" to error.toString()))

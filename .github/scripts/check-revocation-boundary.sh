@@ -47,9 +47,29 @@ if printf '%s\n' "$clears" | grep -q 'MainActivity.kt'; then
 fi
 for site in $(printf '%s\n' "$clears" | grep 'setEnrolledDeviceToken(context, "")' | cut -d: -f1-2); do
   file="${site%:*}"; line="${site##*:}"
-  # Each clear site must sit next to a 401 (server rejection) check.
+  # Each clear site must sit next to a 401 (server rejection) check...
+  if sed -n "$((line > 12 ? line - 12 : 1)),$((line + 2))p" "$file" | grep -q '401'; then
+    continue
+  fi
+  # ...unless the site is EvidenceUploader's clearEnrolledDeviceToken
+  # override — a pure delegate whose ONLY caller is the 401-gated branch in
+  # the android-free EvidenceUploadCore, checked below.
+  if [ "$file" = "$APP_SRC/EvidenceUploader.kt" ] \
+    && sed -n "${line}p" "$file" | grep -q 'override fun clearEnrolledDeviceToken'; then
+    continue
+  fi
+  fail "$site clears the enrolled token without an adjacent 401 (server-rejection) check."
+done
+
+# 2b. Every clearEnrolledDeviceToken() CALL site (a decision point that
+#     reaches the adapter delegate) must sit next to a 401 check. The
+#     interface declaration and the overrides are definitions, not calls.
+clear_calls="$(grep -rn 'clearEnrolledDeviceToken()' "$APP_SRC" --include='*.kt' | grep -v 'fun clearEnrolledDeviceToken' || true)"
+for site in $(printf '%s\n' "$clear_calls" | cut -d: -f1-2); do
+  [ -n "$site" ] || continue
+  file="${site%:*}"; line="${site##*:}"
   if ! sed -n "$((line > 12 ? line - 12 : 1)),$((line + 2))p" "$file" | grep -q '401'; then
-    fail "$site clears the enrolled token without an adjacent 401 (server-rejection) check."
+    fail "$site calls clearEnrolledDeviceToken() without an adjacent 401 (server-rejection) check."
   fi
 done
 

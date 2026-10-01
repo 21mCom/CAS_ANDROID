@@ -17,6 +17,8 @@ on:
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      - "scripts/test-evidence-upload.sh"
+      - "scripts/evidence-upload/**"
       - "scripts/test-alert-location.sh"
       - "scripts/alert-location/**"
       - "scripts/test-update-check.sh"
@@ -41,6 +43,8 @@ on:
       - "artifacts/covert-alert-system/android-test-package/**"
       - "scripts/test-receipt-durability.sh"
       - "scripts/receipt-durability/**"
+      - "scripts/test-evidence-upload.sh"
+      - "scripts/evidence-upload/**"
       - "scripts/test-alert-location.sh"
       - "scripts/alert-location/**"
       - "scripts/test-update-check.sh"
@@ -70,6 +74,28 @@ jobs:
       # batch→receipt handoff survives process death at every boundary.
       - name: Run receipt durability harness
         run: scripts/test-receipt-durability.sh
+
+  evidence-upload:
+    name: Evidence upload staging harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Same pinned-toolchain pattern as the receipt durability harness;
+      # proves the evidence staging's temp+rename publish order, RETRY_LATER
+      # pair preservation, sidecar-first terminal deletes, and the
+      # exactly-once credential clear on a 401 without a device.
+      - name: Run evidence upload harness
+        run: scripts/test-evidence-upload.sh
 
   alert-location:
     name: Alert location harness (JVM, no emulator)
