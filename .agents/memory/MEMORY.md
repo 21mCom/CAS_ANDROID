@@ -55,5 +55,6 @@
 - [uiautomator harness lessons](uiautomator-harness-lessons.md) — Button labels dump as ALL-CAPS; dumps show only the visible viewport; input swipe always flings → sweep-with-reversal + digest logging.
 - [Operator guide packs](operator-guide-packs.md) — task plans name stale deliverable ZIP versions; operator docs must reference the newest ZIP in deliverables/, never the plan's literal.
 - [Editing .replit](dot-replit-edit-flow.md) — direct Edit is rejected; write the full TOML to a temp file and call verifyAndReplaceDotReplit.
+- [Publish rehearsal vs uncommitted .replit drift](publish-rehearsal-local-drift.md) — a Reserved VM check failure locally can be an uncommitted .replit flip; check git diff .replit before touching code.
 - [Replit deployment secret sync](replit-deployment-secret-sync.md) — deployments inherit workspace secrets automatically; quarantine live delivery secrets with blank overrides before first publish.
 - [CAS console sign-out seal](cas-console-signout-seal.md) — sign-out needs storage clear + shell unmount + auth-generation guard, or a held in-flight response re-opens the sealed console.
