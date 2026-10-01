@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { afterEach, test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DeviceListView, formatDeviceTimestamp } from '@/components/device-credentials';
+import {
+  DeviceListView,
+  formatDeviceTimestamp,
+  initialPanelCredentialState,
+  reducePanelCredential,
+} from '@/components/device-credentials';
 import { listCasDevices, revokeCasDevice, type CasDevice } from '@/hooks/use-field-test';
 
 const activeDevice: CasDevice = {
@@ -126,4 +132,46 @@ test('revokeCasDevice surfaces the server rejection for an unknown device', asyn
   stubFetch(() => ({ status: 404, body: { error: 'Device credential not found' } }));
 
   await assert.rejects(() => revokeCasDevice('enrollment-credential', 'dev-nope'), /not found/);
+});
+
+// --- Credential retention: the panel never holds a rejected/dismissed -----
+
+test('a rejected credential is forgotten entirely — typed input included — while the dialog stays open for retry', () => {
+  let state = reducePanelCredential(initialPanelCredentialState, { type: 'open' });
+  state = reducePanelCredential(state, { type: 'type', value: 'wrong-credential' });
+  state = reducePanelCredential(state, { type: 'rejected', message: 'rejected by the server' });
+
+  assert.equal(state.credential, null);
+  assert.equal(state.entered, '');
+  assert.equal(state.dialogOpen, true);
+  assert.equal(state.rejection, 'rejected by the server');
+});
+
+test('dismissing the dialog forgets whatever was typed', () => {
+  let state = reducePanelCredential(initialPanelCredentialState, { type: 'open' });
+  state = reducePanelCredential(state, { type: 'type', value: 'half-typed' });
+  state = reducePanelCredential(state, { type: 'dismiss' });
+
+  assert.equal(state.credential, null);
+  assert.equal(state.entered, '');
+  assert.equal(state.dialogOpen, false);
+});
+
+test('an accepted credential lives in memory only, and Done forgets it', () => {
+  let state = reducePanelCredential(initialPanelCredentialState, { type: 'open' });
+  state = reducePanelCredential(state, { type: 'type', value: 'good-credential' });
+  state = reducePanelCredential(state, { type: 'accepted', credential: 'good-credential' });
+  assert.equal(state.credential, 'good-credential');
+  assert.equal(state.entered, '');
+  assert.equal(state.dialogOpen, false);
+
+  state = reducePanelCredential(state, { type: 'forget' });
+  assert.equal(state.credential, null);
+});
+
+test('the panel component never falls back to a native prompt and never persists to web storage', () => {
+  const source = readFileSync(new URL('./device-credentials.tsx', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /window\.prompt/);
+  assert.doesNotMatch(source, /localStorage|sessionStorage/);
 });

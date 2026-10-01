@@ -14959,6 +14959,11 @@
       "path": "artifacts/api-server/src/lib/cas-auth.ts",
       "by": "50a51cb",
       "reason": "Rewritten generation of the deliberate CI PROBE break+revert proof pair (already allowlisted); the probe break and its revert cancel out and neither was meant to survive to HEAD."
+    },
+    {
+      "path": ".replit",
+      "by": "06db32c",
+      "reason": "Deliberate restore of the Reserved VM deployment target: a36294d (\"Published your App\", an automatic publish commit) flipped deploymentTarget to cloudrun, which would let autoscale freeze the in-process outbox/email-probe workers and fails scripts/rehearse-publish-readiness.mjs's Reserved VM assertion. Restores acd5f30's reviewed vm blob verbatim, comment included."
     }
   ]
 }
