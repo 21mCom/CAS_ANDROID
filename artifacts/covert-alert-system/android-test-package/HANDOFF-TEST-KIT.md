@@ -445,3 +445,10 @@ its importer accepts, so alert-send and capture events (`MVP_ALERT_*`,
 `MVP_SMS_OUTCOME`, `LOCATION_CAPTURE`, `LOCATION_RECAPTURE_*`, `CAPTURE_*`,
 …) only appear in the debug journal — that is the export that shows why a
 send failed. Never import the debug journal as a Gate 0A report.
+
+One import prerequisite: the Gate 0A **Copy JSON report** is only accepted by
+the console importer when a cover app is selected on the phone (T0/T1 step).
+If the session used **Clear cover app (manual trigger only)**, the copied
+report carries an empty cover package and the importer rejects it — select any
+cover app and copy the report again before pasting it back. The debug journal
+is unaffected either way.
