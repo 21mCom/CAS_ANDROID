@@ -161,7 +161,14 @@ export async function resetCasAuthFailureTracking() {
 }
 
 function clientIpKey(req: Parameters<RequestHandler>[0]): string {
-  return req.ip ?? "unknown";
+  const ip = req.ip ?? "unknown";
+  // Node reports IPv4 clients on dual-stack sockets in IPv4-mapped form
+  // ("::ffff:127.0.0.1"). Whether a replica sees that form depends on the
+  // host's socket config, so two replicas behind one balancer can key the
+  // SAME visitor differently — splitting one failure streak into two rows and
+  // diluting the tarpit this store exists to enforce. Normalize so every
+  // replica keys identically.
+  return ip.startsWith("::ffff:") ? ip.slice("::ffff:".length) : ip;
 }
 
 // The streak row is written with one atomic INSERT ... ON CONFLICT, so two
