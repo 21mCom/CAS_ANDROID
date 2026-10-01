@@ -16,6 +16,8 @@ Multi-process CAS tests must allow for cold API startup and await spawned proces
 
 **How to apply:** Keep process readiness polling tolerant of cold starts, capture failures clearly, and await every child exit in both success and timeout cleanup paths.
 
+GitHub-hosted runners boot the spawned child API process fast: the live-secrets burst canary completes in ~2.5s there, far under the 60s readiness window the cold local tsx boot needed (verified green on the first real CI runs, 2026-09-29). Do not widen the window based on local timing alone.
+
 Credential-gate 401s are delayed by a per-IP tarpit whose streaks are process-global and never reset mid-run (successes don't clear them, decay needs 10 quiet minutes), and every test request shares 127.0.0.1 — so any suite that strings intentional rejections must neutralize the schedule or it accumulates minutes of sleep.
 
 **Why:** with the production schedule (250ms doubling, 30s cap) a file with ~13 intentional 401s adds minutes of delay.
