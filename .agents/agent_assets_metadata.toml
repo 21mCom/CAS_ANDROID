@@ -182,6 +182,8 @@ mtime_ms = 1790549097158
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/e2cf5792-b48c-4418-a52a-bfecd4c20827/e9d8ef58-1077-47e3-9cee-8c73d911b403"
 storage_version_token = "1790549124303846"
 content_type = "image/jpeg"
+
+[[outputs]]
 id = "7uzpLuCSiyuFwqaGZrY7M"
 uri = "file://deliverables/CAS-Pixel11-Field-Proofs-T2b-T10-v0.7.0.zip"
 type = "unspecified"
@@ -193,4 +195,32 @@ size = 218036
 mtime_ms = 1790583157857
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/858f728b-b3c6-465d-bdc3-0182eaebe757/40d15660-736f-42d7-9bee-75423aedcd18"
 storage_version_token = "1790583225408111"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "2iKHv9Iicf53-Jx1XC3Ze"
+uri = "file://deliverables/CAS-Waiting-Tasks-Guide-v1.zip"
+type = "unspecified"
+title = "CAS Waiting-Tasks Operator Guide v1"
+description = "Printable plain-English master guide (START-HERE.md) covering all 13 waiting tasks: human/ sheets for the six Pixel field tasks with fill-in report templates, and agent/ technical handoffs for the seven agent-executed tasks. Field-send drills resolve incidents between sends and drive the failure case through the console responder circle. No secrets inside."
+logical_id = "b74bb20d-2f02-496f-94dd-3431e230d4a8"
+content_hash = "sha256:062e6fe527ab8bd9c26e56a55a9890783608c1c739f3e04c737f566c5c30187e"
+size = 24307
+mtime_ms = 1790831446131
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/b74bb20d-2f02-496f-94dd-3431e230d4a8/6e3412aa-7587-401c-b005-b7546028f740"
+storage_version_token = "1790831453760862"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "PaaI3ZS4I3cgCsIc6lSQ1"
+uri = "file://deliverables/CAS-Pixel11-Field-Proofs-T2b-T10-v0.8.0.zip"
+type = "unspecified"
+title = "CAS Pixel 11 field-proofs run pack (T2b + T10) v0.8.0"
+description = "Single ZIP for the Windows hardware workstation: 0.8.0-selfupdate kit + sequenced run sheet covering preflight, install, baseline alert, T2b location accuracy (outdoors/indoors/location-off), T10 evidence-capture playground, and a fill-in report-back template. SHA256SUMS.txt verifies the extract."
+logical_id = "939df46b-fe29-4b77-9f45-20feb5e7ae96"
+content_hash = "sha256:acaea5ebec8d250b497ea52a6ada03561473f0994970b5234dc08755879a468d"
+size = 293687
+mtime_ms = 1790738272582
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/939df46b-fe29-4b77-9f45-20feb5e7ae96/89f9a121-5f46-446b-b36a-0962d10f5329"
+storage_version_token = "1790833643602230"
 content_type = "application/octet-stream"
