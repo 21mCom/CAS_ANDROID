@@ -70,6 +70,19 @@ exactly what would have been sent — enough to prove the pipeline end-to-end
 without any third-party account. Real provider accounts replace the URLs
 later; nothing else changes.
 
+**Live-secrets warning — test bursts hit real responders.** When the server
+you drill against holds live `CAS_EMAIL_SMTP_*` or provider secrets, **any
+process that fires an alert burst without the test rails emails/messages real
+responders.** The automated test suites are the only safe runners: under
+`NODE_ENV=test` they force every channel to the dev sink
+(`DELIVERY_SIMULATED`) and boot-guard on a disposable database. Anything else
+— the drill script in this kit pointed at the live deployment, a hand-run
+suite, a load harness — has no such rail: in 2026-09 an automated suite ran
+with the live mailbox secrets in its environment and emailed the owner's test
+responders ~20 times before anyone noticed. Keep the T4/T6/T7 sink drills on
+a dev deployment, and treat any shell that has sourced the server's secrets
+as armed.
+
 ## T0 — Workstation and server preflight
 
 1. `scripts\run-windows-preflight.cmd` → expect `PASS` (fix any `BLOCKED`).
