@@ -8,7 +8,7 @@ param(
     # also embeds PACKAGE-INFO.txt with a content fingerprint, so operators
     # can tell packages apart without hashing the whole archive. The CI
     # freshness gate compares ZIP contents, not the name.
-    [string]$Version = '0.6.1',
+    [string]$Version = '0.6.3',
     [switch]$SkipApkBuild,
     # The entry-point gate needs Windows PowerShell (powershell.exe) and a CMD
     # wrapper, so it cannot run on a Linux packager. Only skip it there; the

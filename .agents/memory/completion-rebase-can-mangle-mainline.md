@@ -93,3 +93,8 @@ committed silently when nothing re-validates the post-rebase tree.
   <both>^{tree}` match first) and fast-forward push. Only safe once the
   branch is a direct child of the mainline tip, or the next completion
   rebase re-triggers the treadmill.
+- A later task's premise that "X was added" can be FALSE after history
+  repairs: the SMS divide-fallback task specified an already-added fallback
+  that existed in no branch, no remote, and no commit. Grep for the claimed
+  code before building on a premise; if it is gone, reimplement from the
+  task's own spec and note the drift.

@@ -101,9 +101,9 @@ as armed.
 
 ## T1 — Build and install the app
 
-`scripts\run-mvp-install.cmd` → installs version `0.7.0-push` (versionCode 6).
+`scripts\run-mvp-install.cmd` → installs version `0.8.0-selfupdate` (versionCode 7).
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
-prints `0.7.0-push`.
+prints `0.8.0-selfupdate`.
 
 **Field signing key (required for field builds):** every kit APK is signed with
 one pinned release key (the single key entry in the keystore stored in the
@@ -150,6 +150,22 @@ remains the fallback in every build.
    the Pixel's own number; the on-screen report shows `MVP_ALERT_OUTCOME`
    SENT then `SMS_SEND_OUTCOME` delivered=1; the console incident's SMS item
    turns `SENT` within seconds (journal shows `DELIVERY_REPORTED`).
+   On handsets where `SmsManager.divideMessage` is broken (observed on the
+   Pixel running Android 17 / API 37), the app falls back to sending the  <!-- toolreq-gate: allow -- the field Pixel's OS is deliberately newer than the kit's declared API floor -->
+   whole body as ONE part and the journal shows `SMS_DIVIDE_FALLBACK` with
+   the real divide exception. **Paste that exception text into the
+   report-back** — it decides the proper fix (per-subscription SmsManager,
+   manual splitting).
+   Field result, 2026-10-01 (Pixel): the fallback fired (`reason`:
+   `getGroupIdLevel1`, body 210 chars) and every part came back
+   `RESULT_ERROR_GENERIC_FAILURE` — delivered=0 on both runs, while the same
+   handset had delivered alerts to the same responders on 2026-09-19. A
+   plausible cause is that one SMS part cannot carry a ~210-char body
+   (unproven — the earlier successes counted delivered responders, not
+   message segments). Until the proper split fix ships, a fallback run with
+   a real-length body is a KNOWN FAIL: record it with the journal paste,
+   don't chase your setup. A fallback run passes only when the responder
+   actually receives the SMS.
 3. The SMS ends with a location sentence: a `maps.google.com` link plus
    `(±Nm, fix Xs old)`. The console incident view shows the same fix with a
    map link, accuracy radius, and fix age. If the phone could not get a fix
@@ -430,7 +446,7 @@ CAS handoff test run — <date> <operator>
 Server URL: <...>   App version: <0.7.0-push?>
 T0 preflight:        PASS/FAIL — <notes>
 T1 build/install:    PASS/FAIL — <versionName seen>
-T2 real SMS:         PASS/FAIL — <responder received? console state? incident id>
+T2 real SMS:         PASS/FAIL — <responder received? console state? incident id; SMS_DIVIDE_FALLBACK exception text if shown>
 T2b outdoors:        PASS/FAIL — <accuracy radius ±Nm; fix age; distance link-vs-true position; incident id>
 T2b indoors:         PASS/FAIL — <which behavior: coarser fix (radius/age) / +last-known (age) / no-fix sentence; alert left within ~8s?; incident id>
 T2b location-off (opt.): PASS/FAIL/SKIP — <alert left immediately? SMS + console both said no fix captured?>
