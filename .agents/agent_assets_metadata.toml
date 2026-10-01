@@ -238,3 +238,17 @@ mtime_ms = 1790872427492
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/1868da9d-1797-4f91-9d8a-7d628808846a/53d9f61f-2b86-498c-8e6a-cc62e7108d79"
 storage_version_token = "1790872439342092"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "-N1dXzuP0zwoMx42ndjWm"
+uri = "file://deliverables/CAS-Pixel11-OneTap-Update-Proof-v0.8.1.zip"
+type = "unspecified"
+title = "One-tap update field proof pack (7 → 8)"
+description = "Pixel 11 field pack for task #290: build N APK (7/0.8.0-selfupdate, release-signed), cross-key refusal APK, runner script, and run guide. Build 8/0.8.1 is already published on the dev alert server."
+logical_id = "9a4d1af0-479e-4c11-b2ef-7a3305a6839c"
+content_hash = "sha256:6dedc18a8c7cbb7b8b52bd9115d66b32777e30fc1bca1faa8d7fd4649ab750f6"
+size = 7231439
+mtime_ms = 1790875397376
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:05e91386-acbb-4225-ad98-16449131ebd9/9a4d1af0-479e-4c11-b2ef-7a3305a6839c/7403ebe4-7c7a-4179-a471-aedb2c07bbce"
+storage_version_token = "1790875409325107"
+content_type = "application/octet-stream"
