@@ -17,6 +17,11 @@
 #      polling runs, and assert the request is acked via the polling path
 #      (state STARTED, event detail names the polling path, device journal
 #      records CAPTURE_REQUEST_RECEIVED + CAPTURE_REQUEST_ACK).
+#   4. Camera label: set the capture policy camera to "front", request a
+#      responder photo, and prove the front label survives the whole path —
+#      on-device capture journal, upload header, stored evidence row, and the
+#      /cas/state payload the console's evidence panel reads. A regression
+#      that drops the label anywhere on that path turns this job red.
 #
 # Required env (same pattern as verify-sms-flow.sh):
 #   CAS_FLOW_APK           path to the built app-debug.apk
@@ -148,7 +153,9 @@ expect_status "capture-request creation rejects an unknown kind" 400 "$status"
 status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/flow-contract-probe/capture-requests" '{"kind":"audio"}')"
 expect_status "capture-request creation refuses a missing credential" 401 "$status"
 
-status="$(http_status PUT "$CAS_FLOW_API_HOST/api/cas/evidence-policy" '{"audio":"responder","photo":"off","video":"off","timing":"immediate"}')"
+# Schema-valid body (camera included), so the 401 is purely about the
+# missing credential, never about payload validation.
+status="$(http_status PUT "$CAS_FLOW_API_HOST/api/cas/evidence-policy" '{"audio":"responder","photo":"off","video":"off","timing":"immediate","camera":"back"}')"
 expect_status "evidence-policy change refuses a missing credential" 401 "$status"
 
 # --- Step 1: install, grant mic, seed a provisioned-handset profile ----------
@@ -261,8 +268,9 @@ echo "Device journal records PUSH_UNAVAILABLE — the push-less build took the g
 
 echo "== Polling pickup phase =="
 # The capture policy defaults every kind to "off"; enable responder-requested
-# audio capture so the request below is legal.
-status="$(http_status PUT "$CAS_FLOW_API_HOST/api/cas/evidence-policy" '{"audio":"responder","photo":"off","video":"off","timing":"immediate"}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
+# audio capture so the request below is legal. The schema requires the camera
+# selection too; audio capture ignores it, so it stays "back" here.
+status="$(http_status PUT "$CAS_FLOW_API_HOST/api/cas/evidence-policy" '{"audio":"responder","photo":"off","video":"off","timing":"immediate","camera":"back"}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
 expect_status "evidence-policy enables responder-requested audio capture" 200 "$status"
 
 # An incident with no queued channels: the capture request is the payload
@@ -320,7 +328,108 @@ echo "$state_json" | jq -e '
   || fail "no CAPTURE_STARTED event naming the polling path — the wake-path record drifted: $(echo "$state_json" | jq -c '.activeIncident.events | map(.type)')"
 echo "Incident journal records the capture was picked up on the polling path."
 
-# --- Step 4: on-device evidence + final crash check --------------------------
+# --- Step 4: front-camera label reaches the console --------------------------
+
+echo "== Camera-label phase: policy camera=front -> front photo -> console =="
+# Point the capture policy's camera selection at the FRONT lens (the
+# emulator's virtual camera exposes both front and back) and switch
+# responder-requested capture from audio to photo, so the request below is
+# legal and carries a lens.
+status="$(http_status PUT "$CAS_FLOW_API_HOST/api/cas/evidence-policy" '{"audio":"off","photo":"responder","video":"off","timing":"immediate","camera":"front"}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
+expect_status "evidence-policy enables responder-requested front-camera photo capture" 200 "$status"
+jq -e '.camera == "front"' /tmp/pushless-flow-response.json > /dev/null \
+  || fail "evidence-policy PUT did not echo camera=front: $(cat /tmp/pushless-flow-response.json | head -c 300)"
+echo "Capture policy now selects the front camera for photo/video."
+
+status="$(http_status POST "$CAS_FLOW_API_HOST/api/cas/incidents/$incident_id/capture-requests" '{"kind":"photo"}' "" "$CAS_FLOW_ENROLLED_TOKEN")"
+expect_status "responder photo capture request" 201 "$status"
+photo_request_id="$(jq -r '.id // empty' /tmp/pushless-flow-response.json)"
+[ -n "$photo_request_id" ] || fail "photo capture-request response carried no id: $(cat /tmp/pushless-flow-response.json | head -c 300)"
+echo "Photo capture request created: $photo_request_id"
+
+# The pickup path reads the camera selection from the handset's ON-DEVICE
+# policy cache (CapturePolicy.cached), which a field handset refreshes from
+# the server. Seed that cache with the policy the server now serves — same
+# run-as seeding pattern as the provisioned-handset profile above — so the
+# pickup passes camera=front to the capture service. The events element is
+# preserved so the final journal check still sees this run's full history,
+# and the app is force-stopped first because a running app's in-memory
+# SharedPreferences would ignore (and later clobber) the rewritten file.
+front_policy_json='{"audio":"off","photo":"responder","video":"off","timing":"immediate","camera":"front"}'
+adb shell am force-stop "$PKG" || true
+preserved_events="$(adb shell cat "$JOURNAL" 2>/dev/null | grep -o '<string name="events">.*</string>' || true)"
+seed_tmp="$(mktemp)"
+{
+  echo "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>"
+  echo '<map>'
+  printf '    <string name="alert_server_url">%s</string>\n' "$CAS_FLOW_API_DEVICE"
+  printf '    <string name="enrolled_device_token">%s</string>\n' "$CAS_FLOW_ENROLLED_TOKEN"
+  printf '    <boolean name="device_credential_provisioned" value="true" />\n'
+  # Android's SharedPreferences writer escapes quotes as &quot;; mirror that
+  # so the seeded cache reads back exactly like a fetch-cached policy.
+  printf '    <string name="capture_policy_json">%s</string>\n' "$(printf '%s' "$front_policy_json" | sed 's/"/\&quot;/g')"
+  [ -n "$preserved_events" ] && printf '    %s\n' "$preserved_events"
+  echo '</map>'
+} > "$seed_tmp"
+adb shell "run-as $PKG sh -c 'cat > $JOURNAL'" < "$seed_tmp" \
+  || fail "run-as seeding of the front-camera policy cache failed (is this a debuggable build?)."
+rm -f "$seed_tmp"
+
+# Relaunch: onResume runs the polling pickup, which now reads camera=front
+# from the seeded cache and starts the capture service with that selection.
+adb shell am start -W -n "$PKG/.MainActivity" > /dev/null 2>&1 \
+  || fail "am start of MainActivity for the front-camera pickup failed."
+
+# Poll for the uploaded clip. The capture service's single worker may still
+# be draining the earlier audio request's segments, so this budget exceeds
+# the per-phase default; the env override keeps any no-emulator harness fast.
+CAMERA_TIMEOUT_S="${CAS_FLOW_CAMERA_TIMEOUT_S:-300}"
+deadline=$((SECONDS + CAMERA_TIMEOUT_S))
+photo_evidence_id=""
+state_json=""
+while [ $SECONDS -lt $deadline ]; do
+  state_json="$(curl -s "$CAS_FLOW_API_HOST/api/cas/state" -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN")"
+  photo_evidence_id="$(echo "$state_json" | jq -r --arg rid "$photo_request_id" '.activeIncident.evidence | map(select(.requestId == $rid and .kind == "photo")) | .[0].id // ""')"
+  if [ -n "$photo_evidence_id" ]; then
+    # The upload is atomic, so once the row exists its label is final: a
+    # missing or wrong label here is a regression, not a reason to wait.
+    camera_label="$(echo "$state_json" | jq -r --arg id "$photo_evidence_id" '.activeIncident.evidence | map(select(.id == $id)) | .[0].camera // "null"')"
+    [ "$camera_label" = "front" ] || fail "the photo clip uploaded WITHOUT its front-camera label (/cas/state camera=$camera_label) — the label was dropped between handset and console: $(echo "$state_json" | jq -c '.activeIncident.evidence')"
+    break
+  fi
+  sleep 3
+done
+[ -n "$photo_evidence_id" ] || fail "no photo evidence for request $photo_request_id within ${CAMERA_TIMEOUT_S}s — the front-camera clip never reached the server: $(echo "$state_json" | jq -c '.activeIncident.evidence // "no-evidence-array"')"
+echo "Front-camera photo clip reached the server: $photo_evidence_id, /cas/state carries camera=front (the console evidence panel's source)."
+
+# The upload is the request's completion transition: the photo request must
+# now read COMPLETED, proving the labeled upload also satisfied the request.
+req_state="$(echo "$state_json" | jq -r --arg id "$photo_request_id" '.activeIncident.captureRequests | map(select(.id == $id)) | .[0].state // ""')"
+[ "$req_state" = "COMPLETED" ] || fail "photo capture request $photo_request_id reads '$req_state' after its clip uploaded (expected COMPLETED) — the upload no longer completes the request it answers."
+echo "Photo capture request reads COMPLETED after the labeled upload."
+
+# The stored row's label also drives the console's download filename; assert
+# that projection too instead of trusting the state payload alone.
+disposition="$(curl -s -D - -o /dev/null "$CAS_FLOW_API_HOST/api/cas/evidence/$photo_evidence_id/download" -H "Authorization: Bearer $CAS_FLOW_ENROLLED_TOKEN" | grep -i '^content-disposition:' || true)"
+echo "$disposition" | grep -q -- '-photo-front-' \
+  || fail "evidence download filename lacks the front-camera label (Content-Disposition: ${disposition:-missing}) — the stored cas_evidence.camera column drifted."
+echo "Download endpoint names the clip with its front-camera label: $disposition"
+
+# Handset leg: the device journal must show the FRONT lens captured the
+# photo. Together with the server assertions this pins a red to the right
+# side of the path: handset labeling vs server storage vs console payload.
+adb root > /dev/null 2>&1 || true
+adb wait-for-device
+journal="$(read_journal_events | sed 's/&quot;/"/g' || true)"
+[ -n "$journal" ] || fail "could not read the on-device journal events at $JOURNAL for the camera-label check."
+photo_event="$(printf '%s' "$journal" | grep -o '{"type":"EVIDENCE_CAPTURE"[^{}]*"kind":"photo"[^{}]*}' | head -1 || true)"
+printf '%s' "$photo_event" | grep -q '"outcome":"CAPTURED"' \
+  || fail "no CAPTURED photo event in the device journal — the emulator's front-camera still was not captured: $photo_event"
+printf '%s' "$photo_event" | grep -q '"camera":"front"' \
+  || fail "the on-device photo capture was NOT labeled front — the policy camera selection did not reach the capture service: $photo_event"
+echo "Device journal records the photo captured from the front lens."
+
+# --- Step 5: on-device evidence + final crash check --------------------------
 
 echo "== Evidence phase: on-device journal and crash check =="
 adb root > /dev/null 2>&1 || true
@@ -335,4 +444,4 @@ pid="$(adb shell pidof "$PKG" || true)"
 [ -n "$pid" ] || fail "App process died after the capture-request pickup (was pid $pid)."
 assert_no_fatal_crash "the push-less capture flow"
 
-echo "Push-less field kit proof passed: launched with no Firebase configuration (no crash, PUSH_UNAVAILABLE journaled), server journaled CAPTURE_PUSH_UNAVAILABLE, and the responder capture request was acked STARTED via the polling path."
+echo "Push-less field kit proof passed: launched with no Firebase configuration (no crash, PUSH_UNAVAILABLE journaled), server journaled CAPTURE_PUSH_UNAVAILABLE, the responder audio request was acked STARTED via the polling path, and the front-camera photo clip kept its camera label from the handset through the stored row to the console's /cas/state payload and download filename."

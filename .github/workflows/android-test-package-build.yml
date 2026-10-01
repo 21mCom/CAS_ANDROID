@@ -593,7 +593,7 @@ jobs:
           script: CAS_FLOW_APK="apk/app-debug.apk" bash .github/scripts/verify-receipt-durability-kill.sh
 
   pushless-capture-flow-test:
-    name: Prove the default (push-less) field kit launches and honors capture requests via polling
+    name: Prove the push-less field kit launches, honors capture requests via polling, and carries camera labels to the console
     needs: assemble-debug
     # Same runner story as the sibling emulator jobs: macOS runners are Apple
     # Silicon VMs without nested virtualization (emulator dies with
@@ -720,7 +720,7 @@ jobs:
           fi
           echo "dev API is up on port ${{ env.CAS_FLOW_API_PORT }} (CAS_SMS_DELIVERY_MODE=device)"
 
-      - name: Boot emulator and prove push-less launch + polling capture pickup
+      - name: Boot emulator and prove push-less launch + polling capture pickup + front-camera label
         uses: reactivecircus/android-emulator-runner@v2
         env:
           CAS_FLOW_API_HOST: http://127.0.0.1:${{ env.CAS_FLOW_API_PORT }}
