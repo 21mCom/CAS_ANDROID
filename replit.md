@@ -13,6 +13,9 @@ _Replace the heading above with the project's name, and this line with one sente
 - Self-hosting: `artifacts/api-server/SELF-HOSTING.md` is the production runbook
   (own server, systemd, HTTPS, backups, uptime checks). Production start:
   `pnpm --filter @workspace/api-server run build` then `start:production`.
+- Always-on Replit deployment: `artifacts/api-server/PUBLISH-ON-REPLIT.md` is
+  the publish runbook (Reserved VM, production database, deployment secrets).
+  Rehearse first: `pnpm --filter @workspace/scripts run rehearse:publish-readiness`.
   Read endpoints that expose incident state require an enrolled device
   credential, same as mutations.
 

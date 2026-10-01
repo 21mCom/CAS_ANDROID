@@ -54,3 +54,5 @@
 - [Spawned-server log assertions](cas-spawned-server-log-assertions.md) — pino-pretty's async transport means child-process log assertions must poll with a deadline; boot proofs must strip test-harness markers or index.ts disables the probe worker.
 - [uiautomator harness lessons](uiautomator-harness-lessons.md) — Button labels dump as ALL-CAPS; dumps show only the visible viewport; input swipe always flings → sweep-with-reversal + digest logging.
 - [Operator guide packs](operator-guide-packs.md) — task plans name stale deliverable ZIP versions; operator docs must reference the newest ZIP in deliverables/, never the plan's literal.
+- [Editing .replit](dot-replit-edit-flow.md) — direct Edit is rejected; write the full TOML to a temp file and call verifyAndReplaceDotReplit.
+- [Replit deployment secret sync](replit-deployment-secret-sync.md) — deployments inherit workspace secrets automatically; quarantine live delivery secrets with blank overrides before first publish.

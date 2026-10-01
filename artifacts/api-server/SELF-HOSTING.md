@@ -7,6 +7,10 @@ requires prior server experience beyond editing a file with `nano`.
 
 Estimated time: one afternoon.
 
+> **No server of your own?** You can publish the same backend as an always-on
+> Reserved VM deployment on Replit instead — see `PUBLISH-ON-REPLIT.md` in
+> this directory. Pick one of the two, not both.
+
 **What you end up with:** the CAS API server running as a system service on
 your own box, the operator console served from your own domain over HTTPS,
 nightly database backups, and two alerts: one if the server dies, one if
