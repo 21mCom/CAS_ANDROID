@@ -542,13 +542,16 @@ wait_journal "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*FAILED; receipt kept for r
 echo "offline resume retried and kept the receipt; console still QUEUED"
 
 # Data restored: the persisted state must now land without operator re-queue.
-# The blocked resume above journaled a RECEIPT_RETRY_OUTCOME reported:0, so
-# the reported=1 assertion is count-based: one MORE such event must appear.
+# The blocked resume above journaled a RECEIPT_RETRY_OUTCOME with reported:0,
+# so the assertion is count-based: one MORE summary with a positive reported
+# count must appear. Positive, not exactly 1: after a late-kill retry the
+# resume drains BOTH the current and the late attempt's receipts, and
+# retryPendingReceipts journals one summary for the whole pass (reported:2).
 unblock_receipts
-retry_base="$(event_count 'RECEIPT_RETRY_OUTCOME[^}]*"reported":1[,}]')"
+retry_base="$(event_count 'RECEIPT_RETRY_OUTCOME[^}]*"reported":[1-9][0-9]*[,}]')"
 launch_main || fail "relaunch failed"
-wait_event_beyond "$retry_base" 'RECEIPT_RETRY_OUTCOME[^}]*"reported":1[,}]' "$TIMEOUT_S" \
-  || fail "no new RECEIPT_RETRY_OUTCOME with reported=1 once data returned."
+wait_event_beyond "$retry_base" 'RECEIPT_RETRY_OUTCOME[^}]*"reported":[1-9][0-9]*[,}]' "$TIMEOUT_S" \
+  || fail "no new RECEIPT_RETRY_OUTCOME with a positive reported count once data returned."
 wait_journal "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*REPORTED" "$TIMEOUT_S" \
   || fail "receipt for $incident_a was not REPORTED after data returned."
 # A late-killed first attempt left its own durable receipt behind; it reports
