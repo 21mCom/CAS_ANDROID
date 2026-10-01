@@ -213,6 +213,16 @@ jobs:
         with:
           gradle-version: ${{ steps.gradle-version.outputs.version }}
 
+      # The JVM unit-test suites pin safety decisions (SendOutcomeStatusTest,
+      # BatchOutcomeTrackerTest, ResolvedWatchGuardTest, DebugJournalExportTest)
+      # that a compile-only gate cannot see: a change that breaks a pinned
+      # decision (e.g. dropping SMS_DIVIDE_FALLBACK from the filtered field
+      # paste) still assembles green. Run the tests BEFORE the APK compile so
+      # the cheaper failure stops the job first.
+      - name: Run JVM unit tests (pinned safety decisions)
+        working-directory: artifacts/covert-alert-system/android-test-package
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
       - name: Compile debug APK
         working-directory: artifacts/covert-alert-system/android-test-package
         run: gradle :app:assembleDebug --no-daemon --stacktrace
