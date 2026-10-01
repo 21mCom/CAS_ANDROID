@@ -89,6 +89,7 @@ Same pane (**Adjust settings → Deployment secrets**):
 | Key | Value |
 | --- | --- |
 | `CAS_TRUST_PROXY` | `true` — on Replit the only ingress is the platform router, so trusting `X-Forwarded-For` lets the anti-guessing tarpit keep each attacker's failure streak separate from your traffic. Unset, every visitor reads as the router's address and one attacker's guesses slow everyone. |
+| `CAS_AUTH_BURST_ALERT_URL` | Optional — a healthchecks.io-style check ping URL that turns credential-guessing bursts into an email. Set it up as in Step 7, then paste the check's ping URL here and redeploy. |
 
 **Only when you are ready to alert real responders:** replace the Step 1
 blank overrides for `CAS_EMAIL_SMTP_*` (see "Optional: email alerts through a
@@ -165,6 +166,77 @@ device access token, `CAS_ALERT_TOKEN` as the alert credential). Note that in
 `device` mode a test alert makes the phone send a *real* SMS to every
 responder on the console's Responders page — that page starts empty, so add
 only yourself for the first test.
+
+## Step 6 — Get paged when the deployment stops answering
+
+Nothing built into the deployment tells you when it goes down: a dead VM or a
+failed redeploy means the phone's alerts queue into silence. The self-hosting
+runbook solves this with a cron dead-man's-switch on the VPS (SELF-HOSTING.md
+Step 9), but a Replit deployment has no cron — so use an **external HTTP
+uptime monitor** instead (the free tier of UptimeRobot, Better Stack, or any
+similar service; healthchecks.io itself only *receives* pings and cannot
+poll, so for this check pick a monitor that polls).
+
+1. Create a new **HTTP(s) monitor** pointed at
+   `https://<your-app>.replit.app/api/healthz` — the one anonymous endpoint,
+   so the monitor needs no credential and the credential gate stays intact.
+2. Interval: every 5 minutes. Expect HTTP 200 (the body is
+   `{"status":"ok"}` if the monitor supports a keyword check).
+3. Set the alert target to an email address you actually read.
+
+Because the monitor traverses the public URL, this catches the VM dying, the
+server process crashing repeatedly, and TLS/DNS/router trouble — everything
+except the monitor service itself. Prove the wiring with the monitor's
+"send test notification" button; if you want a real red alert, pause the
+deployment briefly and watch the email arrive, then resume it.
+
+## Step 7 — Get paged when someone is guessing credentials
+
+The server already slows repeated wrong-credential attempts from one IP and,
+every 10th consecutive failure, writes one distinct log line
+(`casAuthRejectionBurst`). On a VPS a cron watchdog scans the journal for
+that line and pings a healthchecks.io check's `/fail` URL (SELF-HOSTING.md
+Step 10). A Replit deployment has no journal or cron access — its logs are
+only visible in the Replit UI — so the recipe is adapted: **the server pings
+the check itself**, from inside the process that detects the burst. No new
+infrastructure to run.
+
+1. In your healthchecks.io account (free tier), create a **dedicated check**
+   named e.g. `cas-auth-bursts` — do not reuse the Step 6 monitor; a burst
+   must not look like downtime. Period 5 minutes, grace 5 minutes. Copy its
+   ping URL (`https://hc-ping.com/<uuid>`).
+2. Publishing → **Adjust settings → Deployment secrets** → add
+   `CAS_AUTH_BURST_ALERT_URL` with that ping URL → redeploy.
+
+From then on: a burst makes the server GET `<url>/fail`, which flips the
+check down and emails you immediately; in quiet times the server pings the
+plain URL every 5 minutes, which also flips the check back up after the
+flood ends (success pings are suppressed for 10 minutes after a burst, so
+the alert is not cleared mid-flood). If the server cannot reach the ping URL
+it logs a warning and keeps running — the alert can never break alerting.
+
+**Prove the alert fires (do this once, now):** from any machine, send wrong
+credentials until the burst trips, then watch for the email:
+
+```bash
+for i in $(seq 1 11); do
+  curl -s -o /dev/null https://<your-app>.replit.app/api/cas/state \
+    -H "Authorization: Bearer wrong-on-purpose"
+done
+```
+
+The server's own slowdown makes the 11 attempts take about 90 seconds (the
+per-attempt delay doubles each failure — that is the anti-guessing defense
+working, not a problem). Within a couple of minutes after the 10th failure
+you should get the `cas-auth-bursts` email. The burst log line with the
+guessor's IP is visible in the deployment's **Logs** pane; Step 2's
+`CAS_TRUST_PROXY=true` keeps each attacker's streak separate from your own
+traffic.
+
+**Known gap versus the VPS recipe:** the self-hosting watchdog alerts even
+when only log scanning is possible; here the alert depends on the server
+process being alive to send it. A burst that crashes the server would be
+caught by Step 6's uptime monitor instead — keep both checks.
 
 ## Rotating CAS_ALERT_TOKEN
 

@@ -136,18 +136,20 @@ let failureLimitConfig: CasAuthFailureLimitConfig = { ...DEFAULT_FAILURE_LIMIT_C
 
 // The burst sink is injectable for the same reason as the rejection sink:
 // tests prove the alert fires without scraping logs. The default is one
-// distinct structured warn line per threshold crossing.
-const defaultBurstRecorder = (burst: CasAuthFailureBurst) => {
+// distinct structured warn line per threshold crossing; it is exported so a
+// wrapping recorder (e.g. the deployment burst-alert pinger in index.ts) can
+// keep the log line for log monitoring instead of replacing it.
+export const logCasAuthBurst = (burst: CasAuthFailureBurst) => {
   logger.warn({ casAuthRejectionBurst: burst }, "CAS credential rejection burst detected");
 };
 
-let recordBurst: (burst: CasAuthFailureBurst) => void = defaultBurstRecorder;
+let recordBurst: (burst: CasAuthFailureBurst) => void = logCasAuthBurst;
 
 /** Test hook: swap the burst sink; call with no argument to restore. */
 export function setCasAuthBurstRecorder(
   recorder?: (burst: CasAuthFailureBurst) => void,
 ) {
-  recordBurst = recorder ?? defaultBurstRecorder;
+  recordBurst = recorder ?? logCasAuthBurst;
 }
 
 /** Test/ops hook: override the delay schedule; call with no argument to restore defaults. */

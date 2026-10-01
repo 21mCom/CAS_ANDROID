@@ -1,6 +1,8 @@
 import app from "./app";
 import { startCasOutboxWorker } from "./lib/cas-outbox-worker";
 import { startCasEmailHealthWorker } from "./lib/cas-email-health-worker";
+import { startCasAuthBurstAlert } from "./lib/cas-auth-burst-alert";
+import { logCasAuthBurst, setCasAuthBurstRecorder } from "./lib/cas-auth";
 import { deviceAccessToken, deviceChannels, smsDeliveryMode } from "./lib/cas-device-delivery";
 import { testHarnessDeliveryForced } from "./lib/delivery-providers";
 import { logger } from "./lib/logger";
@@ -78,6 +80,17 @@ if (testHarnessDeliveryForced()) {
 } else {
   emailHealthWorker = startCasEmailHealthWorker();
 }
+// On a deployment there is no cron host to scan the logs for the tarpit's
+// burst line (the self-hosting Step 10 recipe), so when the operator wires a
+// healthchecks.io-style check URL the server pings it itself: /fail on every
+// burst, a success ping in quiet times. Unset, bursts stay log-only.
+const authBurstAlert = startCasAuthBurstAlert();
+if (authBurstAlert) {
+  setCasAuthBurstRecorder((burst) => {
+    logCasAuthBurst(burst);
+    authBurstAlert.recordBurst();
+  });
+}
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
@@ -86,6 +99,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down");
   await outboxWorker.stop();
   await emailHealthWorker?.stop();
+  await authBurstAlert?.stop();
   server.close((err) => {
     if (err) {
       logger.error({ err }, "Error closing server");
