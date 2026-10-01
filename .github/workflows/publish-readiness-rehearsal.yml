@@ -15,7 +15,17 @@ on:
       # The rehearsal asserts each artifact's production-service posture, so a
       # deployment-configuration edit must re-run it.
       - "artifacts/*/.replit-artifact/artifact.toml"
+      # Shared production-build inputs: a change confined to one of these can
+      # break the production build (or shift the API contract the credential
+      # gate checks) without touching either artifact's own tree.
       - "lib/db/**"
+      - "lib/api-spec/**"
+      - "lib/api-zod/**"
+      - "lib/api-client-react/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/package.json"
       - "scripts/rehearse-publish-readiness.mjs"
       - "scripts/disposable-review-database.mjs"
       - ".github/workflows/publish-readiness-rehearsal.yml"
@@ -26,6 +36,13 @@ on:
       - "artifacts/covert-alert-system/**"
       - "artifacts/*/.replit-artifact/artifact.toml"
       - "lib/db/**"
+      - "lib/api-spec/**"
+      - "lib/api-zod/**"
+      - "lib/api-client-react/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/package.json"
       - "scripts/rehearse-publish-readiness.mjs"
       - "scripts/disposable-review-database.mjs"
       - ".github/workflows/publish-readiness-rehearsal.yml"
