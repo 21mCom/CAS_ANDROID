@@ -2,10 +2,7 @@ modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 
 [deployment]
 router = "application"
-# Reserved VM (always-on): the CAS outbox worker, email health probe, and
-# handset pickup endpoints are long-running in-process loops that autoscale
-# would freeze between requests. See artifacts/api-server/PUBLISH-ON-REPLIT.md.
-deploymentTarget = "vm"
+deploymentTarget = "cloudrun"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
