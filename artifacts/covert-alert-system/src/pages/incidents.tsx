@@ -51,6 +51,7 @@ export default function Incidents() {
   const [requeueBusy, setRequeueBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [captureBusy, setCaptureBusy] = useState<string | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
 
   const submitCaptureRequest = async (kind: 'audio' | 'photo' | 'video') => {
     if (captureBusy) return;
@@ -66,6 +67,8 @@ export default function Incidents() {
   };
 
   const downloadEvidence = async (item: EvidenceItem) => {
+    if (downloadBusy === item.id) return;
+    setDownloadBusy(item.id);
     setCaptureError(null);
     try {
       // Downloads are credentialed: fetch the bytes with the Bearer credential
@@ -77,10 +80,20 @@ export default function Incidents() {
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = `cas-${activeIncident?.id}-${item.kind}-${item.sequence}.${item.kind === 'photo' ? 'jpg' : item.kind === 'video' ? 'mp4' : 'm4a'}`;
+      // The anchor must be in the document: some browsers ignore synthetic
+      // click() downloads on detached elements.
+      document.body.append(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
+      anchor.remove();
+      // The click only schedules the download — the browser starts reading
+      // the blob asynchronously. Revoking the URL in the same tick races that
+      // startup and silently aborts the download, so revoke only after the
+      // download manager has had time to open the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (error) {
       setCaptureError(error instanceof Error ? error.message : 'Download failed.');
+    } finally {
+      setDownloadBusy(null);
     }
   };
 
@@ -239,10 +252,11 @@ export default function Incidents() {
                             </span>
                             <button
                               onClick={() => { void downloadEvidence(item); }}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:border-[#203c49]"
+                              disabled={downloadBusy === item.id}
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:border-[#203c49] disabled:cursor-not-allowed disabled:opacity-40"
                               data-testid={`button-download-evidence-${item.id}`}
                             >
-                              <Download size={12} /> Download
+                              <Download size={12} /> {downloadBusy === item.id ? 'Downloading…' : 'Download'}
                             </button>
                           </li>
                         );
