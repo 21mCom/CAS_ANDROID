@@ -1,0 +1,711 @@
+{
+  "schema": "cas-debug-journal-v1",
+  "reportType": "debug-journal",
+  "note": "Raw on-device journal for field debugging (alert sends, SMS radio results, capture events). NOT a Gate 0A report — do not import it as one.",
+  "exportedAtUtc": "2026-10-01T07:39:20.641392Z",
+  "eventCount": 1564,
+  "events": [
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397589635,
+      "elapsedRealtimeMs": 517917,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397589636,
+      "elapsedRealtimeMs": 517917,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397591957,
+      "elapsedRealtimeMs": 520238,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397591957,
+      "elapsedRealtimeMs": 520238,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397603709,
+      "elapsedRealtimeMs": 531990,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397603709,
+      "elapsedRealtimeMs": 531990,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397610815,
+      "elapsedRealtimeMs": 539097,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397610815,
+      "elapsedRealtimeMs": 539097,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397620451,
+      "elapsedRealtimeMs": 548732,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397620451,
+      "elapsedRealtimeMs": 548732,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397624144,
+      "elapsedRealtimeMs": 552425,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397624159,
+      "elapsedRealtimeMs": 552440,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397624160,
+      "elapsedRealtimeMs": 552441,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397624168,
+      "elapsedRealtimeMs": 552449,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397647447,
+      "elapsedRealtimeMs": 11641,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397647451,
+      "elapsedRealtimeMs": 11644,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397647492,
+      "elapsedRealtimeMs": 11685,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397647511,
+      "elapsedRealtimeMs": 11704,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397651334,
+      "elapsedRealtimeMs": 15528,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397651351,
+      "elapsedRealtimeMs": 15544,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397651355,
+      "elapsedRealtimeMs": 15549,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397651367,
+      "elapsedRealtimeMs": 15561,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397854642,
+      "elapsedRealtimeMs": 218836,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397854643,
+      "elapsedRealtimeMs": 218836,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397858711,
+      "elapsedRealtimeMs": 222904,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397858711,
+      "elapsedRealtimeMs": 222904,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397878243,
+      "elapsedRealtimeMs": 242436,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397878243,
+      "elapsedRealtimeMs": 242437,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397885670,
+      "elapsedRealtimeMs": 249864,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397885671,
+      "elapsedRealtimeMs": 249864,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397977552,
+      "elapsedRealtimeMs": 341745,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397977552,
+      "elapsedRealtimeMs": 341746,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397982506,
+      "elapsedRealtimeMs": 346699,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789397982528,
+      "elapsedRealtimeMs": 346722,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789397982533,
+      "elapsedRealtimeMs": 346727,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789397982543,
+      "elapsedRealtimeMs": 346737,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789398007562,
+      "elapsedRealtimeMs": 11755,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398007628,
+      "elapsedRealtimeMs": 11821,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398007633,
+      "elapsedRealtimeMs": 11825,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789398007648,
+      "elapsedRealtimeMs": 11841,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789398011280,
+      "elapsedRealtimeMs": 15472,
+      "action": "android.intent.action.LOCKED_BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398011315,
+      "elapsedRealtimeMs": 15507,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398011318,
+      "elapsedRealtimeMs": 15511,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "BOOT_OBSERVED",
+      "wallClockMs": 1789398011329,
+      "elapsedRealtimeMs": 15522,
+      "action": "android.intent.action.BOOT_COMPLETED",
+      "directBootAware": true
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398014270,
+      "elapsedRealtimeMs": 18463,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398014271,
+      "elapsedRealtimeMs": 18463,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398015930,
+      "elapsedRealtimeMs": 20123,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398015931,
+      "elapsedRealtimeMs": 20123,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398018166,
+      "elapsedRealtimeMs": 22358,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398018166,
+      "elapsedRealtimeMs": 22359,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398020068,
+      "elapsedRealtimeMs": 24261,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398020069,
+      "elapsedRealtimeMs": 24261,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398021885,
+      "elapsedRealtimeMs": 26077,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398021886,
+      "elapsedRealtimeMs": 26078,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398023828,
+      "elapsedRealtimeMs": 28021,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398023829,
+      "elapsedRealtimeMs": 28021,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398025558,
+      "elapsedRealtimeMs": 29750,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398025559,
+      "elapsedRealtimeMs": 29751,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398027406,
+      "elapsedRealtimeMs": 31599,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398027408,
+      "elapsedRealtimeMs": 31600,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398029353,
+      "elapsedRealtimeMs": 33545,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398029353,
+      "elapsedRealtimeMs": 33546,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398031192,
+      "elapsedRealtimeMs": 35384,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398031192,
+      "elapsedRealtimeMs": 35385,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398033303,
+      "elapsedRealtimeMs": 37496,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398033305,
+      "elapsedRealtimeMs": 37497,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398035411,
+      "elapsedRealtimeMs": 39603,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398035412,
+      "elapsedRealtimeMs": 39604,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398037224,
+      "elapsedRealtimeMs": 41417,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398037225,
+      "elapsedRealtimeMs": 41418,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398039202,
+      "elapsedRealtimeMs": 43394,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398039203,
+      "elapsedRealtimeMs": 43395,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398041088,
+      "elapsedRealtimeMs": 45280,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398041089,
+      "elapsedRealtimeMs": 45281,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398042817,
+      "elapsedRealtimeMs": 47009,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398042817,
+      "elapsedRealtimeMs": 47010,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398044778,
+      "elapsedRealtimeMs": 48971,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398044779,
+      "elapsedRealtimeMs": 48972,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398046530,
+      "elapsedRealtimeMs": 50723,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398046531,
+      "elapsedRealtimeMs": 50724,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398048099,
+      "elapsedRealtimeMs": 52292,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398048100,
+      "elapsedRealtimeMs": 52292,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398049818,
+      "elapsedRealtimeMs": 54010,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398049819,
+      "elapsedRealtimeMs": 54011,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398051841,
+      "elapsedRealtimeMs": 56033,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398051842,
+      "elapsedRealtimeMs": 56034,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398053520,
+      "elapsedRealtimeMs": 57712,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 1789398053521,
+      "elapsedRealtimeMs": 57713,
+      "outcome": "NOT_LAUNCHED",
+      "reason": "No selected cover launcher intent"
+    },
+    {
+      "type": "PROXY_TRIGGER",
+      "wallClockMs": 1789398055421,
+      "elapsedRealtimeMs": 59614,
+      "coverPackage": "",
+      "coverConfigured": false,
+      "coverIntentAvailable": false,
+      "activityState": "cold"
+    },
+    {
+      "type": "COVER_LAUNCH_OUTCOME",
+      "wallClockMs": 178939
