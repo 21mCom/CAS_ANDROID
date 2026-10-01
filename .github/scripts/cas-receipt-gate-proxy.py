@@ -83,10 +83,13 @@ def handle(client):
                 # Write the .seen marker BEFORE hanging so the harness can
                 # prove the kill happened with the POST on the wire (the app
                 # persists the receipt before posting, so a seen-marker kill
-                # guarantees durable state survived).
+                # guarantees durable state survived). Append, never overwrite:
+                # after a late-kill retry the OLD incident's receipt can hang
+                # here again, and an overwrite could erase the marker the
+                # harness is currently waiting for.
                 try:
-                    with open(HANG_FLAG + ".seen", "w") as marker:
-                        marker.write(request_line.decode("latin-1"))
+                    with open(HANG_FLAG + ".seen", "a") as marker:
+                        marker.write(request_line.decode("latin-1") + "\n")
                 except OSError:
                     pass
                 try:

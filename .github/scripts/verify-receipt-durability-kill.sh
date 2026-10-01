@@ -265,11 +265,11 @@ unhang_receipts()  { rm -f "$HANG_FLAG"; }
 # before the posting thread runs, that kill also guarantees durable state
 # for this incident exists. (hang_receipts clears any stale marker first, and
 # hang mode only exists during scenario A, so the correlation is airtight.)
-wait_proxy_seen() {
+wait_proxy_seen() { # incident-id [poll-interval-s]
   local want="$1" deadline=$((SECONDS + TIMEOUT_S))
   while [ $SECONDS -lt $deadline ]; do
     [ -f "$HANG_FLAG.seen" ] && grep -qF "$want" "$HANG_FLAG.seen" && return 0
-    sleep 1
+    sleep "${2:-1}"
   done
   return 1
 }
@@ -441,55 +441,84 @@ echo "phase 0 OK: radio_works=$RADIO_WORKS — probe incident $probe_incident fi
 # --- Scenario A: real pending receipt, kill, resume (no synthetic state) ------
 
 echo "== Scenario A: force-stop with the receipt POST in flight =="
-resolve_active
 # Hang mode: the proxy accepts the app's receipt POST but never answers, so
 # the app can be killed while its own receipt POST is still on the wire —
 # the kill lands INSIDE the send->receipt window, not after the receipt
 # already reached a safe state.
-hang_receipts
-prev_incident="$(current_incident)"
-start_flow \
-  --es mode alert \
-  --es serverUrl "$CAS_FLOW_API_DEVICE" \
-  --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
-  --es responders "+15550100" || fail "am start of SmsFlowActivity failed"
-incident_a="$(wait_new_incident "$prev_incident")" || fail "trigger never ran."
-# Critical path, marker-first: the proxy's .seen marker names the incident
-# (the POST path carries /api/cas/incidents/<id>/device-receipt) and exists
-# only once the receipt POST is on the wire and hanging unanswered — which
-# already implies finalizeBatch persisted the receipt and started the posting
-# thread. Waiting on the local marker file adds zero adb latency, so the
-# force-stop lands within a couple of seconds of the POST starting, well
-# inside the client's 10s read timeout even on a slow TCG emulator. (A
-# journal wait here instead — an adb round-trip per poll — proved racy: on a
-# freshly booted emulator the kill landed after the read timeout had already
-# journaled the FAILED outcome.) The journal assertions run after the kill,
-# where timing no longer matters.
-wait_proxy_seen "$incident_a" || fail "receipt POST for $incident_a never reached the hanging proxy — the kill was not provably in-flight."
-adb shell am force-stop "$PKG"
-echo "force-stopped $PKG with its receipt POST still hanging in the proxy"
+#
+# Late-kill retry: the marker poll and force-stop normally land within a
+# couple of seconds, far inside the app's 10s client read timeout — but on a
+# freshly booted, loaded TCG emulator an adb/am round-trip can outlast that
+# window, and the app then journals the timeout's FAILED outcome BEFORE the
+# kill lands. That is a slow host, not broken durability (the receipt stayed
+# durable and retries honestly), so a late kill retries the whole in-flight
+# attempt once with a fresh incident instead of failing a valid run. A kill
+# that loses to a REPORTED outcome still fails loudly — that means the proxy
+# hang let a real answer through, which breaks the mechanism this scenario
+# proves.
+incident_a=""
+late_incident=""
+for kill_attempt in 1 2; do
+  resolve_active
+  hang_receipts
+  prev_incident="$(current_incident)"
+  start_flow \
+    --es mode alert \
+    --es serverUrl "$CAS_FLOW_API_DEVICE" \
+    --es alertToken "$CAS_FLOW_ALERT_TOKEN" \
+    --es responders "+15550100" || fail "am start of SmsFlowActivity failed"
+  incident_a="$(wait_new_incident "$prev_incident")" || fail "trigger never ran."
+  # Critical path, marker-first: the proxy's .seen marker names the incident
+  # (the POST path carries /api/cas/incidents/<id>/device-receipt) and exists
+  # only once the receipt POST is on the wire and hanging unanswered — which
+  # already implies finalizeBatch persisted the receipt and started the posting
+  # thread. Waiting on the local marker file adds zero adb latency, and the
+  # marker is append-only, so a hung retry of a PREVIOUS attempt's receipt can
+  # never overwrite this attempt's marker. (A journal wait here instead — an
+  # adb round-trip per poll — proved racy: on a freshly booted emulator the
+  # kill landed after the read timeout had already journaled the FAILED
+  # outcome.) The journal assertions run after the kill, where timing no
+  # longer matters.
+  wait_proxy_seen "$incident_a" 0.2 || fail "receipt POST for $incident_a never reached the hanging proxy — the kill was not provably in-flight."
+  adb shell am force-stop "$PKG"
+  echo "force-stopped $PKG with its receipt POST still hanging in the proxy (attempt $kill_attempt)"
 
-# Post-kill journal assertions (timing no longer matters once the process is
-# dead): the trigger went through the proxy to the console, and the send
-# finalized. The marker already proved the posting thread started, which the
-# app only does after journaling the send outcome and persisting the receipt —
-# these greps confirm that ordering held for this incident.
-ev="$(journal_snapshot)" || fail "journal unreadable after the kill — cannot prove the kill beat the receipt."
-grep -q "SMS_FLOW_TRIGGER_OUTCOME[^}]*$incident_a" <<< "$ev" || fail "trigger outcome for $incident_a never journaled."
-grep -q "SMS_SEND_OUTCOME[^}]*$incident_a" <<< "$ev" || fail "send outcome for $incident_a never journaled — the receipt could not have been persisted."
-# The kill beat the receipt: nothing was reported FOR THIS INCIDENT, the
-# console still shows QUEUED, and durable state (pending receipt or
-# unfinished batch) survived. The grep is scoped to this incident's id so
-# phase 0's legitimately reported probe receipt cannot trip it.
-# grep -o extracts only the SMS_RECEIPT_OUTCOME event objects: the journal is
-# a single line, so a plain grep returns the whole line and the case pattern
-# would match this incident's id in unrelated (e.g. SMS_SEND_START) events.
-# The snapshot must be non-empty — a transient empty read would make this
-# negative assertion pass vacuously.
-case "$(grep -o "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*" <<< "$ev" || true)" in
-  "") : ;;
-  *) fail "a receipt outcome was journaled for $incident_a before the kill — the in-flight window was not exercised." ;;
-esac
+  # Post-kill journal assertions (timing no longer matters once the process is
+  # dead): the trigger went through the proxy to the console, and the send
+  # finalized. The marker already proved the posting thread started, which the
+  # app only does after journaling the send outcome and persisting the receipt —
+  # these greps confirm that ordering held for this incident.
+  ev="$(journal_snapshot)" || fail "journal unreadable after the kill — cannot prove the kill beat the receipt."
+  grep -q "SMS_FLOW_TRIGGER_OUTCOME[^}]*$incident_a" <<< "$ev" || fail "trigger outcome for $incident_a never journaled."
+  grep -q "SMS_SEND_OUTCOME[^}]*$incident_a" <<< "$ev" || fail "send outcome for $incident_a never journaled — the receipt could not have been persisted."
+  # Did the kill land inside the window? Nothing may be journaled FOR THIS
+  # INCIDENT yet. The grep is scoped to this incident's id so earlier phases'
+  # legitimately reported receipts cannot trip it. grep -o extracts only the
+  # SMS_RECEIPT_OUTCOME event objects: the journal is a single line, so a
+  # plain grep returns the whole line and the case pattern would match this
+  # incident's id in unrelated (e.g. SMS_SEND_START) events. The snapshot must
+  # be non-empty — a transient empty read would make this negative assertion
+  # pass vacuously.
+  case "$(grep -o "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*" <<< "$ev" || true)" in
+    "")
+      break ;;  # the kill beat the receipt — the in-flight window was exercised
+    *REPORTED*)
+      fail "receipt for $incident_a was REPORTED before the kill — the proxy hang let a real answer through; the in-flight window proof is broken." ;;
+    *)
+      # The app's client read timeout journaled a failure outcome before the
+      # force-stop landed: a slow host, not broken durability (the receipt
+      # stayed durable and will retry honestly). Retry once with a fresh
+      # incident; fail only if the window cannot be hit twice running.
+      late_incident="$incident_a"
+      [ "$kill_attempt" -lt 2 ] || fail "force-stop could not land inside the app's read-timeout window on either attempt — the in-flight window cannot be exercised on this host."
+      echo "late kill on attempt $kill_attempt (read timeout beat the force-stop); resolving $incident_a and retrying with a fresh incident" ;;
+  esac
+done
+[ -n "$incident_a" ] || fail "internal error: scenario A left its attempt loop without an incident."
+
+# The attempt loop above broke out only when nothing was journaled for this
+# incident before the kill, so the in-flight window is proven. The console
+# must still show QUEUED, and durable state (the pending receipt) survived.
 [ "$(sms_item_state "$incident_a")" = "QUEUED" ] || fail "console moved off QUEUED before any receipt could land: $(sms_item_state "$incident_a")"
 # The marker-confirmed kill means this incident's posting thread had started,
 # which means its receipt was persisted before it — so the survivor must be
@@ -522,6 +551,13 @@ wait_event_beyond "$retry_base" 'RECEIPT_RETRY_OUTCOME[^}]*"reported":1[,}]' "$T
   || fail "no new RECEIPT_RETRY_OUTCOME with reported=1 once data returned."
 wait_journal "SMS_RECEIPT_OUTCOME[^}]*$incident_a[^}]*REPORTED" "$TIMEOUT_S" \
   || fail "receipt for $incident_a was not REPORTED after data returned."
+# A late-killed first attempt left its own durable receipt behind; it reports
+# on the same resume. Wait for it too, or the store-drained checks below can
+# race its delivery and read a store that is not done draining.
+if [ -n "$late_incident" ]; then
+  wait_journal "SMS_RECEIPT_OUTCOME[^}]*$late_incident[^}]*REPORTED" "$TIMEOUT_S" \
+    || fail "the late-killed attempt's receipt for $late_incident was not REPORTED after data returned — the drained-store checks would race it."
+fi
 state_a="$(wait_console_state "$incident_a" QUEUED)" || fail "console item for $incident_a stuck QUEUED after the retried receipt."
 EXPECTED_A_STATE="DEAD_LETTER"
 [ "$RADIO_WORKS" = "true" ] && EXPECTED_A_STATE="SENT"
