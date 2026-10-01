@@ -7,6 +7,7 @@ import app from "../app";
 import { eq } from "drizzle-orm";
 import { db, pool } from "@workspace/db";
 import {
+  casEmailAccounts,
   casIncidentEvents,
   casIncidents,
   casMessageTemplates,
@@ -19,7 +20,10 @@ import {
   createCasDeliverySender,
   createSmsProvider,
   buildCasAlertMessage,
+  testHarnessDeliveryForced,
 } from "../lib/delivery-providers";
+import { saveEmailAccount } from "../lib/cas-email-accounts";
+import { startStubSmtp } from "../lib/cas-smtp-stub";
 import { issueDeviceCredential, setCasAuthFailureLimitConfig } from "../lib/cas-auth";
 import { assertDisposableTestDatabase } from "../lib/cas-test-db-guard";
 import { loadConsoleMirrors } from "../lib/cas-console-mirror";
@@ -608,6 +612,67 @@ test("a revoked handset stays blocked on every successive request, even presenti
     assert.ok(outboxItems.length > 0);
     assert.ok(outboxItems.every((item) => item.state === "QUEUED"), `rejected receipt must not transition anything: ${outboxItems.map((item) => `${item.transport}=${item.state}`).join(", ")}`);
   });
+});
+
+// ---------------------------------------------------------------------------
+// On-demand mailbox check vs the test-harness rail
+// ---------------------------------------------------------------------------
+
+test("on-demand mailbox check never dials the configured host under the test harness, even with live-looking SMTP secrets", async () => {
+  // Precondition the whole point stands on: this suite runs with the harness
+  // markers, so the route's skip branch must be the one taken.
+  assert.equal(testHarnessDeliveryForced(), true);
+
+  // The recording stub stands in for the real mailbox: if the route's
+  // test-harness skip regressed, probeSmtpAccount would open a TLS+AUTH
+  // session here and the connection/auth counters would catch it. The
+  // credentials look live, matching the 2026-09 incident environment shape.
+  const stub = await startStubSmtp("starttls");
+  try {
+    // Flow 1: unsaved form values (the console's "test before save" path).
+    const unsaved = await api("/cas/config/email-accounts/primary/test", {
+      method: "POST",
+      body: JSON.stringify({
+        host: "127.0.0.1",
+        port: stub.port,
+        user: "alerts@example.test",
+        password: "live-looking-app-password",
+      }),
+    });
+    assert.equal(unsaved.status, 200);
+    const unsavedBody = (await unsaved.json()) as {
+      ok: boolean;
+      classification?: string;
+      message?: string;
+    };
+    assert.equal(unsavedBody.ok, false);
+    assert.equal(unsavedBody.classification, "test-harness-skip");
+    assert.match(unsavedBody.message ?? "", /skipped without connecting/);
+
+    // Flow 2: stored account, empty body — the saved password resolves from
+    // the database row, and the route still must not connect.
+    await saveEmailAccount("primary", {
+      host: "127.0.0.1",
+      port: stub.port,
+      user: "alerts@example.test",
+      password: "live-looking-app-password",
+    });
+    const stored = await api("/cas/config/email-accounts/primary/test", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    assert.equal(stored.status, 200);
+    const storedBody = (await stored.json()) as { ok: boolean; classification?: string };
+    assert.equal(storedBody.ok, false);
+    assert.equal(storedBody.classification, "test-harness-skip");
+
+    // Across both flows: zero connections, zero AUTH attempts at the stub.
+    assert.equal(stub.connections(), 0);
+    assert.equal(stub.authLogins.length, 0);
+  } finally {
+    await db.delete(casEmailAccounts);
+    await stub.close();
+  }
 });
 
 // ---------------------------------------------------------------------------

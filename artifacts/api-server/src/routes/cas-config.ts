@@ -15,7 +15,11 @@ import {
   validateTemplateBody,
   type CasTemplateChannel,
 } from "../lib/cas-message-template";
-import { buildLocationClause, type CasIncidentLocation } from "../lib/delivery-providers";
+import {
+  buildLocationClause,
+  testHarnessDeliveryForced,
+  type CasIncidentLocation,
+} from "../lib/delivery-providers";
 import {
   deleteEmailAccount,
   emailDeliverySource,
@@ -365,6 +369,9 @@ router.delete("/cas/config/email-accounts/:slot", requireCasCredential, async (r
 // Connect + authenticate probe: proves TLS and the app password without
 // sending mail. Unsaved form values may be supplied; anything omitted falls
 // back to the stored row, so a saved password never needs to round-trip.
+// Under a test harness the dial is skipped entirely (see the handler) so a
+// suite with live CAS_EMAIL_SMTP_* secrets in the environment can never log
+// into the real mailbox from this route either.
 router.post("/cas/config/email-accounts/:slot/test", requireCasCredential, async (req: Request<{ slot: string }>, res, next) => {
   try {
     if (!isEmailAccountSlot(req.params.slot)) {
@@ -384,6 +391,21 @@ router.post("/cas/config/email-accounts/:slot/test", requireCasCredential, async
     if (!host || !user || !password) {
       return res.status(400).json({
         error: "Nothing to test: save the account first or provide host, user, and password.",
+      });
+    }
+    // Same rail as the outbox delivery forcing and the boot-time probe-worker
+    // skip: under a test harness this route must never open a TLS+AUTH
+    // session to the configured mailbox — a suite running with live
+    // CAS_EMAIL_SMTP_* secrets in the environment would otherwise log into
+    // the real account. Validation above still runs, so the request/response
+    // contract is unchanged; only the dial is skipped, and the result says
+    // so explicitly instead of faking a success.
+    if (testHarnessDeliveryForced()) {
+      return res.json({
+        ok: false as const,
+        classification: "test-harness-skip",
+        message:
+          "Test harness detected (NODE_ENV=test or CAS_TEST_DISPOSABLE_DB=1): the mailbox login check was skipped without connecting, so no test run ever opens a session to a real mailbox with the configured CAS_EMAIL_SMTP_* secrets. Run the check from a non-test deployment to verify these credentials.",
       });
     }
     await probeSmtpAccount({ host, port, secure: port === 465, user, password, from: fromAddress ?? user });

@@ -36,11 +36,11 @@ DB-touching suites REFUSE to boot outside the contract runner: a shared boot gua
 
 **How to apply:** always run DB suites via the contract runner; never hand a suite the dev DATABASE_URL. New DB-touching suites must invoke the shared boot guard at module top, before any credential issuance. The guard must fail closed: the harness flag alone is trivially forgeable by hand, so every runner marker is mandatory, not optional.
 
-In test runs, the app's default delivery wiring forces every provider channel onto the in-process dev sink and the scheduled mailbox health probe is skipped, regardless of configured secrets. Suite-spawned child API processes inherit the markers, so their workers are forced too.
+In test runs, the app's default delivery wiring forces every provider channel onto the in-process dev sink and the scheduled mailbox health probe is skipped, regardless of configured secrets. Suite-spawned child API processes inherit the markers, so their workers are forced too. The forcing also covers ON-DEMAND provider contact, not just background paths: the console's mailbox login-check route (cas-config.ts `.../test`) short-circuits to a `test-harness-skip` result under `testHarnessDeliveryForced()` instead of dialing SMTP.
 
-**Why:** the sink only caught gateway channels when credentials were absent; with live secrets configured, tests sent for real.
+**Why:** the sink only caught gateway channels when credentials were absent; with live secrets configured, tests sent for real. The on-demand probe route was later found uncovered by the same rail — same risk class (test run logs into a real mailbox), caught only when someone audited every probeSmtpAccount caller.
 
-**How to apply:** when adding a delivery path, route it through the default sender wiring so the forcing covers it. Keep the forcing at the app-wiring layer, not inside the config loader — unit tests drive the loader directly with fixture envs.
+**How to apply:** when adding a delivery path, route it through the default sender wiring so the forcing covers it — and when adding ANY code path that contacts a provider (probe, health check, validation dial), check `testHarnessDeliveryForced()` at the route/handler boundary too; enumerate every caller of the contact primitive, not just the scheduled ones. Keep the forcing at the app-wiring layer, not inside the config loader — unit tests drive the loader directly with fixture envs.
 
 Ambient workspace provider secrets leak into test processes and would arm the real channels — the delivery forcing is the control, not per-suite env hygiene.
 
