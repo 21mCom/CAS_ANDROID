@@ -49,6 +49,7 @@ packages = ["android-tools", "gradle", "jdk17"]
 CAS_SMS_DELIVERY_MODE = "device"
 CAS_DEVICE_CHANNELS = "SMS"
 CAS_DEV_PROVIDER_SINK = "1"
+CAS_EMAIL_FROM = "cas-alerts@responder.example"
 CAS_WHATSAPP_PROVIDER_URL = "http://127.0.0.1:8080/api/cas/dev/provider-inbox/whatsapp"
 CAS_WHATSAPP_RECIPIENTS = "ops-lead@responder.example"
 CAS_XMPP_FROM_JID = "cas-alerts@responder.example"
