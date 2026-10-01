@@ -3,7 +3,7 @@ name: Browser-testing the credentialed CAS console
 description: Real-browser proofs of the CovertAlertSystem console need a pre-seeded enrolled credential or protected screens render nothing.
 ---
 
-Every CovertAlertSystem console read (not just mutations) requires an enrolled per-device credential held in browser sessionStorage; without one, the app shows an enrollment prompt and its background polling silently does nothing.
+Every CovertAlertSystem console read (not just mutations) requires an enrolled per-device credential held in browser storage; without one, the app opens the in-app enrollment dialog and its background polling silently does nothing.
 
 **Why:** anonymous console reads were retired for self-hosting, so a real-browser proof that only loads the page cannot see the screens it is meant to verify — drift, lock, and error proofs look like no-ops.
 
@@ -18,3 +18,7 @@ Every CovertAlertSystem console read (not just mutations) requires an enrolled p
 **A proof that triggers an incident must clear EVERY gateway provider env var.** The browser-proof harness runs the api-server with NODE_ENV=production and the disposable-DB marker off, so test-sink delivery forcing is OFF; the trigger endpoint queues every gateway transport that is provider-configured (endpoint URL + recipients), and the live outbox worker would then contact the real provider. Clearing only CAS_EMAIL_* is not enough — workspace env made XMPP deliverable and a trigger queued a real XMPP row. The harness now blanks all four transports' CAS_*_PROVIDER_URL/TOKEN/FROM/RECIPIENTS plus the SMTP variables; extend that list if GATEWAY_TRANSPORTS ever grows.
 
 **Browser executable:** the workspace has no Playwright-managed browser download; run the harness with CAS_E2E_CHROMIUM_PATH=/repl/tools/bin/chromium (Chromium 152 works with the suite's Playwright).
+
+**The proof suite shares one disposable DB, and the state endpoint selects the newest incident row (even RESOLVED) as the console's active incident.** A proof that creates an incident (even the "Record test event" button) silently re-targets every later proof that expects the seeded incident. Prefer mutation-free setups (e.g. hold a state response across a page reload) or clean up created rows in a finally block.
+
+**Simulating a browser restart needs an init-script gate.** Playwright `addInitScript` re-runs on EVERY navigation, so a script that seeds sessionStorage re-seeds it after `page.reload()` and the "restart" never happens. Gate the seed on a marker (e.g. a localStorage flag the test flips when it clears sessionStorage) before reloading.

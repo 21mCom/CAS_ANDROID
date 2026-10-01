@@ -2,10 +2,10 @@ import { KeyRound, LockKeyhole } from 'lucide-react';
 
 /**
  * Full-screen takeover shown when the console has no usable device
- * credential (the operator cancelled the enrollment prompt, or the server
+ * credential (the operator cancelled the enrollment dialog, or the server
  * rejected the credential). It replaces the entire console — including the
  * demo seed data — so an operator can never mistake sample records for live
- * incident state while signed out. The retry re-opens the enrollment prompt.
+ * incident state while signed out. The retry re-opens the enrollment dialog.
  */
 export function ConsoleLocked({ message, onUnlock }: { message: string; onUnlock: () => void }) {
   return (

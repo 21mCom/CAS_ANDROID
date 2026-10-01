@@ -272,7 +272,7 @@ try {
             : {}),
         },
       });
-      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, and responder two-step delete.");
+      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, responder two-step delete, and remember-this-browser (persisted vs session-only enrollment, dialog retry, sign-out, revoke-then-lock).");
     } finally {
       await stopProcess(webServer, "console preview");
       await stopProcess(apiServer, "api-server");

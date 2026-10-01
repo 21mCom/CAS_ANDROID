@@ -100,13 +100,19 @@ test('non-object bodies are rejected instead of blowing up on property access', 
  */
 async function withStubbedServer(body: unknown, run: () => Promise<unknown>): Promise<unknown> {
   const store = new Map<string, string>([['cas-device-token', 'test-device-token']]);
+  const localStore = new Map<string, string>();
   const globals = globalThis as Record<string, unknown>;
-  const original = { window: globals.window, sessionStorage: globals.sessionStorage, fetch: globals.fetch };
+  const original = { window: globals.window, sessionStorage: globals.sessionStorage, localStorage: globals.localStorage, fetch: globals.fetch };
   globals.window = { prompt: () => null, alert: () => {} };
   globals.sessionStorage = {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => { store.set(key, value); },
     removeItem: (key: string) => { store.delete(key); },
+  };
+  globals.localStorage = {
+    getItem: (key: string) => localStore.get(key) ?? null,
+    setItem: (key: string, value: string) => { localStore.set(key, value); },
+    removeItem: (key: string) => { localStore.delete(key); },
   };
   globals.fetch = async () => ({ ok: true, status: 200, json: async () => body });
   try {
@@ -114,6 +120,7 @@ async function withStubbedServer(body: unknown, run: () => Promise<unknown>): Pr
   } finally {
     globals.window = original.window;
     globals.sessionStorage = original.sessionStorage;
+    globals.localStorage = original.localStorage;
     globals.fetch = original.fetch;
   }
 }

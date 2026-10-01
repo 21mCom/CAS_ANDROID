@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { LogOut } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { StateResponseError } from '@/components/state-response-error';
@@ -27,7 +28,7 @@ import Capture from '@/pages/capture';
 const queryClient = new QueryClient();
 
 function RoutedApp() {
-  const { runTestIncident, stateIssue, retryStateLoad, authLock, unlockConsole, offlineDemo } = useFieldTest();
+  const { runTestIncident, stateIssue, retryStateLoad, authLock, unlockConsole, signOutConsole, signedOut, offlineDemo } = useFieldTest();
   // A missing or rejected credential locks the whole console: rendering
   // anything else would risk presenting the demo seed as live state.
   if (authLock) return <ConsoleLocked message={authLock} onUnlock={unlockConsole} />;
@@ -35,8 +36,13 @@ function RoutedApp() {
   // rendering the console anyway would present unrecognized (or demo) data
   // as real durable state.
   if (stateIssue) return <StateResponseError message={stateIssue} onRetry={retryStateLoad} />;
+  // Signed out and not yet re-authenticated: show nothing but a blank
+  // backdrop (the enrollment dialog opens on top of it). Unmounting the
+  // shell here is what discards route-local data — responder lists, email
+  // settings — fetched under the previous credential.
+  if (signedOut) return <SignedOutBackdrop />;
   return (
-    <AppShell onRunTest={runTestIncident}>
+    <AppShell onRunTest={runTestIncident} onSignOut={signOutConsole}>
       {/* The demo seed survives only as the labeled offline fallback. */}
       {offlineDemo && <OfflineDemoBanner onRetry={retryStateLoad} />}
       <RoutedErrorBoundary>
@@ -67,6 +73,27 @@ function Router() {
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+
+/**
+ * Blank takeover shown from sign-out until a state load has authenticated
+ * with a fresh credential. It renders no console chrome and no data — the
+ * enrollment dialog opens on top of it, and cancelling that dialog trades
+ * it for the locked surface.
+ */
+function SignedOutBackdrop() {
+  return (
+    <div
+      data-testid="console-signed-out"
+      className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center"
+    >
+      <LogOut size={32} className="mb-4 text-muted-foreground" />
+      <h1 className="text-lg font-semibold">Signed out</h1>
+      <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+        This browser&apos;s credential was cleared. Sign in again to reopen the console.
+      </p>
+    </div>
+  );
 }
 
 function App() {

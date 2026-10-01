@@ -1,5 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
+import { DeviceEnrollmentDialog } from '@/components/device-enrollment-dialog';
+import {
+  clearStoredDeviceToken,
+  readStoredDeviceToken,
+  requestDeviceEnrollment,
+  storeDeviceToken,
+  type DeviceEnrollmentExchange,
+} from '@/lib/device-credential-storage';
 
 export type GateStatus = 'verified' | 'partial' | 'blocked' | 'not-started';
 export type Priority = 'P1' | 'P2' | 'P3';
@@ -175,8 +183,21 @@ type FieldTestContextValue = FieldTestState & {
    * showing any incident data — least of all the demo seed.
    */
   authLock: string | null;
-  /** Re-opens the enrollment prompt and retries the state load. */
+  /** Re-opens the enrollment dialog and retries the state load. */
   unlockConsole: () => void;
+  /**
+   * Signs this browser out: clears the stored device credential (both the
+   * session and the kept-signed-in copy) and reloads, which lands on the
+   * enrollment dialog. Server-side revocation of a lost device stays in the
+   * device-credentials management panel.
+   */
+  signOutConsole: () => void;
+  /**
+   * True from sign-out until a state load has authenticated with a fresh
+   * credential: the shell shows only a blank signed-out backdrop (with the
+   * enrollment dialog on top), never the previous session's screens.
+   */
+  signedOut: boolean;
   /**
    * True only when the visible state is the built-in demo seed because the
    * server itself was unreachable; the shell labels it as demo/offline data.
@@ -277,12 +298,28 @@ const initialState: FieldTestState = {
 
 const FieldTestContext = createContext<FieldTestContextValue | null>(null);
 
-const DEVICE_TOKEN_KEY = 'cas-device-token';
+/**
+ * Monotonic authentication generation. Sign-out (or any credential
+ * teardown) bumps it, and every state-applying callback captures it before
+ * its request and compares after: a response from before the teardown is
+ * stale and must be ignored, or a held in-flight response from the previous
+ * session could re-apply old data, clear the lock, and re-open a console
+ * whose credential stores are empty.
+ */
+let casAuthGeneration = 0;
+
 export function FieldTestProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FieldTestState>(initialState);
   const [stateIssue, setStateIssue] = useState<string | null>(null);
   const [authLock, setAuthLock] = useState<string | null>(null);
   const [offlineDemo, setOfflineDemo] = useState(false);
+  // True from the moment the operator signs this browser out until a fresh
+  // credential has actually authenticated a state load. While set, the shell
+  // replaces every route with a blank signed-out backdrop — the enrollment
+  // dialog opens on top of it — so no previously rendered screen (responders,
+  // incident data) stays visible or interactive behind the dialog, and no
+  // late in-flight response can re-expose it.
+  const [signedOut, setSignedOut] = useState(false);
 
   // A cancelled or rejected credential locks the console (never demo data);
   // only a genuinely unreachable server falls back to the demo seed, and
@@ -299,6 +336,7 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const generation = casAuthGeneration;
     const load = async () => {
       try {
         // State reads are credential-gated like mutations: the first load of
@@ -323,14 +361,14 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
           response = await casAuthedFetch('/api/cas/state');
           remote = parseCasStateResponse(await response.json());
         }
-        if (!cancelled) {
+        if (!cancelled && generation === casAuthGeneration) {
           setState({ ...remote, fieldRun: initialState.fieldRun });
           setStateIssue(null);
           setAuthLock(null);
           setOfflineDemo(false);
         }
       } catch (error) {
-        if (!cancelled) routeLoadFailure(error);
+        if (!cancelled && generation === casAuthGeneration) routeLoadFailure(error);
       }
     };
     void load();
@@ -338,13 +376,21 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reload = async () => {
+    const generation = casAuthGeneration;
     const response = await casAuthedFetch('/api/cas/state');
     if (!response.ok) throw new Error('Unable to reload durable state');
     const remote = parseCasStateResponse(await response.json());
+    // Ignore a response whose request predates a sign-out: the credential
+    // it used is gone, and applying it would unseal the console without a
+    // fresh sign-in.
+    if (generation !== casAuthGeneration) return;
     setState((current) => ({ ...remote, fieldRun: current.fieldRun }));
     setStateIssue(null);
     setAuthLock(null);
     setOfflineDemo(false);
+    // A state load authenticated by a fresh credential: only now may the
+    // console come back after sign-out.
+    setSignedOut(false);
   };
 
   // Any action whose reload hits a drifted server raises the same mismatch
@@ -450,13 +496,39 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
     stateIssue,
     retryStateLoad: () => { void reload().catch(routeLoadFailure); },
     authLock,
-    // The retry re-opens the enrollment prompt: a cancelled/rejected
+    // The retry re-opens the enrollment dialog: a cancelled/rejected
     // credential leaves no stored token, so casAuthedFetch asks again.
     unlockConsole: () => { void reload().catch(routeLoadFailure); },
+    // Sign-out forgets this browser's credential, bumps the auth generation
+    // (invalidating every in-flight request from the previous session), and
+    // reloads: with nothing stored, the reload's first credentialed read
+    // lands on the enrollment dialog, and a cancellation there locks the
+    // console behind the signed-out surface. The signedOut gate unmounts
+    // every route (and its locally cached data) immediately and keeps the
+    // shell hidden until a state load belonging to the NEW generation has
+    // authenticated — neither a slow or rejected enrollment nor a stale
+    // in-flight response can re-expose the previous session's screens.
+    signOutConsole: () => {
+      clearStoredDeviceToken();
+      casAuthGeneration += 1;
+      setState(initialState);
+      setSignedOut(true);
+      setAuthLock(null);
+      setStateIssue(null);
+      void reload().catch(routeLoadFailure);
+    },
+    signedOut,
     offlineDemo,
-  }), [state, stateIssue, authLock, offlineDemo]);
+  }), [state, stateIssue, authLock, signedOut, offlineDemo]);
 
-  return <FieldTestContext.Provider value={value}>{children}</FieldTestContext.Provider>;
+  return (
+    <FieldTestContext.Provider value={value}>
+      {/* The in-app enrollment dialog the data layer opens when this browser
+          has no usable device credential. */}
+      <DeviceEnrollmentDialog />
+      {children}
+    </FieldTestContext.Provider>
+  );
 }
 
 export function useFieldTest() {
@@ -489,8 +561,9 @@ export async function casAuthedFetch(input: string, init: RequestInit = {}): Pro
     headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
   });
   if (response.status === 401) {
-    // Revoked or unknown credential: drop it so the next action re-enrolls.
-    sessionStorage.removeItem(DEVICE_TOKEN_KEY);
+    // Revoked or unknown credential: drop it from both storages so the next
+    // action re-enrolls (a kept-signed-in browser is no exception).
+    clearStoredDeviceToken();
     throw new CasCredentialError('The device credential was rejected by the server (revoked or unknown). The next action will ask for the enrollment credential again.');
   }
   return response;
@@ -498,31 +571,58 @@ export async function casAuthedFetch(input: string, init: RequestInit = {}): Pro
 
 // Each console browser enrolls its own revocable device credential: the
 // operator enters the shared enrollment credential (the server's
-// CAS_ALERT_TOKEN secret) once, the browser exchanges it at the enrollment
-// endpoint for a per-device token, and only that token is kept (in
-// sessionStorage) and presented on mutations. A lost laptop or shared
-// session is then containable by revoking that one credential, and every
-// journaled mutation names the console that sent it.
+// CAS_ALERT_TOKEN secret) in the in-app enrollment dialog, the browser
+// exchanges it at the enrollment endpoint for a per-device token, and only
+// that token is kept — session-only by default, or pinned to this browser
+// when the operator explicitly opts in — and presented on requests. A lost
+// laptop or shared session is then containable by revoking that one
+// credential, and every journaled mutation names the console that sent it.
 async function ensureDeviceToken(): Promise<string> {
-  const stored = sessionStorage.getItem(DEVICE_TOKEN_KEY) ?? '';
+  const stored = readStoredDeviceToken() ?? '';
   if (stored) return stored;
-  const enrollmentCredential = window.prompt(
-    'Enter the enrollment credential — the alert password chosen when the server was set up (its CAS_ALERT_TOKEN secret). This browser swaps it for its own revocable access credential; the password itself is never stored here.',
-  )?.trim() ?? '';
-  if (!enrollmentCredential) return '';
-  const response = await fetch('/api/cas/devices/enroll', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${enrollmentCredential}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label: `operator-console-${Math.random().toString(16).slice(2, 8)}` }),
-  });
-  if (!response.ok) {
-    window.alert('The enrollment credential was rejected by the server; no device credential was enrolled.');
-    return '';
+  // Concurrent credentialed calls (initial load + a poll landing together)
+  // share one dialog instead of racing to open several.
+  if (!enrollmentInFlight) {
+    enrollmentInFlight = enrollViaDialog().finally(() => { enrollmentInFlight = null; });
   }
-  const { token } = (await response.json()) as { token?: string };
-  if (!token) return '';
-  sessionStorage.setItem(DEVICE_TOKEN_KEY, token);
-  return token;
+  return enrollmentInFlight;
+}
+
+let enrollmentInFlight: Promise<string> | null = null;
+
+/**
+ * Drives the enrollment dialog until it produces a working device token or
+ * the operator gives up. The dialog owns retry: it stays open while the
+ * exchange is in flight and shows a rejection inline, so a signed-out
+ * console is never re-exposed mid-authentication and a typo never locks
+ * the console. A cancellation returns '' so the caller locks the console
+ * behind the signed-out surface. There is deliberately no silent
+ * re-enrollment path.
+ */
+async function enrollViaDialog(): Promise<string> {
+  let issued = '';
+  const exchange: DeviceEnrollmentExchange = async ({ credential, keepSignedIn }) => {
+    const response = await fetch('/api/cas/devices/enroll', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: `operator-console-${Math.random().toString(16).slice(2, 8)}` }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      return body.error || 'The enrollment credential was rejected by the server; no device credential was enrolled.';
+    }
+    const { token } = (await response.json()) as { token?: string };
+    if (!token) return 'The server answered the enrollment without a device credential; nothing was stored.';
+    storeDeviceToken(token, keepSignedIn);
+    issued = token;
+    return null;
+  };
+  const prompt = requestDeviceEnrollment(exchange);
+  // No dialog mounted (unit tests, non-UI callers): refuse rather than
+  // fall back to a native prompt or an implicit enrollment.
+  if (!prompt) return '';
+  const enrolled = await prompt;
+  return enrolled ? issued : '';
 }
 
 function reportAuthError(error: unknown) {
@@ -593,13 +693,14 @@ export async function lockOnCredentialFailure<T>(
 }
 
 /**
- * The session's enrolled device token, or null when this browser has not
- * enrolled yet. Read-only: unlike casAuthedFetch this never prompts, so
- * polling surfaces (outbox status) can wait for the credential instead of
- * opening a second enrollment prompt.
+ * This browser's enrolled device token, or null when it has not enrolled
+ * yet (whichever storage the operator chose). Read-only: unlike
+ * casAuthedFetch this never prompts, so polling surfaces (outbox status)
+ * can wait for the credential instead of opening a second enrollment
+ * dialog.
  */
 export function casStoredDeviceToken(): string | null {
-  return sessionStorage.getItem(DEVICE_TOKEN_KEY);
+  return readStoredDeviceToken();
 }
 
 export type CaptureRequestItem = {

@@ -56,3 +56,4 @@
 - [Operator guide packs](operator-guide-packs.md) — task plans name stale deliverable ZIP versions; operator docs must reference the newest ZIP in deliverables/, never the plan's literal.
 - [Editing .replit](dot-replit-edit-flow.md) — direct Edit is rejected; write the full TOML to a temp file and call verifyAndReplaceDotReplit.
 - [Replit deployment secret sync](replit-deployment-secret-sync.md) — deployments inherit workspace secrets automatically; quarantine live delivery secrets with blank overrides before first publish.
+- [CAS console sign-out seal](cas-console-signout-seal.md) — sign-out needs storage clear + shell unmount + auth-generation guard, or a held in-flight response re-opens the sealed console.

@@ -100,9 +100,10 @@ export function useOutboxStatus(pollMs = 12_000): { status: OutboxStatus | null;
     const load = async () => {
       try {
         // The status endpoint is credential-gated like every other incident
-        // read. Until this browser has enrolled (the state load prompts), skip
-        // the tick quietly instead of prompting twice or flagging a false
-        // outage; the next poll picks the credential up from sessionStorage.
+        // read. Until this browser has enrolled (the state load opens the
+        // enrollment dialog), skip the tick quietly instead of prompting
+        // twice or flagging a false outage; the next poll picks the
+        // credential up from this browser's credential storage.
         const token = casStoredDeviceToken();
         if (!token) return;
         const parsed = await requestOutboxStatus(fetch, token);

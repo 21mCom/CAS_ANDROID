@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, Mail, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
+import { Activity, Camera, ClipboardCheck, Command, FileClock, LayoutDashboard, LogOut, Mail, Menu, MessageSquareText, Radio, ShieldAlert, Users, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 
 // `testId` pins each nav selector to the value it had when the labels were
@@ -15,7 +15,7 @@ const navItems = [
   { href: '/email', label: 'Email alerts', shortLabel: 'Email', icon: Mail, testId: 'link-nav-email-delivery' },
 ];
 
-export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTest: () => void }) {
+export function AppShell({ children, onRunTest, onSignOut }: { children: ReactNode; onRunTest: () => void; onSignOut?: () => void }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [justRan, setJustRan] = useState(false);
@@ -66,6 +66,14 @@ export function AppShell({ children, onRunTest }: { children: ReactNode; onRunTe
           <div className="flex items-center gap-3">
             {justRan && <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-[#236047] sm:flex"><span className="h-1.5 w-1.5 rounded-full bg-[#4e9a70]" />Test event recorded</span>}
             <button onClick={runTest} title="Writes a local test record only — no alert is sent and no responder is contacted." className="group inline-flex items-center gap-2 rounded-lg bg-[#e8a629] px-3 py-2 text-[11px] font-bold text-[#203c49] transition-transform hover:-translate-y-px active:translate-y-0" data-testid="button-run-test-incident"><Command size={14} /><span className="hidden sm:inline">Record test event</span><span className="sm:hidden">Test</span></button>
+            {onSignOut && (
+              <button
+                onClick={onSignOut}
+                title="Clears this browser's credential (including a kept-signed-in one) and returns to sign-in. To cut off a lost device for good, revoke it from the device credentials panel on the Setup checklist page."
+                className="inline-flex items-center gap-2 rounded-lg border border-[#d7d8d0] px-3 py-2 text-[11px] font-bold text-[#43575a] transition-colors hover:border-[#203c49] hover:text-[#203c49]"
+                data-testid="button-sign-out-console"
+              ><LogOut size={14} /><span className="hidden sm:inline">Sign out</span></button>
+            )}
           </div>
         </header>
         <main className="instrument-grid min-h-[calc(100dvh-68px)] px-4 py-6 sm:px-8 sm:py-8 xl:px-12">{children}</main>
