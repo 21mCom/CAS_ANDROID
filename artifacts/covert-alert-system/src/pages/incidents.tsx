@@ -3,6 +3,7 @@ import { Activity, ArrowRight, Camera, Check, CircleStop, Download, LockKeyhole,
 import { Link } from 'wouter';
 import { casAuthedFetch, useFieldTest, type EvidenceItem, type OutboxItem, type Priority } from '@/hooks/use-field-test';
 import { formatEvidenceSize, useCapturePolicy } from '@/hooks/use-capture-policy';
+import { evidenceDownloadFilename } from '@/lib/evidence-download';
 import { EvidenceLabel, EmptyState, FriendlyErrorMessage, PriorityPill, SectionKicker } from '@/components/field-ui';
 import { OutboxStatusPanel } from '@/components/outbox-status';
 
@@ -79,7 +80,13 @@ export default function Incidents() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `cas-${activeIncident?.id}-${item.kind}-${item.sequence}.${item.kind === 'photo' ? 'jpg' : item.kind === 'video' ? 'mp4' : 'm4a'}`;
+      // The server's Content-Disposition filename is the source of truth
+      // (it carries the camera label); the local fallback mirrors it.
+      anchor.download = evidenceDownloadFilename(
+        response.headers.get('content-disposition'),
+        activeIncident?.id,
+        item,
+      );
       // The anchor must be in the document: some browsers ignore synthetic
       // click() downloads on detached elements.
       document.body.append(anchor);

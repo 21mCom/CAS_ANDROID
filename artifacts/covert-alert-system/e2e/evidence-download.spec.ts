@@ -8,6 +8,11 @@ import { expect, test } from '@playwright/test';
 // startup and silently aborted it — this spec fails the moment that pattern
 // (or a detached anchor) comes back.
 //
+// It also pins the saved filename to the server's Content-Disposition: the
+// clip is uploaded with a front-camera label, so the server names it
+// cas-<incident>-photo-front-1.jpg and the console must save exactly that —
+// the console once rebuilt the filename itself and dropped the camera label.
+//
 // Environment is provided by scripts/run-console-browser-proof.mjs:
 //   CAS_E2E_API_ORIGIN   — api-server origin (disposable DB, test credential)
 //   CAS_E2E_ALERT_TOKEN  — the fixed, test-only enrollment credential
@@ -19,7 +24,7 @@ import { expect, test } from '@playwright/test';
 const API_ORIGIN = process.env.CAS_E2E_API_ORIGIN;
 const ALERT_TOKEN = process.env.CAS_E2E_ALERT_TOKEN;
 const INCIDENT_ID = 'e2e-mid-session-lock-incident';
-const EXPECTED_FILENAME = `cas-${INCIDENT_ID}-photo-1.jpg`;
+const EXPECTED_FILENAME = `cas-${INCIDENT_ID}-photo-front-1.jpg`;
 
 test.beforeEach(() => {
   if (!API_ORIGIN || !ALERT_TOKEN) {
@@ -39,14 +44,15 @@ test('clicking Download once saves the evidence file with the expected filename'
   expect(enroll.status()).toBe(201);
   const { token } = (await enroll.json()) as { device: { id: string }; token: string };
 
-  // Attach a photo clip to the seeded incident through the real upload
-  // endpoint. The enrolled credential authorizes it, exactly like the
+  // Attach a front-camera photo clip to the seeded incident through the real
+  // upload endpoint. The enrolled credential authorizes it, exactly like the
   // handset's own credential would.
   const upload = await request.post(`${API_ORIGIN}/api/cas/incidents/${INCIDENT_ID}/evidence`, {
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'image/jpeg',
       'x-cas-evidence-kind': 'photo',
+      'x-cas-evidence-camera': 'front',
       'x-cas-captured-at': '1760000000000',
     },
     data: Buffer.from('e2e-fake-jpeg-bytes'),
