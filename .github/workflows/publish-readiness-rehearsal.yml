@@ -1,0 +1,83 @@
+name: Publish-readiness rehearsal
+
+# Runs the publish-readiness rehearsal (scripts/rehearse-publish-readiness.mjs)
+# so a change that breaks the deployment contract — the Reserved VM target in
+# .replit, boot against a schema-less production database, anonymous 401s
+# everywhere except /api/healthz, the enrollment → read → revoke → locked
+# credential lifecycle, update-endpoint 404s, or the dev provider-inbox sink
+# under NODE_ENV=production — fails before merge instead of at publish time.
+on:
+  push:
+    paths:
+      - ".replit"
+      - "artifacts/api-server/**"
+      - "artifacts/covert-alert-system/**"
+      # The rehearsal asserts each artifact's production-service posture, so a
+      # deployment-configuration edit must re-run it.
+      - "artifacts/*/.replit-artifact/artifact.toml"
+      - "lib/db/**"
+      - "scripts/rehearse-publish-readiness.mjs"
+      - "scripts/disposable-review-database.mjs"
+      - ".github/workflows/publish-readiness-rehearsal.yml"
+  pull_request:
+    paths:
+      - ".replit"
+      - "artifacts/api-server/**"
+      - "artifacts/covert-alert-system/**"
+      - "artifacts/*/.replit-artifact/artifact.toml"
+      - "lib/db/**"
+      - "scripts/rehearse-publish-readiness.mjs"
+      - "scripts/disposable-review-database.mjs"
+      - ".github/workflows/publish-readiness-rehearsal.yml"
+  workflow_dispatch:
+
+jobs:
+  publish-readiness:
+    name: Rehearse the production deployment contract against a disposable PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Put the preinstalled PostgreSQL server binaries on PATH
+        run: |
+          set -euo pipefail
+          # Same disposable-cluster pattern as the api-server route-tests job:
+          # the rehearsal bootstraps its own throwaway cluster via
+          # scripts/disposable-review-database.mjs, which needs initdb, pg_ctl,
+          # and createdb. ubuntu-latest ships PostgreSQL but keeps the server
+          # binaries off PATH, so expose them here. Fail loudly if a future
+          # runner image drops the package instead of silently skipping.
+          pgbin="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          if [ ! -x "$pgbin/initdb" ]; then
+            echo "::error::No initdb found under /usr/lib/postgresql — runner image changed?"
+            exit 1
+          fi
+          echo "$pgbin" >> "$GITHUB_PATH"
+          echo "Using PostgreSQL binaries from $pgbin"
+
+      - name: Install workspace dependencies
+        # The rehearsal builds and boots both the api-server and the console,
+        # and pushes the drizzle schema via @workspace/db (an api-server
+        # dependency).
+        run: pnpm install --frozen-lockfile --filter @workspace/api-server... --filter @workspace/covert-alert-system...
+
+      - name: Run the publish-readiness rehearsal
+        # Provisions the disposable cluster, builds the exact production
+        # bundles, boots the API in NODE_ENV=production with every live
+        # provider/SMTP variable cleared, walks the credential lifecycle, and
+        # tears everything down. Fixed test-only credentials authenticate
+        # nothing real.
+        run: pnpm --filter @workspace/scripts run rehearse:publish-readiness
