@@ -48,3 +48,48 @@ committed silently when nothing re-validates the post-rebase tree.
   concurrent work never touched, and re-merge your hunks onto overlap files
   with `git diff <tip>^ <tip> -- <file> | git apply --3way`. Audit the result
   with an untruncated git status for swept-up stray files before recommitting.
+- When the rebase *linearizes a merge* (replays the second parent's commits
+  onto the first, skipping the merge commits themselves): conflict
+  resolutions recorded in the skipped merge commits are lost, and a
+  clean-applying pick can silently move a file away from the intended final
+  tree (observed: a duplicate-import break re-introduced into
+  lib/db/src/schema/cas.ts despite every conflict round being resolved to the
+  verified tree). Always finish by comparing the FINAL tree hash against the
+  pre-rebase tip's tree (`git rev-parse HEAD^{tree}` vs reflog tip) — any
+  difference is damage to repair. The replay also rewrites SHAs (clobber-check
+  allowlist entries naming old SHAs stop matching; add entries for the
+  rewritten ones) and breaks the DAG link to any pushed remote tip — re-link
+  with a trivial `git merge <remote-tip>` (trees identical by then) and push,
+  or subsequent pushes go non-fast-forward again.
+- A completion rebase triggered while the task branch carries a big merge
+  commit replays BOTH parents' lineages as picks — observed 103k picks for a
+  reunification merge, intractable at ~12 picks/min with driver timeouts
+  killing git mid-pick. Shortcut that the platform driver accepted: when
+  `git merge-tree --write-tree <onto> <tip>` is conflict-free AND the two
+  sides' post-merge-base changed-file sets are disjoint (verify with
+  `comm -12` on both `git diff --name-only` lists), stop the grind, review
+  EVERY `-` line of the tip→union-tree diff, then `git commit-tree
+  <union-tree> -p <onto> -p <tip>`, `git reset --hard` to it, truncate
+  `.git/rebase-merge/git-rebase-todo` to empty, and call
+  continueMergeResolution — it finishes cleanly and keeps the pushed remote
+  tip a fast-forward ancestor. Re-run the full battery on the union tree
+  before marking complete.
+- When background-grinding a rebase from shell scripts: guard the loop with
+  `flock` so a retry never spawns a second grinder (two concurrent grinders
+  raced on index.lock and triple-appended `done` entries), and never
+  `pkill -f <pattern>` from a shell whose own command line contains the
+  pattern — it kills the calling shell (exit -1); use exact PIDs from
+  `pgrep -a -f ... | grep -v pgrep` output instead.
+- The completion rebase LINEARIZES (no --rebase-merges): any merge commit in
+  the task branch re-adds its second parent's entire lineage to the pick
+  list, so collapsing a huge rebase with a merge commit makes the NEXT
+  completion attempt re-replay the same ~103k picks and re-stop on the same
+  conflict (observed: three consecutive attempts, same todo, same conflict
+  file). Escape: replace the branch with ONE squash commit (parent = current
+  mainline tip, tree = the verified union tree) so the rebase has nothing to
+  replay and the platform goes straight to validation/review. Then re-link
+  the pushed remote tip's ancestry with a merge commit (parents: squashed
+  branch tip, remote tip; tree unchanged — verify `git rev-parse
+  <both>^{tree}` match first) and fast-forward push. Only safe once the
+  branch is a direct child of the mainline tip, or the next completion
+  rebase re-triggers the treadmill.

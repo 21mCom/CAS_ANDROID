@@ -12,6 +12,8 @@ The workspace pushes and dispatches to GitHub repo `21mCom/CAS_ANDROID` using th
 - Broken alternatives (re-verified 2026-09-17): `replit-git-askpass` mints an invalid ~30-char token (401 everywhere); the GitHub connector's app has no installation on the repo (writes 403). Do not retry either for writes.
 - Failure mode when the PAT lapses: every push/dispatch fails 401 and CI iteration stalls. Rotation steps live in `.github/workflows/pat-expiry-watchdog.yml`'s header comment; the watchdog turns red 60 days before the recorded PAT_EXPIRES_AT (update that constant in BOTH the workspace and GitHub copies when rotating — a contents-API PUT updates the GitHub copy and itself proves Contents:write).
 
+**Source of truth (user directive, 2026-10-01):** the Replit workspace mainline is canonical; GitHub is a downstream push target ("Github is to get pushed to occasionally as needed for new builds"). When the two diverge, align GitHub to the workspace — a history-rewrite (force) push of GitHub main is acceptable — after verifying no remote-side commit carries content the workspace lacks. Do not treat GitHub's lineage as something to preserve.
+
 **Why:** Two OAuth setup attempts and repeated askpass failures cost several failed CI runs before the PAT path worked; recording the expiry in two places (here and github-ci-access.md) is deliberate so whichever page an agent opens shows it.
 
 **How to apply:** For rotation, request a fresh fine-grained PAT via `requestSecrets` (the user must mint it in GitHub — agents cannot), verify with a workflow_dispatch (204) and check the new expiry header, then update PAT_EXPIRES_AT in both watchdog copies and both memory files.

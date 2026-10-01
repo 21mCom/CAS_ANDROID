@@ -51,7 +51,6 @@ process.env.CAS_ALERT_TOKEN ??= "cas-test-alert-token";
 // This suite writes to whatever DATABASE_URL points at: refuse to boot unless
 // the contract runner's disposable review database is provably the target.
 assertDisposableTestDatabase();
-
 const suiteCredential = await issueDeviceCredential("config-test-suite");
 
 // This suite intentionally strings credential rejections together; run the
@@ -131,7 +130,7 @@ test("responder reads never seed rows from the environment recipient lists", asy
     assert.equal(body.responders.length, 0, "env recipient lists must not become responder rows");
   }
 
-  const rows = await db.select({ id: casResponders.id }).from(casResponders);
+  const rows = await db.select({ id: casResponders.id, enabled: casResponders.enabled }).from(casResponders);
   assert.equal(rows.length, 0, "the responder table stays empty until an operator POSTs");
   assert.deepEqual(
     rows.filter((row) => row.id.startsWith("seed-")),
