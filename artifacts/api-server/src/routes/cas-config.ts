@@ -177,6 +177,23 @@ router.patch("/cas/config/responders/:id", requireCasCredential, async (req: Req
   } catch (error) { return next(error); }
 });
 
+// Permanently removes a responder and every channel address they had (hard
+// delete — personal data must not linger once an operator removes someone).
+// Nothing references cas_responders with a foreign key, and delivery resolves
+// recipients per send attempt, so pending outbox items simply skip the deleted
+// responder. Deleting the last row returns delivery to the env-recipient
+// fallback (resolveDbRecipients returns null for an empty table).
+router.delete("/cas/config/responders/:id", requireCasCredential, async (req: Request<{ id: string }>, res, next) => {
+  try {
+    const [deleted] = await db
+      .delete(casResponders)
+      .where(eq(casResponders.id, req.params.id))
+      .returning({ id: casResponders.id });
+    if (!deleted) return res.status(404).json({ error: "Responder not found" });
+    return res.status(204).end();
+  } catch (error) { return next(error); }
+});
+
 // A representative preview context: exactly what a responder would receive
 // for a current P1 alert with a fresh fix. Placeholders are substituted
 // server-side so the console preview can never drift from the real sender.

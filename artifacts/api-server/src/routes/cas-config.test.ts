@@ -186,6 +186,36 @@ test("responder create/validate/edit/disable cycle", async () => {
   assert.equal(missing.status, 404);
 });
 
+test("responder delete hard-removes the row and 404s unknown ids", async () => {
+  const unauthenticated = await api("/cas/config/responders/rsp-whatever", { method: "DELETE" }, false);
+  assert.equal(unauthenticated.status, 401);
+
+  const created = await api("/cas/config/responders", {
+    method: "POST",
+    body: JSON.stringify({ name: "Temp", smsNumber: "+15557654321", emailAddress: "temp@example.org" }),
+  });
+  assert.equal(created.status, 201);
+  const responder = (await created.json()) as { id: string };
+
+  // A leftover imported row (deterministic seed-* id) deletes the same way.
+  await db.insert(casResponders).values({ id: "seed-sms-1", name: "Imported", smsNumber: "+1555000222" });
+
+  for (const id of [responder.id, "seed-sms-1"]) {
+    const removed = await api(`/cas/config/responders/${id}`, { method: "DELETE" });
+    assert.equal(removed.status, 204, `delete ${id}`);
+  }
+
+  const listed = await api("/cas/config/responders");
+  const { responders } = (await listed.json()) as { responders: Array<{ id: string }> };
+  assert.deepEqual(responders, [], "deleted responders are gone from the list immediately");
+
+  const rows = await db.select({ id: casResponders.id }).from(casResponders);
+  assert.equal(rows.length, 0, "hard delete: no row (and no channel addresses) remains in the database");
+
+  const missing = await api(`/cas/config/responders/${responder.id}`, { method: "DELETE" });
+  assert.equal(missing.status, 404);
+});
+
 // ---------------------------------------------------------------------------
 // Templates: defaults, validation, preview, reset
 // ---------------------------------------------------------------------------
@@ -355,6 +385,21 @@ test("disabling every responder on a channel stops its fan-out", async () => {
 });
 
 test("env recipient lists remain the fallback while no DB responders exist", async () => {
+  const { reused } = await trigger();
+  assert.equal(reused, false);
+  assert.deepEqual(await outboxTransports(), ["SMS", "XMPP"]);
+});
+
+test("deleting the last responder re-arms the env-recipient fallback", async () => {
+  const created = await api("/cas/config/responders", {
+    method: "POST",
+    body: JSON.stringify({ name: "Alex", smsNumber: "+15557654321" }),
+  });
+  const responder = (await created.json()) as { id: string };
+  const removed = await api(`/cas/config/responders/${responder.id}`, { method: "DELETE" });
+  assert.equal(removed.status, 204);
+  // With the circle empty again, resolveDbRecipients returns null and the
+  // env lists govern fan-out exactly as if the page were never used.
   const { reused } = await trigger();
   assert.equal(reused, false);
   assert.deepEqual(await outboxTransports(), ["SMS", "XMPP"]);

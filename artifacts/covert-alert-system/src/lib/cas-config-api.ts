@@ -90,6 +90,13 @@ export async function updateResponder(id: string, payload: ResponderPayload): Pr
   await expectOk(response, 'Unable to update the responder');
 }
 
+export async function deleteResponder(id: string): Promise<void> {
+  const response = await casAuthedFetch(`/api/cas/config/responders/${id}`, { method: 'DELETE' });
+  // A 204 has no JSON body, so check ok before the error path parses one.
+  if (response.ok) return;
+  await expectOk(response, 'Unable to remove the responder');
+}
+
 export async function fetchTemplates(): Promise<TemplateInfo[]> {
   const response = await casAuthedFetch('/api/cas/config/templates');
   await expectOk(response, 'Unable to load message templates');

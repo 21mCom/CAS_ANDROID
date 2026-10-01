@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Pencil, Plus, UserCheck, UserX } from 'lucide-react';
+import { Pencil, Plus, Trash2, UserCheck, UserX } from 'lucide-react';
 import { EvidenceLabel, FriendlyErrorMessage, SectionKicker } from '@/components/field-ui';
 import {
   createResponder,
+  deleteResponder,
   fetchResponders,
   updateResponder,
   type Responder,
@@ -75,6 +76,7 @@ export default function Responders() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDraft, setEditDraft] = useState<ChannelDraft>(emptyDraft);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   const reload = async () => {
     try {
@@ -126,6 +128,20 @@ export default function Responders() {
 
   const toggleEnabled = (responder: Responder) =>
     void runAction(() => updateResponder(responder.id, { enabled: !responder.enabled }));
+
+  // Two-step delete: the first tap arms the row's confirm state (and closes
+  // its edit form — the row is about to disappear), the second tap confirms.
+  // Deletion is permanent: the person and all their channel addresses are
+  // removed from the server.
+  const requestDelete = (responder: Responder) => {
+    if (editingId === responder.id) setEditingId(null);
+    if (confirmingDeleteId !== responder.id) {
+      setConfirmingDeleteId(responder.id);
+      return;
+    }
+    setConfirmingDeleteId(null);
+    void runAction(() => deleteResponder(responder.id));
+  };
 
   const seededCount = (responders ?? []).filter((responder) => responder.seeded).length;
 
@@ -207,6 +223,17 @@ export default function Responders() {
                 </button>
                 <button onClick={() => (editingId === responder.id ? setEditingId(null) : startEdit(responder))} className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold hover:border-[#203c49]" data-testid={`button-edit-responder-${responder.id}`}>
                   <Pencil size={13} /> {editingId === responder.id ? 'Close' : 'Edit'}
+                </button>
+                <button
+                  onClick={() => requestDelete(responder)}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-bold ${
+                    confirmingDeleteId === responder.id
+                      ? 'border-[#b3261e] bg-[#b3261e] text-[#fdf8f2] hover:bg-[#8f1d17]'
+                      : 'border-[#c6cbc3] bg-[#fbfbf7] text-[#7a2822] hover:border-[#b3261e]'
+                  }`}
+                  data-testid={`button-delete-responder-${responder.id}`}
+                >
+                  <Trash2 size={13} /> {confirmingDeleteId === responder.id ? 'Tap again to remove' : 'Delete'}
                 </button>
               </div>
             </div>
