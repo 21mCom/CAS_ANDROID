@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { KeyRound, RefreshCw, ShieldOff, Smartphone, X } from 'lucide-react';
 import { listCasDevices, revokeCasDevice, type CasDevice } from '@/hooks/use-field-test';
-import { SectionKicker } from '@/components/field-ui';
+import { FriendlyErrorMessage, SectionKicker } from '@/components/field-ui';
 
 /** Deterministic "YYYY-MM-DD HH:mm UTC" rendering for list rows and tests. */
 export function formatDeviceTimestamp(iso: string | null): string {
@@ -29,7 +29,7 @@ export function DeviceListView({
   onRevoke: (id: string) => void;
 }) {
   if (devices.length === 0) {
-    return <p className="px-5 py-4 text-xs leading-5 text-[#687271]" data-testid="device-list-empty">No device credentials are enrolled yet.</p>;
+    return <p className="px-5 py-4 text-xs leading-5 text-[#687271]" data-testid="device-list-empty">No phones or consoles have been given access yet.</p>;
   }
   return (
     <div className="divide-y divide-[#e3e4dc]">
@@ -41,34 +41,34 @@ export function DeviceListView({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className={`text-sm font-bold ${revoked ? 'text-[#687271] line-through' : 'text-[#203c49]'}`}>{device.label}</p>
-                <span className={`font-mono-ui text-[9px] uppercase tracking-[0.1em] ${revoked ? 'text-[#914136]' : 'text-[#236047]'}`} data-testid={`device-state-${device.id}`}>
-                  {revoked ? `revoked ${formatDeviceTimestamp(device.revokedAt)}` : 'active'}
+                <span className={`text-[10px] font-bold ${revoked ? 'text-[#914136]' : 'text-[#236047]'}`} data-testid={`device-state-${device.id}`}>
+                  {revoked ? `Revoked ${formatDeviceTimestamp(device.revokedAt)}` : 'Active'}
                 </span>
               </div>
               <p className="mt-1 font-mono-ui text-[10px] text-[#687271]">{device.id}</p>
               <p className="mt-1 text-xs leading-5 text-[#687271]">
-                Enrolled {formatDeviceTimestamp(device.createdAt)} · Last used {formatDeviceTimestamp(device.lastUsedAt)}
+                Access granted {formatDeviceTimestamp(device.createdAt)} · Last used {formatDeviceTimestamp(device.lastUsedAt)}
               </p>
               {confirmingId === device.id && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 border border-[#e7b8af] bg-[#f8e0db] px-3 py-2" data-testid={`confirm-revoke-${device.id}`}>
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-[#e7b8af] bg-[#f8e0db] px-3 py-2" data-testid={`confirm-revoke-${device.id}`}>
                   <p className="w-full text-xs font-bold text-[#914136]">
-                    Revoke “{device.label}”? That device is blocked from its very next request. This cannot be undone — a lost phone stays locked out even if it still holds its credential.
+                    Cut off “{device.label}”? That device is blocked from its very next request. This cannot be undone — a lost phone stays locked out even if someone still has it.
                   </p>
                   <button
                     onClick={() => onRevoke(device.id)}
                     disabled={busy}
-                    className="inline-flex items-center gap-1.5 border border-[#914136] bg-[#914136] px-3 py-1.5 text-xs font-bold text-[#fbfbf7] hover:opacity-90 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-[#914136] bg-[#914136] px-3 py-1.5 text-xs font-bold text-[#fbfbf7] hover:opacity-90 disabled:opacity-50"
                     data-testid={`button-confirm-revoke-${device.id}`}
                   >
-                    <ShieldOff size={13} /> Confirm revoke
+                    <ShieldOff size={13} /> Yes, cut it off
                   </button>
                   <button
                     onClick={onCancelRevoke}
                     disabled={busy}
-                    className="inline-flex items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold text-[#43575a] hover:border-[#203c49] disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold text-[#43575a] hover:border-[#203c49] disabled:opacity-50"
                     data-testid={`button-cancel-revoke-${device.id}`}
                   >
-                    Cancel
+                    Keep access
                   </button>
                 </div>
               )}
@@ -77,10 +77,10 @@ export function DeviceListView({
               <button
                 onClick={() => onConfirmRevoke(device.id)}
                 disabled={busy}
-                className="inline-flex shrink-0 items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#914136] hover:border-[#914136] disabled:opacity-50"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#914136] hover:border-[#914136] disabled:opacity-50"
                 data-testid={`button-revoke-${device.id}`}
               >
-                <ShieldOff size={13} /> Revoke
+                <ShieldOff size={13} /> Cut off access
               </button>
             )}
           </div>
@@ -106,7 +106,7 @@ export function DeviceCredentialsPanel() {
 
   const open = async () => {
     const entered = window.prompt(
-      'Enter the CAS enrollment credential (the server\u2019s CAS_ALERT_TOKEN secret) to list and revoke device credentials. It is kept in memory only and never stored.',
+      'Enter the enrollment credential — the alert password chosen when the server was set up (its CAS_ALERT_TOKEN secret). It is kept in memory only, never stored, and forgotten when you press Done.',
     )?.trim() ?? '';
     if (!entered) return;
     setBusy(true);
@@ -163,29 +163,31 @@ export function DeviceCredentialsPanel() {
   };
 
   return (
-    <section className="fade-up fade-up-3 mt-5 border border-[#d7d8d0] bg-[#fbfbf7]" data-testid="panel-device-credentials">
+    <section className="fade-up fade-up-3 mt-5 rounded-xl border border-[#d7d8d0] bg-[#fbfbf7]" data-testid="panel-device-credentials">
       <div className="flex items-center justify-between gap-3 border-b border-[#d7d8d0] px-5 py-4">
         <div>
-          <SectionKicker>Device credentials</SectionKicker>
-          <h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">Lost phone? Revoke its credential here.</h2>
+          <SectionKicker testId="kicker-device-credentials">Who has access</SectionKicker>
+          <h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">Lost a phone? Cut off its access here.</h2>
         </div>
         {credential ? (
           <div className="flex items-center gap-2">
-            <button onClick={() => void refresh()} disabled={busy} className="inline-flex items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#43575a] hover:border-[#203c49] disabled:opacity-50" data-testid="button-refresh-devices">
+            <button onClick={() => void refresh()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#43575a] hover:border-[#203c49] disabled:opacity-50" data-testid="button-refresh-devices">
               <RefreshCw size={13} /> Refresh
             </button>
-            <button onClick={close} className="inline-flex items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#43575a] hover:border-[#203c49]" data-testid="button-close-devices">
+            <button onClick={close} className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 text-xs font-bold text-[#43575a] hover:border-[#203c49]" data-testid="button-close-devices">
               <X size={13} /> Done
             </button>
           </div>
         ) : (
-          <button onClick={() => void open()} disabled={busy} className="inline-flex items-center gap-2 border border-[#203c49] bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] hover:opacity-90 disabled:opacity-50" data-testid="button-manage-devices">
-            <KeyRound size={13} /> Manage devices
+          <button onClick={() => void open()} disabled={busy} className="inline-flex items-center gap-2 rounded-md border border-[#203c49] bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] hover:opacity-90 disabled:opacity-50" data-testid="button-manage-devices">
+            <KeyRound size={13} /> Manage access
           </button>
         )}
       </div>
       {error && (
-        <p className="border-b border-[#e7b8af] bg-[#f8e0db] px-5 py-3 text-xs font-bold text-[#914136]" data-testid="device-credentials-error">{error}</p>
+        <div className="border-b border-[#e7b8af] bg-[#fbfbf7] px-5 py-3">
+          <FriendlyErrorMessage error={error} testId="device-credentials-error" onRetry={() => void open()} />
+        </div>
       )}
       {devices ? (
         <DeviceListView
@@ -199,7 +201,7 @@ export function DeviceCredentialsPanel() {
       ) : (
         !error && (
           <p className="px-5 py-4 text-xs leading-5 text-[#687271]">
-            Every enrolled phone and console browser holds its own revocable credential. Listing and revoking require the enrollment credential — a stolen console session alone cannot lock out other devices.
+            Every enrolled phone and console browser has its own revocable access credential — so a lost device can be cut off without touching the others. Listing and cutting off require the enrollment credential: a stolen console session alone cannot lock out your other devices.
           </p>
         )
       )}

@@ -144,7 +144,7 @@
   --app-font-sans: 'Manrope', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: 'DM Mono', monospace;
-  --radius: 0.5rem; /* 8px */
+  --radius: 0.625rem; /* 10px — a touch softer than the instrument-panel default */
   --shadow-2xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0); /*replace with H S L */
   --shadow-xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0); /*replace with H S L */
   --shadow-sm:
@@ -331,12 +331,9 @@
   .font-display { font-family: var(--app-font-sans); }
   .font-mono-ui { font-family: var(--app-font-mono); }
   .instrument-grid {
-    background-image: linear-gradient(to right, rgba(31, 55, 67, 0.045) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(31, 55, 67, 0.045) 1px, transparent 1px);
-    background-size: 28px 28px;
-  }
-  .scanline {
-    background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(31, 55, 67, 0.025) 4px);
+    background-image: linear-gradient(to right, rgba(31, 55, 67, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(31, 55, 67, 0.03) 1px, transparent 1px);
+    background-size: 32px 32px;
   }
   .fade-up { animation: fade-up 420ms cubic-bezier(.22,.8,.28,1) both; }
   .fade-up-1 { animation-delay: 80ms; }

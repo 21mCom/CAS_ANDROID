@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CircleAlert, Plug, Save, Trash2 } from 'lucide-react';
-import { EvidenceLabel, SectionKicker } from '@/components/field-ui';
+import { EvidenceLabel, FriendlyErrorMessage, SectionKicker } from '@/components/field-ui';
 import { useOutboxStatus, type EmailChannelHealth } from '@/hooks/use-outbox-status';
 import { outboxAgeLabel } from '@/lib/outbox-warnings';
+import { friendlyEmailTestFailure } from '@/lib/friendly-errors';
 import {
   deleteEmailAccount,
   fetchEmailAccounts,
@@ -12,6 +13,25 @@ import {
   type EmailAccountSlot,
   type EmailAccountsResponse,
 } from '@/lib/cas-config-api';
+
+/** The account action whose failure is currently shown — the retry must re-run that same action. */
+export type AccountErrorOp = 'save' | 'test' | 'remove';
+
+/**
+ * Retry dispatch for an account error: a failed connection test re-tests, a
+ * failed removal re-removes, a failed save re-saves. Retrying a *test*
+ * failure with a save would write the rejected mailbox over working server
+ * settings — the save endpoint validates fields but does not verify the
+ * connection.
+ */
+export function retryAccountError(
+  op: AccountErrorOp | null,
+  handlers: { onSave: () => void; onTest: () => void; onRemove: () => void },
+): void {
+  if (op === 'test') handlers.onTest();
+  else if (op === 'remove') handlers.onRemove();
+  else handlers.onSave();
+}
 
 type AccountDraft = {
   host: string;
@@ -24,6 +44,7 @@ type AccountDraft = {
   busy: 'save' | 'test' | 'remove' | null;
   notice: string | null;
   error: string | null;
+  errorOp: AccountErrorOp | null;
 };
 
 const EMPTY_DRAFT: AccountDraft = {
@@ -36,6 +57,7 @@ const EMPTY_DRAFT: AccountDraft = {
   busy: null,
   notice: null,
   error: null,
+  errorOp: null,
 };
 
 function draftFor(saved: EmailAccountInfo | undefined): AccountDraft {
@@ -71,7 +93,7 @@ export function EmailProbeHealthLine({ health, nowMs }: { health: EmailChannelHe
 
   if (health.state === 'ok' && health.lastProbeAt && scope) {
     return (
-      <p className="mt-5 border border-[#b7cfbf] bg-[#eef5ee] px-5 py-4 text-xs leading-5 text-[#33523f]" data-testid="email-probe-health" data-state="ok">
+      <p className="mt-5 rounded-xl border border-[#b7cfbf] bg-[#eef5ee] px-5 py-4 text-xs leading-5 text-[#33523f]" data-testid="email-probe-health" data-state="ok">
         Last automatic login check of {scope}: <strong>ok</strong>, {age(health.lastProbeAt)} — the mailbox accepted the server&apos;s credentials. Re-checks every {Math.max(1, Math.round(health.probeIntervalMs / 86_400_000))}d.
       </p>
     );
@@ -90,7 +112,7 @@ export function EmailProbeHealthLine({ health, nowMs }: { health: EmailChannelHe
     const when = health.lastProbeAt ?? failure?.at ?? null;
     return (
       <div
-        className={`mt-5 border px-5 py-4 text-xs leading-5 ${permanent ? 'border-[#e7b8af] bg-[#f9e9e6] text-[#7c3a30]' : 'border-[#e8c880] bg-[#fff8e7] text-[#765013]'}`}
+        className={`mt-5 rounded-xl border px-5 py-4 text-xs leading-5 ${permanent ? 'border-[#e7b8af] bg-[#f9e9e6] text-[#7c3a30]' : 'border-[#e8c880] bg-[#fff8e7] text-[#765013]'}`}
         data-testid="email-probe-health"
         data-state="failed"
         data-permanent={permanent ? 'true' : 'false'}
@@ -113,13 +135,13 @@ export function EmailProbeHealthLine({ health, nowMs }: { health: EmailChannelHe
   }
   if (health.state === 'skipped') {
     return (
-      <p className="mt-5 border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="skipped">
+      <p className="mt-5 rounded-xl border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="skipped">
         Automatic login check: skipped — {health.note ?? 'not applicable'}.
       </p>
     );
   }
   return (
-    <p className="mt-5 border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="pending">
+    <p className="mt-5 rounded-xl border border-[#d0d4cc] bg-[#f4f3ed] px-5 py-4 text-xs leading-5 text-[#5e6867]" data-testid="email-probe-health" data-state="pending">
       Automatic login check{scope ? ` of ${scope}` : ''}: scheduled — the first probe has not run yet (it runs shortly after server start).
     </p>
   );
@@ -128,15 +150,15 @@ export function EmailProbeHealthLine({ health, nowMs }: { health: EmailChannelHe
 const SOURCE_BANNER: Record<EmailAccountsResponse['source'], { tone: string; text: string }> = {
   console: {
     tone: 'border-[#b7cfbf] bg-[#eef5ee] text-[#33523f]',
-    text: 'Console settings are live — the primary account below sends alert email. Any CAS_EMAIL_* server secrets are ignored while a primary account exists here; remove it to hand the channel back to the server environment.',
+    text: 'This page is in charge — the primary mailbox below sends alert email. Any CAS_EMAIL_* server secrets are ignored while a primary mailbox exists here; remove it to hand email back to the server settings.',
   },
   environment: {
     tone: 'border-[#f1cf7b] bg-[#fff8e7] text-[#765013]',
-    text: 'Server secrets are live — alert email sends via the CAS_EMAIL_* values configured on the server. Saving a primary account here moves the channel into this console.',
+    text: 'Server settings are in charge — alert email sends via the CAS_EMAIL_* values configured on the server. Saving a primary mailbox here moves email delivery onto this page instead.',
   },
   none: {
     tone: 'border-[#e7b8af] bg-[#f9e9e6] text-[#7c3a30]',
-    text: 'Not configured — no console account and no server mail secrets, so alert email cannot send. Save a primary account below (or set server secrets) to activate the channel.',
+    text: 'Email alerts are off — no mailbox is saved here and no server mail settings exist, so alert email cannot be sent. Save a primary mailbox below (or set the server settings) to turn email on.',
   },
 };
 
@@ -168,24 +190,24 @@ function AccountPanel({
     draft.password.length > 0;
   const canTest = Boolean(draft.host.trim() && draft.user.trim() && (draft.password || draft.saved));
   return (
-    <div className="border border-[#d7d8d0] bg-[#fbfbf7]" data-testid={`panel-email-account-${slot}`}>
+    <div className="rounded-xl border border-[#d7d8d0] bg-[#fbfbf7]" data-testid={`panel-email-account-${slot}`}>
       <div className="flex flex-wrap items-center gap-3 border-b border-[#e3e4dc] px-5 py-4">
         <h2 className="font-display text-lg font-extrabold tracking-[-0.03em] text-[#203c49]">{title}</h2>
         <span
-          className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${draft.saved ? 'border-[#b7cfbf] bg-[#eef5ee] text-[#33523f]' : 'border-[#d0d4cc] bg-[#e8e9e4] text-[#5e6867]'}`}
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${draft.saved ? 'border-[#b7cfbf] bg-[#eef5ee] text-[#33523f]' : 'border-[#d0d4cc] bg-[#e8e9e4] text-[#5e6867]'}`}
           data-testid={`status-email-account-${slot}`}
         >
           {draft.saved ? 'Saved' : slot === 'fallback' ? 'Not set (optional)' : 'Not set'}
         </span>
         {draft.saved && dirty && (
-          <span className="font-mono-ui text-[9px] uppercase tracking-[0.1em] text-[#a06712]">unsaved changes</span>
+          <span className="text-[11px] font-semibold text-[#a06712]">Unsaved changes</span>
         )}
         <div className="ml-auto flex items-center gap-2">
           {draft.saved && (
             <button
               onClick={onRemove}
               disabled={draft.busy !== null}
-              className="inline-flex items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold hover:border-[#b95042] hover:text-[#914136] disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold hover:border-[#b95042] hover:text-[#914136] disabled:opacity-40"
               data-testid={`button-remove-email-${slot}`}
             >
               <Trash2 size={13} /> {draft.busy === 'remove' ? 'Removing…' : 'Remove'}
@@ -194,15 +216,15 @@ function AccountPanel({
           <button
             onClick={onTest}
             disabled={!canTest || draft.busy !== null}
-            className="inline-flex items-center gap-1.5 border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold hover:border-[#203c49] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-1.5 text-xs font-bold hover:border-[#203c49] disabled:cursor-not-allowed disabled:opacity-40"
             data-testid={`button-test-email-${slot}`}
           >
-            <Plug size={13} /> {draft.busy === 'test' ? 'Testing…' : 'Test connection'}
+            <Plug size={13} /> {draft.busy === 'test' ? 'Testing…' : 'Test the connection'}
           </button>
           <button
             onClick={onSave}
             disabled={!dirty || draft.busy !== null || !draft.host.trim() || !draft.user.trim() || (!draft.password && !draft.saved)}
-            className="inline-flex items-center gap-1.5 bg-[#203c49] px-3 py-1.5 text-xs font-bold text-[#ffd067] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#203c49] px-3 py-1.5 text-xs font-bold text-[#ffd067] disabled:cursor-not-allowed disabled:opacity-40"
             data-testid={`button-save-email-${slot}`}
           >
             <Save size={13} /> {draft.busy === 'save' ? 'Saving…' : 'Save'}
@@ -213,69 +235,71 @@ function AccountPanel({
         <p className="mb-4 text-[11px] leading-4 text-[#8a8f88]">{blurb}</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <label className="block">
-            <span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#687271]">SMTP host</span>
+            <span className="text-xs font-semibold text-[#687271]">Mail server address <span className="font-normal text-[#9ca49e]">(SMTP host)</span></span>
             <input
               value={draft.host}
               onChange={(event) => onChange({ host: event.target.value, error: null, notice: null })}
               placeholder="smtp.gmail.com"
-              className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+              className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
               data-testid={`input-email-host-${slot}`}
             />
           </label>
           <label className="block">
-            <span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#687271]">Port (465 TLS · 587 STARTTLS)</span>
+            <span className="text-xs font-semibold text-[#687271]">Port <span className="font-normal text-[#9ca49e]">(465 for most providers; 587 also works)</span></span>
             <input
               value={draft.port}
               onChange={(event) => onChange({ port: event.target.value.replace(/[^0-9]/g, ''), error: null, notice: null })}
               inputMode="numeric"
               placeholder="465"
-              className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+              className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
               data-testid={`input-email-port-${slot}`}
             />
           </label>
           <label className="block">
-            <span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#687271]">Mailbox login</span>
+            <span className="text-xs font-semibold text-[#687271]">Mailbox login <span className="font-normal text-[#9ca49e]">(usually the email address)</span></span>
             <input
               value={draft.user}
               onChange={(event) => onChange({ user: event.target.value, error: null, notice: null })}
               placeholder="cas-alerts@example.com"
               autoComplete="off"
-              className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+              className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
               data-testid={`input-email-user-${slot}`}
             />
           </label>
           <label className="block">
-            <span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#687271]">App password</span>
+            <span className="text-xs font-semibold text-[#687271]">App password <span className="font-normal text-[#9ca49e]">(a one-purpose password from your mail provider)</span></span>
             <input
               type="password"
               value={draft.password}
               onChange={(event) => onChange({ password: event.target.value, error: null, notice: null })}
               placeholder={draft.saved ? 'Saved — type to replace' : '16-character app password'}
               autoComplete="new-password"
-              className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+              className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
               data-testid={`input-email-password-${slot}`}
             />
           </label>
           <label className="block sm:col-span-2">
-            <span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[#687271]">From address (optional — defaults to the login)</span>
+            <span className="text-xs font-semibold text-[#687271]">“From” address <span className="font-normal text-[#9ca49e]">(optional — defaults to the login)</span></span>
             <input
               value={draft.fromAddress}
               onChange={(event) => onChange({ fromAddress: event.target.value, error: null, notice: null })}
               placeholder="cas-alerts@example.com"
               autoComplete="off"
-              className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+              className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-3 py-2 font-mono-ui text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
               data-testid={`input-email-from-${slot}`}
             />
           </label>
         </div>
         {draft.error && (
-          <p className="mt-4 flex gap-2 border-l-2 border-[#b95042] bg-[#f9e9e6] px-4 py-3 text-xs leading-5 text-[#7c3a30]" data-testid={`error-email-${slot}`}>
-            <CircleAlert size={15} className="mt-0.5 shrink-0 text-[#914136]" />
-            {draft.error}
-          </p>
+          <div className="mt-4" data-testid={`error-email-${slot}`}>
+            <FriendlyErrorMessage
+              error={draft.error}
+              onRetry={() => retryAccountError(draft.errorOp, { onSave, onTest, onRemove })}
+            />
+          </div>
         )}
         {draft.notice && (
-          <p className="mt-4 flex gap-2 border-l-2 border-[#75b28f] bg-[#eef5ee] px-4 py-3 text-xs leading-5 text-[#33523f]" data-testid={`notice-email-${slot}`}>
+          <p className="mt-4 flex gap-2 rounded-lg border-l-2 border-[#75b28f] bg-[#eef5ee] px-4 py-3 text-xs leading-5 text-[#33523f]" data-testid={`notice-email-${slot}`}>
             {draft.notice}
           </p>
         )}
@@ -325,43 +349,43 @@ export default function EmailDelivery() {
   const save = async (slot: EmailAccountSlot) => {
     const draft = drafts?.[slot];
     if (!draft) return;
-    patch(slot, { busy: 'save', error: null, notice: null });
+    patch(slot, { busy: 'save', error: null, notice: null, errorOp: null });
     try {
       await saveEmailAccount(slot, payloadFor(draft));
       await load();
       setDrafts((current) =>
-        current ? { ...current, [slot]: { ...current[slot], busy: null, password: '', notice: 'Account saved. Alert email now sends through this mailbox.' } } : current,
+        current ? { ...current, [slot]: { ...current[slot], busy: null, password: '', notice: 'Mailbox saved. Alert email now goes out through it.' } } : current,
       );
     } catch (error) {
-      patch(slot, { busy: null, error: error instanceof Error ? error.message : 'Save was rejected.' });
+      patch(slot, { busy: null, errorOp: 'save', error: error instanceof Error ? error.message : 'Save was rejected.' });
     }
   };
 
   const test = async (slot: EmailAccountSlot) => {
     const draft = drafts?.[slot];
     if (!draft) return;
-    patch(slot, { busy: 'test', error: null, notice: null });
+    patch(slot, { busy: 'test', error: null, notice: null, errorOp: null });
     try {
       const result = await testEmailAccount(slot, payloadFor(draft));
       patch(
         slot,
         result.ok
-          ? { busy: null, notice: 'Connection verified — TLS negotiated and the mailbox accepted the credentials. No message was sent.' }
-          : { busy: null, error: `${result.message} (${result.classification})` },
+          ? { busy: null, notice: 'Connection verified — the mailbox accepted the login over a secure connection. Nothing was sent.' }
+          : { busy: null, errorOp: 'test', error: `${friendlyEmailTestFailure(result.classification)} ${result.message} (${result.classification})` },
       );
     } catch (error) {
-      patch(slot, { busy: null, error: error instanceof Error ? error.message : 'The connection test failed.' });
+      patch(slot, { busy: null, errorOp: 'test', error: error instanceof Error ? error.message : 'The connection test failed.' });
     }
   };
 
   const remove = async (slot: EmailAccountSlot) => {
-    if (!window.confirm(`Remove the ${slot} email account? ${slot === 'primary' ? 'The channel reverts to the server environment secrets if any are set.' : 'Alerts lose the redundant path.'}`)) return;
-    patch(slot, { busy: 'remove', error: null, notice: null });
+    if (!window.confirm(`Remove the ${slot} mailbox? ${slot === 'primary' ? 'Email falls back to the server settings if any are set.' : 'Alerts lose their backup email path.'}`)) return;
+    patch(slot, { busy: 'remove', error: null, notice: null, errorOp: null });
     try {
       await deleteEmailAccount(slot);
       await load();
     } catch (error) {
-      patch(slot, { busy: null, error: error instanceof Error ? error.message : 'Remove failed.' });
+      patch(slot, { busy: null, errorOp: 'remove', error: error instanceof Error ? error.message : 'Remove failed.' });
     }
   };
 
@@ -370,17 +394,21 @@ export default function EmailDelivery() {
   return (
     <div className="mx-auto max-w-[1160px]">
       <section className="fade-up border-b border-[#cfd2c9] pb-7">
-        <div className="mb-4 flex items-center gap-3"><SectionKicker>Email channel</SectionKicker><EvidenceLabel /></div>
+        <div className="mb-4 flex items-center gap-3"><SectionKicker testId="kicker-email-channel">Email alerts</SectionKicker><EvidenceLabel /></div>
         <h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">Where alert email sends from.</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">
-          Connect a dedicated mailbox and alert email sends directly through its SMTP service — no provider account needed. An optional fallback mailbox takes over per recipient whenever the primary fails. TLS is always required; the app password is stored on the server and never shown again.
+          Connect a dedicated mailbox and alert email goes out directly through it — no delivery-service account needed. An optional backup mailbox takes over per recipient whenever the primary can&apos;t deliver. The connection is always encrypted, and the app password is stored on the server and never shown again.
         </p>
       </section>
 
-      {loadError && <p className="mt-5 border border-[#e7b8af] bg-[#f9e9e6] px-5 py-4 text-sm text-[#7c3a30]" data-testid="text-email-load-error">{loadError}</p>}
+      {loadError && (
+        <div className="mt-5" data-testid="text-email-load-error">
+          <FriendlyErrorMessage error={loadError} onRetry={() => void load()} />
+        </div>
+      )}
 
       {banner && (
-        <p className={`mt-5 border px-5 py-4 text-xs leading-5 ${banner.tone}`} data-testid="text-email-source">
+        <p className={`mt-5 rounded-xl border px-5 py-4 text-xs leading-5 ${banner.tone}`} data-testid="text-email-source">
           {banner.text}
         </p>
       )}
@@ -392,11 +420,11 @@ export default function EmailDelivery() {
           <AccountPanel
             key={slot}
             slot={slot}
-            title={slot === 'primary' ? 'Primary mailbox' : 'Fallback mailbox'}
+            title={slot === 'primary' ? 'Primary mailbox' : 'Backup mailbox'}
             blurb={
               slot === 'primary'
                 ? 'Sends every alert email. Use a dedicated account — not your everyday inbox — protected by an app password.'
-                : 'Optional redundancy. When the primary refuses or cannot reach a recipient, that recipient is tried once through this account instead — never duplicated.'
+                : 'Optional backup. When the primary refuses or cannot reach a recipient, that recipient is tried once through this mailbox instead — never twice.'
             }
             draft={drafts[slot]}
             onChange={(changes) => patch(slot, changes)}
@@ -407,16 +435,16 @@ export default function EmailDelivery() {
         ))}
       </section>
 
-      <section className="fade-up fade-up-2 mt-5 border border-[#d7d8d0] bg-[#f4f3ed] p-5">
-        <h2 className="font-display font-extrabold tracking-[-0.02em]">Mailbox setup</h2>
+      <section className="fade-up fade-up-2 mt-5 rounded-xl border border-[#d7d8d0] bg-[#f4f3ed] p-5">
+        <h2 className="font-display font-extrabold tracking-[-0.02em]">Setting up the mailbox</h2>
         <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-5 text-[#687271]">
           <li>Create a dedicated mailbox (a free Gmail account works well) used only for alerts.</li>
           <li>Turn on 2-step verification, then generate an app password (Google Account → Security → App passwords) and paste it above.</li>
-          <li>Press <strong>Test connection</strong> — it proves TLS and the credentials without sending anything.</li>
-          <li>Have each responder add the alert mailbox to their contacts so alerts bypass the spam folder.</li>
+          <li>Press <strong>Test the connection</strong> — it proves the login works without sending anything.</li>
+          <li>Have each responder add the alert mailbox to their contacts so alerts don&apos;t land in spam.</li>
         </ol>
         <p className="mt-3 text-xs leading-5 text-[#687271]">
-          Storage note: the app password is kept in the server database so the server can authenticate on every send; this console never displays it after saving. Anyone with database access can read it — the same exposure as the server secrets file. Configuration here takes precedence over the CAS_EMAIL_* server secrets while a primary account exists.
+          A note on storage: the app password is kept in the server&apos;s database so the server can log in on every send; this console never displays it after saving. Anyone with database access can read it — the same exposure as the server&apos;s settings file. A mailbox saved here takes precedence over the CAS_EMAIL_* server settings while it exists.
         </p>
       </section>
     </div>

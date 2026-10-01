@@ -38,13 +38,13 @@ test('the device list shows id, label, last-used, and active/revoked state', () 
   assert.match(html, /Owner Pixel 11/);
   assert.match(html, /dev-pixel11/);
   assert.match(html, /Last used 2026-09-27 14:08 UTC/);
-  assert.match(html, /data-testid="device-state-dev-pixel11">active/);
+  assert.match(html, /data-testid="device-state-dev-pixel11">Active/);
   // An active device offers a revoke action.
   assert.match(html, /data-testid="button-revoke-dev-pixel11"/);
 
   // A revoked device is shown as revoked with its timestamp and "never" for
   // last-used, and offers no revoke action.
-  assert.match(html, /data-testid="device-state-dev-oldconsole">revoked 2026-09-21 09:30 UTC/);
+  assert.match(html, /data-testid="device-state-dev-oldconsole">Revoked 2026-09-21 09:30 UTC/);
   assert.match(html, /Last used never/);
   assert.doesNotMatch(html, /data-testid="button-revoke-dev-oldconsole"/);
 });

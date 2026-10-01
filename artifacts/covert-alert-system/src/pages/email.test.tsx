@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { EmailProbeHealthLine } from '@/pages/email';
+import { EmailProbeHealthLine, retryAccountError } from '@/pages/email';
 import type { EmailChannelHealth } from '@/hooks/use-outbox-status';
 
 const NOW = new Date('2026-09-15T12:00:00.000Z').getTime();
@@ -107,4 +107,39 @@ test('a pending probe says the first check has not run yet', () => {
 test('an ok probe without a probe timestamp falls back to the pending wording', () => {
   const html = render({ state: 'ok', lastProbeAt: null, lastOkAt: null });
   assert.match(html, /data-state="pending"/);
+});
+
+// Regression: an account error's "Try again" must re-run the action that
+// failed. Retrying a failed connection TEST with a save would PUT the
+// rejected mailbox over working server settings, because the save endpoint
+// validates fields without verifying the connection.
+function retrySpies() {
+  const calls: string[] = [];
+  return {
+    calls,
+    handlers: {
+      onSave: () => calls.push('save'),
+      onTest: () => calls.push('test'),
+      onRemove: () => calls.push('remove'),
+    },
+  };
+}
+
+test('retrying a failed connection test re-runs the test and never saves', () => {
+  const { calls, handlers } = retrySpies();
+  retryAccountError('test', handlers);
+  assert.deepEqual(calls, ['test'], 'a failed connection test must retry the test, not save the configuration');
+});
+
+test('retrying a failed removal re-runs the removal and never saves', () => {
+  const { calls, handlers } = retrySpies();
+  retryAccountError('remove', handlers);
+  assert.deepEqual(calls, ['remove']);
+});
+
+test('retrying a failed save re-runs the save', () => {
+  const { calls, handlers } = retrySpies();
+  retryAccountError('save', handlers);
+  retryAccountError(null, handlers); // unknown origin: the draft's own Save action
+  assert.deepEqual(calls, ['save', 'save']);
 });

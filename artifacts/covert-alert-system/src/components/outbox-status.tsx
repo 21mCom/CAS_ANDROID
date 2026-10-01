@@ -22,7 +22,7 @@ export function OutboxStatusBanner() {
   const worst = warnings.some((warning) => warning.severity === 'danger') ? 'danger' : 'caution';
   return (
     <section
-      className={`fade-up mt-5 border px-4 py-3 ${
+      className={`fade-up mt-5 rounded-xl border px-4 py-3 ${
         worst === 'danger' ? 'border-[#e7b8af] bg-[#f8e0db]' : 'border-[#e8c880] bg-[#fff8e7]'
       }`}
       data-testid="outbox-status-banner"
@@ -49,7 +49,7 @@ export function OutboxStatusBanner() {
           }`}
           data-testid="link-outbox-banner-incidents"
         >
-          Open delivery pipeline <ArrowRight size={13} />
+          Open alert delivery <ArrowRight size={13} />
         </Link>
       </div>
     </section>
@@ -84,26 +84,26 @@ export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
   const counts = status?.counts;
   const worker = status?.worker;
   const stateCells: { key: keyof NonNullable<typeof counts>; label: string; tone: string }[] = [
-    { key: 'QUEUED', label: 'Queued', tone: 'text-[#687271]' },
+    { key: 'QUEUED', label: 'Waiting', tone: 'text-[#687271]' },
     { key: 'PROCESSING', label: 'Sending', tone: 'text-[#687271]' },
     { key: 'FAILED', label: 'Retrying', tone: 'text-[#a06712]' },
     { key: 'SENT', label: 'Sent', tone: 'text-[#236047]' },
-    { key: 'DEAD_LETTER', label: 'Dead letter', tone: counts && counts.DEAD_LETTER > 0 ? 'font-bold text-[#914136]' : 'text-[#687271]' },
-    { key: 'WITHDRAWN', label: 'Withdrawn', tone: 'text-[#687271]' },
+    { key: 'DEAD_LETTER', label: 'Couldn’t be delivered', tone: counts && counts.DEAD_LETTER > 0 ? 'font-bold text-[#914136]' : 'text-[#687271]' },
+    { key: 'WITHDRAWN', label: 'Cancelled', tone: 'text-[#687271]' },
   ];
 
   return (
-    <section className="fade-up mt-5 border border-[#d7d8d0] bg-[#fbfbf7]" data-testid="outbox-status-panel">
+    <section className="fade-up mt-5 rounded-xl border border-[#d7d8d0] bg-[#fbfbf7]" data-testid="outbox-status-panel">
       <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <RadioTower size={15} className="text-[#203c49]" />
-            <SectionKicker>Alert delivery pipeline</SectionKicker>
+            <SectionKicker testId="kicker-alert-delivery-pipeline">Alert delivery</SectionKicker>
           </div>
           {counts && (
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2" data-testid="outbox-status-counts">
               {stateCells.map((cell) => (
-                <span key={cell.key} className={`font-mono-ui text-[11px] uppercase tracking-[0.1em] ${cell.tone}`}>
+                <span key={cell.key} className={`text-[12px] font-medium ${cell.tone}`}>
                   {cell.label}: <strong data-testid={`outbox-count-${cell.key.toLowerCase().replace('_', '-')}`}>{counts[cell.key]}</strong>
                 </span>
               ))}
@@ -111,12 +111,12 @@ export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
           )}
           <p className="mt-3 text-xs leading-5 text-[#687271]">
             {worker
-              ? `Worker ${worker.workerId.slice(0, 18)}… drains every ${Math.round(worker.intervalMs / 1000)}s, up to ${worker.batchSize} per tick · ${worker.ticksCompleted} tick${worker.ticksCompleted === 1 ? '' : 's'} completed${worker.lastTickAt ? ` · last tick ${ageLabel(worker.lastTickAt, nowMs)}` : ' · no tick yet'}`
+              ? `Delivery checks run every ${Math.round(worker.intervalMs / 1000)}s, up to ${worker.batchSize} alerts each · ${worker.ticksCompleted} completed so far${worker.lastTickAt ? ` · last one ${ageLabel(worker.lastTickAt, nowMs)}` : ' · none run yet'}`
               : mismatch
-                ? 'Delivery status response not understood by this console — pipeline health withheld.'
+                ? 'The server’s delivery status is in a format this console doesn’t recognize — delivery health is hidden until that’s resolved.'
                 : unreachable
-                  ? 'Delivery status endpoint unreachable.'
-                  : 'No worker heartbeat recorded by this server yet.'}
+                  ? 'The console can’t reach the delivery status right now.'
+                  : 'This server hasn’t reported any delivery activity yet.'}
           </p>
           {status?.email && (
             <p className="mt-1 text-xs leading-5 text-[#687271]" data-testid="outbox-email-health">
@@ -125,21 +125,21 @@ export function OutboxStatusView({ status, unreachable, mismatch, nowMs }: {
                 : status.email.state === 'failed' && status.email.lastProbeAt
                   ? `Email mailbox login check failed ${ageLabel(status.email.lastProbeAt, nowMs)}`
                   : status.email.state === 'skipped'
-                    ? `Email mailbox probe: ${status.email.note ?? 'not applicable'}`
-                    : 'Email mailbox probe scheduled — first login check pending.'}
+                    ? `Email mailbox check: ${status.email.note ?? 'not applicable'}`
+                    : 'Email mailbox check scheduled — the first login check hasn’t run yet.'}
             </p>
           )}
         </div>
         <div className="w-full max-w-xl space-y-2" data-testid="outbox-status-warnings">
           {warnings.length === 0 ? (
-            <div className="flex items-center gap-2 border border-[#b9d8c5] bg-[#e1efe5] px-3 py-2 text-xs font-bold text-[#236047]" data-testid="outbox-status-healthy">
-              <CheckCircle2 size={14} /> Pipeline draining normally
+            <div className="flex items-center gap-2 rounded-lg border border-[#b9d8c5] bg-[#e1efe5] px-3 py-2 text-xs font-bold text-[#236047]" data-testid="outbox-status-healthy">
+              <CheckCircle2 size={14} /> Alerts are going out normally
             </div>
           ) : (
             warnings.map((warning) => (
               <div
                 key={warning.message}
-                className={`flex items-start gap-2 border px-3 py-2 text-xs leading-5 ${
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5 ${
                   warning.severity === 'danger'
                     ? 'border-[#e7b8af] bg-[#f8e0db] font-bold text-[#914136]'
                     : 'border-[#e8c880] bg-[#fff8e7] text-[#765013]'

@@ -67,7 +67,7 @@ test('a dead-lettered delivery raises the red abandoned warning with the provide
 
   // The red banner a responder must never miss.
   assert.match(html, /data-testid="outbox-status-warning-danger"/);
-  assert.match(html, /1 delivery has been abandoned \(dead letter\)/);
+  assert.match(html, /1 alert could not be delivered and has been given up on/);
   assert.match(html, /no further retries will be made/);
   // The banner names the provider's last error so the responder knows why.
   assert.match(html, /Last error \(SMS\): provider permanently rejects recipient/);
@@ -88,7 +88,7 @@ test('plural dead-letter count reads correctly', () => {
     },
   }));
 
-  assert.match(html, /3 deliveries have been abandoned \(dead letter\)/);
+  assert.match(html, /3 alerts could not be delivered and have been given up on/);
   assert.match(html, /Last error \(XMPP\): recipient unknown/);
 });
 
@@ -97,7 +97,7 @@ test('a draining pipeline with no dead letters shows the healthy state instead',
 
   assert.match(html, /data-testid="outbox-status-healthy"/);
   assert.doesNotMatch(html, /outbox-status-warning-danger/);
-  assert.doesNotMatch(html, /abandoned \(dead letter\)/);
+  assert.doesNotMatch(html, /given up on/);
   assert.match(html, /data-testid="outbox-count-dead-letter">0</);
 });
 
@@ -110,12 +110,12 @@ test('a drifted status response raises the red mismatch warning and withholds pi
   assert.match(html, /data-testid="outbox-status-warning-danger"/);
   assert.match(html, /does not match what this console expects/);
   assert.match(html, /counts\.QUEUED/);
-  assert.match(html, /Delivery status response not understood by this console/);
+  assert.match(html, /delivery status is in a format this console doesn’t recognize/);
   // No counts, no healthy chip, no stale heartbeat: nothing from a contract
   // this console does not understand may be mistaken for pipeline health.
   assert.doesNotMatch(html, /outbox-status-counts/);
   assert.doesNotMatch(html, /outbox-status-healthy/);
-  assert.doesNotMatch(html, /No worker heartbeat recorded/);
+  assert.doesNotMatch(html, /reported any delivery activity/);
 });
 
 test('a drifted status response outranks every other pipeline signal', () => {
@@ -190,6 +190,6 @@ test('a stopped probe worker warns that mailbox rot would go unnoticed', () => {
     nowMs: NOW,
   });
   assert.ok(warnings.some((warning) =>
-    warning.severity === 'caution' && /email mailbox probe stopped/.test(warning.message),
+    warning.severity === 'caution' && /automatic mailbox check stopped/.test(warning.message),
   ));
 });

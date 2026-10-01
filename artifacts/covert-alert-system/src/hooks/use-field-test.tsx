@@ -507,7 +507,7 @@ async function ensureDeviceToken(): Promise<string> {
   const stored = sessionStorage.getItem(DEVICE_TOKEN_KEY) ?? '';
   if (stored) return stored;
   const enrollmentCredential = window.prompt(
-    'Enter the CAS enrollment credential (the server\u2019s CAS_ALERT_TOKEN secret). This browser exchanges it for its own revocable device credential.',
+    'Enter the enrollment credential — the alert password chosen when the server was set up (its CAS_ALERT_TOKEN secret). This browser swaps it for its own revocable access credential; the password itself is never stored here.',
   )?.trim() ?? '';
   if (!enrollmentCredential) return '';
   const response = await fetch('/api/cas/devices/enroll', {

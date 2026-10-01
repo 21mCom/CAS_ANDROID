@@ -40,11 +40,11 @@ function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
     <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 p-6">
       <div className="max-w-lg w-full text-center">
         <h1 className="text-xl font-semibold text-gray-900">
-          Something went wrong
+          This page hit a snag
         </h1>
         <p className="mt-2 text-sm text-gray-600">
-          This part of the app hit an error. The rest of the app is still
-          running.
+          Don&apos;t worry — the rest of the console is still running and no
+          alert data was lost. Try again, or head to another page.
         </p>
         {/* Dev only: messages can carry API responses and other internals. */}
         {import.meta.env.DEV ? (

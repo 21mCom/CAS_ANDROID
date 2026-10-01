@@ -7,10 +7,10 @@ import { expect, test } from '@playwright/test';
 // the server in device-direct mode (CAS_SMS_DELIVERY_MODE=device), the
 // handset's all-ok SMS receipt transitions the outbox item to
 // SENT / deliveredTo "handset-sim", and the /incidents chip's tooltip reads
-// the handset/SIM message — not the generic "Delivery accepted by
-// handset-sim" gateway fallback and not empty. Two seeded gateway rows
-// (dev-sink and provider-host) prove the pre-existing chip tooltips still
-// render unchanged alongside it. The credential is revoked afterwards.
+// the handset/SIM message — not the generic "Delivered via handset-sim"
+// gateway fallback and not empty. Two seeded gateway rows (dev-sink and
+// provider-host) prove the gateway chip tooltips keep their own distinct
+// wording alongside it. The credential is revoked afterwards.
 //
 // Environment is provided by scripts/run-console-browser-proof.mjs:
 //   CAS_E2E_API_ORIGIN   — api-server origin (disposable DB, test credential)
@@ -34,10 +34,10 @@ const ALERT_TOKEN = process.env.CAS_E2E_ALERT_TOKEN;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 const HANDSET_SIM_TITLE =
-  'Sent by the handset directly over its own SIM (device-direct mode; no gateway involved).';
-const GENERIC_HANDSET_FALLBACK = 'Delivery accepted by handset-sim';
+  'Sent by the phone itself, over its own SIM — no gateway involved.';
+const GENERIC_HANDSET_FALLBACK = 'Delivered via handset-sim';
 const DEV_SINK_TITLE =
-  'Accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real provider was contacted and no responder received anything.';
+  'Accepted by the built-in test inbox — simulated delivery: no real provider was contacted and no responder received anything.';
 const PROVIDER_HOST = 'xmpp:e2e-provider.example.invalid';
 
 test.beforeEach(() => {
@@ -127,20 +127,21 @@ test('a handset-sent SMS chip names the handset SIM, not the generic gateway fal
     // explicitly to keep this proof's intent obvious.
     const smsChip = page.getByTestId(`chip-outbox-${incidentId}-sms`);
     await expect(smsChip).toBeVisible();
-    await expect(smsChip).toHaveText('SMS · SENT');
+    await expect(smsChip).toHaveText('SMS · Sent');
     await expect(smsChip).toHaveAttribute('title', HANDSET_SIM_TITLE);
     const smsTitle = await smsChip.getAttribute('title');
     expect(smsTitle).not.toBeNull();
     expect(smsTitle).not.toBe('');
     expect(smsTitle).not.toBe(GENERIC_HANDSET_FALLBACK);
 
-    // The gateway chip tooltips render exactly as before.
+    // The gateway chips keep their own distinct wording: the dev-sink chip
+    // must say nothing was really sent, the provider chip names the gateway.
     const emailChip = page.getByTestId(`chip-outbox-${incidentId}-email`);
-    await expect(emailChip).toHaveText('EMAIL · SIMULATED — test inbox');
+    await expect(emailChip).toHaveText('EMAIL · Test only — nothing was really sent');
     await expect(emailChip).toHaveAttribute('title', DEV_SINK_TITLE);
     const xmppChip = page.getByTestId(`chip-outbox-${incidentId}-xmpp`);
-    await expect(xmppChip).toHaveText('XMPP · SENT');
-    await expect(xmppChip).toHaveAttribute('title', `Delivery accepted by ${PROVIDER_HOST}`);
+    await expect(xmppChip).toHaveText('XMPP · Sent');
+    await expect(xmppChip).toHaveAttribute('title', `Delivered via ${PROVIDER_HOST}`);
   } finally {
     // Leave no live state behind: settle the incident, then revoke the
     // credential so the dev DB does not accumulate live credentials.

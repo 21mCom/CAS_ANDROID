@@ -3,7 +3,7 @@ import { Activity, ArrowRight, Camera, Check, CircleStop, Download, LockKeyhole,
 import { Link } from 'wouter';
 import { casAuthedFetch, useFieldTest, type EvidenceItem, type OutboxItem, type Priority } from '@/hooks/use-field-test';
 import { formatEvidenceSize, useCapturePolicy } from '@/hooks/use-capture-policy';
-import { EvidenceLabel, EmptyState, PriorityPill, SectionKicker } from '@/components/field-ui';
+import { EvidenceLabel, EmptyState, FriendlyErrorMessage, PriorityPill, SectionKicker } from '@/components/field-ui';
 import { OutboxStatusPanel } from '@/components/outbox-status';
 
 const EVIDENCE_KIND_ICONS = { audio: Mic, photo: Camera, video: Video } as const;
@@ -15,19 +15,22 @@ const isSimulatedDelivery = (item: OutboxItem) => item.state === 'SENT' && item.
 const isHandsetDelivery = (item: OutboxItem) => item.state === 'SENT' && item.deliveredTo === 'handset-sim';
 
 function outboxChipTitle(item: OutboxItem): string | undefined {
-  if (item.state === 'DEAD_LETTER') return `Delivery abandoned after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}`;
-  if (item.state === 'WITHDRAWN') return 'Withdrawn when the incident was resolved, before it was sent — it will not be delivered.';
-  if (isSimulatedDelivery(item)) return 'Accepted by the built-in dev provider sink (test inbox) — simulated delivery: no real provider was contacted and no responder received anything.';
-  if (isHandsetDelivery(item)) return 'Sent by the handset directly over its own SIM (device-direct mode; no gateway involved).';
-  if (item.state === 'SENT' && item.deliveredTo) return `Delivery accepted by ${item.deliveredTo}`;
+  if (item.state === 'DEAD_LETTER') return `Gave up after ${item.attempts} attempts${item.lastError ? ` — last error: ${item.lastError}` : ''}`;
+  if (item.state === 'WITHDRAWN') return 'Cancelled when the alert was resolved, before it was sent — it will not be delivered.';
+  if (isSimulatedDelivery(item)) return 'Accepted by the built-in test inbox — simulated delivery: no real provider was contacted and no responder received anything.';
+  if (isHandsetDelivery(item)) return 'Sent by the phone itself, over its own SIM — no gateway involved.';
+  if (item.state === 'SENT' && item.deliveredTo) return `Delivered via ${item.deliveredTo}`;
   return undefined;
 }
 
 function outboxChipLabel(item: OutboxItem): string {
-  if (isSimulatedDelivery(item)) return 'SIMULATED — test inbox';
-  if (item.state === 'DEAD_LETTER') return `DEAD LETTER · abandoned after ${item.attempts} attempts`;
-  if (item.state === 'WITHDRAWN') return 'WITHDRAWN · incident resolved';
-  return item.state;
+  if (isSimulatedDelivery(item)) return 'Test only — nothing was really sent';
+  if (item.state === 'DEAD_LETTER') return `Couldn’t be delivered · gave up after ${item.attempts} attempts`;
+  if (item.state === 'WITHDRAWN') return 'Cancelled · alert was resolved';
+  if (item.state === 'QUEUED') return 'Waiting to send';
+  if (item.state === 'PROCESSING') return 'Sending now';
+  if (item.state === 'FAILED') return 'Retrying';
+  return 'Sent';
 }
 
 function outboxChipClass(item: OutboxItem): string {
@@ -121,69 +124,69 @@ export default function Incidents() {
 
   return (
     <div className="mx-auto max-w-[1380px]">
-      <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker>Incident kernel / read-only</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">Preserve the sequence.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">A durable timeline for the incident kernel. It keeps priority, event order, source, and observable state together across refreshes and devices.</p></div><div className="flex max-w-xs flex-col gap-1.5 self-start md:items-end"><button onClick={runTestIncident} className="inline-flex items-center justify-center gap-2 self-start bg-[#203c49] px-4 py-3 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55] md:self-end" data-testid="button-incidents-test-incident"><Activity size={15} /> Record TEST entry (journal only)</button><p className="text-[11px] leading-4 text-[#687271] md:text-right" data-testid="text-test-incident-hint">Writes a TEST RECORDED journal entry only — nothing is queued in the outbox and no provider or device is contacted. To exercise the real delivery path, use <strong className="text-[#203c49]">Activate kernel</strong> below (or the handset's Send alert), which queues deliveries and reports receipts.</p></div></section>
+      <section className="fade-up flex flex-col justify-between gap-5 border-b border-[#cfd2c9] pb-7 md:flex-row md:items-end"><div><div className="mb-4 flex items-center gap-3"><SectionKicker testId="kicker-incident-kernel-/-read-only">Alert log</SectionKicker><EvidenceLabel /></div><h1 className="font-display text-3xl font-extrabold tracking-[-0.05em] sm:text-5xl">What happened, in order.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[#687271]">Every alert keeps a permanent timeline — what triggered it, who was notified, and what the phone reported — so you can reconstruct the moment later.</p></div><div className="flex max-w-xs flex-col gap-1.5 self-start md:items-end"><button onClick={runTestIncident} className="inline-flex items-center justify-center gap-2 self-start rounded-lg bg-[#203c49] px-4 py-3 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55] md:self-end" data-testid="button-incidents-test-incident"><Activity size={15} /> Record a test event</button><p className="text-[11px] leading-4 text-[#687271] md:text-right" data-testid="text-test-incident-hint">Adds a practice entry to the timeline only — nothing is sent and no one is contacted. To exercise the real delivery path, use <strong className="text-[#203c49]">Trigger the alert</strong> below (or the phone’s own Send alert), which notifies responders for real and reports what happened.</p></div></section>
       <OutboxStatusPanel />
       <section className="fade-up fade-up-1 mt-5 grid gap-5 xl:grid-cols-[1fr_320px]">
-        <div className="border border-[#d7d8d0] bg-[#fbfbf7]">
+        <div className="rounded-xl border border-[#d7d8d0] bg-[#fbfbf7]">
           <div className="border-b border-[#d7d8d0] bg-[#f4f2e9] p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <ShieldAlert size={16} className="text-[#a06712]" />
-                  <SectionKicker>Incident kernel / simulation</SectionKicker>
+                  <SectionKicker testId="kicker-incident-kernel-/-simulation">Current alert</SectionKicker>
                 </div>
                 <h2 className="mt-1 font-display text-xl font-extrabold tracking-[-0.04em] text-[#203c49]">
-                  {activeIncident ? activeIncident.status.replaceAll('_', ' ') : 'No active incident'}
+                  {activeIncident ? activeIncident.status === 'ACTIVE_UNACKED' ? 'Active — nobody has acknowledged yet' : activeIncident.status === 'ACTIVE_ACKED' ? 'Acknowledged — someone is handling it' : activeIncident.status === 'RESOLVED' ? 'Resolved — all clear' : 'No active alert' : 'No active alert'}
                 </h2>
                 <p className="mt-1 max-w-xl text-xs leading-5 text-[#687271]">
                   {activeIncident
-                    ? `One durable incident · ${activeIncident.triggerCount} trigger${activeIncident.triggerCount === 1 ? '' : 's'} folded together · ${activeIncident.events.length} journal events`
-                    : 'Exercise idempotent triggers and responder transitions locally. This does not contact recipients or control a device.'}
+                    ? `One alert record · triggered ${activeIncident.triggerCount} time${activeIncident.triggerCount === 1 ? '' : 's'} · ${activeIncident.events.length} timeline entries`
+                    : 'Nothing is active right now. You can trigger a real alert here to practice the flow — it will notify your responders for real.'}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button onClick={triggerKernel} className="inline-flex items-center gap-2 bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55]" data-testid="button-trigger-kernel"><ShieldAlert size={14} /> {activeIncident && activeIncident.status !== 'RESOLVED' ? 'Retrigger' : 'Activate kernel'}</button>
-                <button onClick={acknowledgeKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_UNACKED'} className="inline-flex items-center gap-2 border border-[#b9d8c5] bg-[#e1efe5] px-3 py-2 text-xs font-bold text-[#236047] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-ack-kernel"><Check size={14} /> ACK</button>
-                <button onClick={resolveKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_ACKED'} className="inline-flex items-center gap-2 border border-[#e7b8af] bg-[#f8e0db] px-3 py-2 text-xs font-bold text-[#914136] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-resolve-kernel"><CircleStop size={14} /> RESOLVE</button>
+                <button onClick={triggerKernel} title="Triggers a real alert: responders are notified through the configured channels." className="inline-flex items-center gap-2 rounded-lg bg-[#203c49] px-3 py-2 text-xs font-bold text-[#f2f0e6] transition-colors hover:bg-[#2d4a55]" data-testid="button-trigger-kernel"><ShieldAlert size={14} /> {activeIncident && activeIncident.status !== 'RESOLVED' ? 'Trigger again' : 'Trigger the alert'}</button>
+                <button onClick={acknowledgeKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_UNACKED'} title="Mark that someone has seen the alert and is handling it." className="inline-flex items-center gap-2 rounded-lg border border-[#b9d8c5] bg-[#e1efe5] px-3 py-2 text-xs font-bold text-[#236047] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-ack-kernel"><Check size={14} /> Acknowledge</button>
+                <button onClick={resolveKernel} disabled={!activeIncident || activeIncident.status !== 'ACTIVE_ACKED'} title="Mark the alert as handled. Anything still waiting to be sent is cancelled." className="inline-flex items-center gap-2 rounded-lg border border-[#e7b8af] bg-[#f8e0db] px-3 py-2 text-xs font-bold text-[#914136] transition-opacity disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-resolve-kernel"><CircleStop size={14} /> Mark resolved</button>
               </div>
             </div>
             {activeIncident && (
               <div className="mt-4 grid gap-3 border-t border-[#d7d8d0] pt-4 sm:grid-cols-2">
                 <div>
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Stable incident ID</p>
+                  <p className="text-[11px] font-semibold text-[#687271]">Alert reference</p>
                   <p className="mt-1 break-all font-mono-ui text-xs text-[#203c49]">{activeIncident.id}</p>
                 </div>
                 <div>
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Independent P1 outbox</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="inline-flex items-center gap-1"><span title={outboxChipTitle(item)} className={`border px-2 py-1 font-mono-ui text-[10px] ${outboxChipClass(item)}`} data-testid={`chip-outbox-${item.id}`}>{item.transport} · {outboxChipLabel(item)}</span>{item.state === 'DEAD_LETTER' ? <button onClick={() => openRequeueNote(item.id)} title="Re-queue this abandoned delivery after fixing the provider problem" className="border border-[#914136] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#914136] transition-colors hover:bg-[#f8e0db]" data-testid={`button-requeue-outbox-${item.id}`}>Re-queue</button> : null}</span>)}</div>
+                  <p className="text-[11px] font-semibold text-[#687271]">Deliveries for this alert</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">{activeIncident.outbox.map((item) => <span key={item.id} className="inline-flex items-center gap-1"><span title={outboxChipTitle(item)} className={`rounded-md border px-2 py-1 text-[11px] font-medium ${outboxChipClass(item)}`} data-testid={`chip-outbox-${item.id}`}>{item.transport} · {outboxChipLabel(item)}</span>{item.state === 'DEAD_LETTER' ? <button onClick={() => openRequeueNote(item.id)} title="Try this delivery again after fixing the provider problem" className="rounded-md border border-[#914136] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#914136] transition-colors hover:bg-[#f8e0db]" data-testid={`button-requeue-outbox-${item.id}`}>Try again</button> : null}</span>)}</div>
                   {requeueTarget && activeIncident.outbox.some((item) => item.id === requeueTarget) && (
-                    <form onSubmit={submitRequeue} className="mt-3 border border-[#e7b8af] bg-[#fbfbf7] p-3" data-testid="form-requeue-note">
-                      <label htmlFor="requeue-note" className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">What did you fix? (optional — recorded in the incident journal)</label>
+                    <form onSubmit={submitRequeue} className="mt-3 rounded-lg border border-[#e7b8af] bg-[#fbfbf7] p-3" data-testid="form-requeue-note">
+                      <label htmlFor="requeue-note" className="text-[11px] font-semibold text-[#687271]">What did you fix? (optional — saved in the alert’s permanent record)</label>
                       <input
                         id="requeue-note"
                         value={requeueNote}
                         onChange={(event) => { setRequeueNote(event.target.value); setRequeueError(null); }}
                         maxLength={500}
-                        placeholder='e.g. "rotated the provider API key"'
-                        className="mt-1 w-full border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1.5 text-xs text-[#203c49] placeholder:text-[#9aa39f] focus:border-[#203c49] focus:outline-none"
+                        placeholder='e.g. "renewed the provider password"'
+                        className="mt-1 w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1.5 text-xs text-[#203c49] placeholder:text-[#9aa39f] focus:border-[#203c49] focus:outline-none"
                         data-testid="input-requeue-note"
                       />
                       <p className="mt-2 flex items-start gap-1.5 text-[11px] font-bold leading-4 text-[#914136]" data-testid="text-requeue-hint">
                         <LockKeyhole size={12} className="mt-0.5 shrink-0" />
-                        Never paste credentials — the journal is permanent. Describe the fix, not the secret.
+                        Never paste passwords or keys here — this record is permanent. Describe the fix, not the secret.
                       </p>
                       {requeueError && (
-                        <p role="alert" className="mt-2 border border-[#914136] bg-[#914136]/10 px-2 py-1.5 text-[11px] font-bold leading-4 text-[#914136]" data-testid="text-requeue-error">{requeueError}</p>
+                        <div className="mt-2" data-testid="text-requeue-error"><FriendlyErrorMessage error={requeueError} /></div>
                       )}
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button type="submit" disabled={requeueBusy} className="bg-[#914136] px-3 py-1.5 font-mono-ui text-[10px] font-bold text-[#fbfbf7] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-requeue-confirm">{requeueBusy ? 'Re-queuing…' : 'Re-queue delivery'}</button>
-                        <button type="button" onClick={() => { setRequeueTarget(null); setRequeueError(null); }} disabled={requeueBusy} className="border border-[#c6cbc3] px-3 py-1.5 font-mono-ui text-[10px] font-bold text-[#687271] transition-colors hover:border-[#203c49] disabled:opacity-40" data-testid="button-requeue-cancel">Cancel</button>
+                        <button type="submit" disabled={requeueBusy} className="rounded-md bg-[#914136] px-3 py-1.5 text-[11px] font-bold text-[#fbfbf7] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-requeue-confirm">{requeueBusy ? 'Sending it again…' : 'Send it again'}</button>
+                        <button type="button" onClick={() => { setRequeueTarget(null); setRequeueError(null); }} disabled={requeueBusy} className="rounded-md border border-[#c6cbc3] px-3 py-1.5 text-[11px] font-bold text-[#687271] transition-colors hover:border-[#203c49] disabled:opacity-40" data-testid="button-requeue-cancel">Cancel</button>
                       </div>
                     </form>
                   )}
                 </div>
                 <div className="sm:col-span-2" data-testid="panel-incident-location">
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Position fix from handset</p>
+                  <p className="text-[11px] font-semibold text-[#687271]">Where the phone was</p>
                   {activeIncident.location ? (
                     <p className="mt-1 text-xs leading-5 text-[#203c49]">
                       <a
@@ -195,23 +198,23 @@ export default function Incidents() {
                       >
                         {activeIncident.location.latitude.toFixed(5)}, {activeIncident.location.longitude.toFixed(5)}
                       </a>
-                      {' '}· accuracy ±{Math.round(activeIncident.location.accuracyM)} m · fix{' '}
+                      {' '}· accurate to about {Math.round(activeIncident.location.accuracyM)} m · recorded{' '}
                       {(() => {
                         const ageSeconds = Math.max(0, Math.round((Date.now() - Date.parse(activeIncident.location.capturedAt)) / 1000));
                         return ageSeconds < 90 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
-                      })()}{' '}old — a fix is shown with its accuracy and age, never as current truth.
+                      })()}{' '}ago — a location is always shown with its accuracy and age, never as “right now”.
                     </p>
                   ) : (
-                    <p className="mt-1 text-xs leading-5 text-[#687271]">No position fix captured for this alert (no permission, no provider, or the bounded wait expired). The alert still went out on time.</p>
+                    <p className="mt-1 text-xs leading-5 text-[#687271]">No location was captured with this alert (permission off, no signal, or time ran out). The alert itself still went out on time.</p>
                   )}
                 </div>
                 <div className="sm:col-span-2" data-testid="panel-incident-evidence">
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.13em] text-[#687271]">Evidence captured on handset</p>
+                  <p className="text-[11px] font-semibold text-[#687271]">Evidence from the phone</p>
                   {activeIncident.evidence.length === 0 ? (
                     <p className="mt-1 text-xs leading-5 text-[#687271]">
-                      No evidence clips yet. Enable capture types on the{' '}
+                      No clips yet. Turn capture types on at the{' '}
                       <Link href="/capture" className="font-bold text-[#a06712]" data-testid="link-incident-capture-settings">Evidence capture</Link>
-                      {' '}page, or request one below when its toggle is set to "only when a responder asks".
+                      {' '}page, or request one below when its setting is “only when a responder asks”.
                     </p>
                   ) : (
                     <ul className="mt-2 space-y-2">
@@ -224,19 +227,19 @@ export default function Incidents() {
                             })()
                           : null;
                         return (
-                          <li key={item.id} className="flex flex-wrap items-center gap-2 border border-[#e0e1da] bg-[#f7f7f1] px-3 py-2" data-testid={`row-evidence-${item.id}`}>
+                          <li key={item.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#e0e1da] bg-[#f7f7f1] px-3 py-2" data-testid={`row-evidence-${item.id}`}>
                             <KindIcon size={14} className="text-[#203c49]" />
                             <span className="text-xs font-bold text-[#203c49]">
                               {item.kind}{item.camera ? ` · ${item.camera} camera` : ''}{item.sequence > 1 ? ` · clip ${item.sequence}` : ''}
                             </span>
-                            <span className="font-mono-ui text-[10px] text-[#687271]">
+                            <span className="text-[11px] text-[#687271]">
                               {formatEvidenceSize(item.sizeBytes)}
                               {capturedAge ? ` · captured ${capturedAge} ago` : ''}
-                              {item.requestId ? ' · responder-requested' : ''}
+                              {item.requestId ? ' · requested by a responder' : ''}
                             </span>
                             <button
                               onClick={() => { void downloadEvidence(item); }}
-                              className="ml-auto inline-flex items-center gap-1 border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#203c49] transition-colors hover:border-[#203c49]"
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:border-[#203c49]"
                               data-testid={`button-download-evidence-${item.id}`}
                             >
                               <Download size={12} /> Download
@@ -254,19 +257,19 @@ export default function Incidents() {
                           <button
                             onClick={() => { void submitCaptureRequest(kind); }}
                             disabled={captureBusy !== null}
-                            className="inline-flex items-center gap-1.5 border border-[#203c49] bg-[#fbfbf7] px-2 py-1 font-mono-ui text-[10px] font-bold text-[#203c49] transition-colors hover:bg-[#e1efe5] disabled:opacity-40"
-                            title="The handset picks the request up on its next server contact and reports the outcome to the journal"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-[#203c49] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:bg-[#e1efe5] disabled:opacity-40"
+                            title="The phone picks the request up on its next contact with the server and reports the outcome to the timeline"
                             data-testid={`button-request-capture-${kind}`}
                           >
-                            Request {kind} capture
+                            Ask the phone for {kind}
                           </button>
                           {latest && (
                             <span
-                              className={`border px-1.5 py-0.5 font-mono-ui text-[9px] uppercase ${latest.state === 'FAILED' ? 'border-[#914136] text-[#914136]' : latest.state === 'COMPLETED' ? 'border-[#b9d8c5] text-[#236047]' : 'border-[#c6cbc3] text-[#687271]'}`}
+                              className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${latest.state === 'FAILED' ? 'border-[#914136] text-[#914136]' : latest.state === 'COMPLETED' ? 'border-[#b9d8c5] text-[#236047]' : 'border-[#c6cbc3] text-[#687271]'}`}
                               title={latest.detail ?? undefined}
                               data-testid={`status-capture-request-${kind}`}
                             >
-                              {latest.state}
+                              {latest.state === 'PENDING' ? 'Requested' : latest.state === 'STARTED' ? 'In progress' : latest.state === 'COMPLETED' ? 'Done' : 'Failed'}
                             </span>
                           )}
                         </span>
@@ -274,28 +277,28 @@ export default function Incidents() {
                     })}
                     {(['audio', 'photo', 'video'] as const).every((kind) => policy[kind] !== 'responder') && (
                       <p className="text-[11px] text-[#687271]">
-                        Responder-requested capture is available once a capture type is set to{' '}
+                        Asking the phone for evidence becomes available once a capture type is set to{' '}
                         <strong>only when a responder asks</strong> on the Evidence capture page.
                       </p>
                     )}
                   </div>
                   {captureError && (
-                    <p role="alert" className="mt-2 border border-[#914136] bg-[#914136]/10 px-2 py-1.5 text-[11px] font-bold leading-4 text-[#914136]" data-testid="text-capture-error">{captureError}</p>
+                    <div className="mt-2"><FriendlyErrorMessage error={captureError} testId="text-capture-error" /></div>
                   )}
                 </div>
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-4 border-b border-[#d7d8d0] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(['all', 'P1', 'P2', 'P3'] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={`border px-3 py-2 font-mono-ui text-[10px] uppercase tracking-[0.1em] transition-colors ${filter === item ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] text-[#687271] hover:border-[#203c49]'}`} data-testid={`button-filter-priority-${item}`}>{item === 'all' ? 'All events' : item}</button>)}</div><button onClick={resetDemo} className="inline-flex items-center gap-2 self-start text-xs font-bold text-[#687271] hover:text-[#203c49]" data-testid="button-reset-incidents"><RotateCcw size={14} /> Reset sample</button></div>
-          {visible.length === 0 ? <div className="p-6"><EmptyState title="No events in this priority" detail="Choose another priority or run a local TEST incident to add a P3 record." /></div> : <div className="relative px-5 py-5"><div className="absolute bottom-7 left-[38px] top-7 w-px bg-[#d7d8d0]" />{visible.map((incident) => <div key={incident.id} className="relative grid grid-cols-[28px_1fr] gap-4 pb-6 last:pb-0" data-testid={`row-incident-${incident.id}`}><div className="z-10 mt-1 flex h-7 w-7 items-center justify-center border border-[#d7d8d0] bg-[#fbfbf7]"><span className={`h-2 w-2 rounded-full ${incident.priority === 'P1' ? 'bg-[#203c49]' : incident.priority === 'P2' ? 'bg-[#e8a629]' : 'bg-[#8ca69f]'}`} /></div><div className="border border-[#e0e1da] bg-[#f7f7f1] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><PriorityPill priority={incident.priority} /><h2 className="text-sm font-bold text-[#203c49]">{incident.title}</h2></div><span className="font-mono-ui text-[10px] text-[#687271]">{incident.time} UTC</span></div><p className="mt-2 text-sm leading-5 text-[#687271]">{incident.detail}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e0e1da] pt-3 font-mono-ui text-[10px] uppercase tracking-[0.08em] text-[#687271]"><span>State: <strong className={incident.state === 'Blocked' ? 'text-[#914136]' : incident.state === 'Local only' ? 'text-[#a06712]' : 'text-[#236047]'}>{incident.state}</strong></span><span>Source: {incident.source}</span>{incident.sample ? <EvidenceLabel /> : <span className="text-[#a06712]">LOCAL ACTION</span>}</div></div></div>)}</div>}
+          <div className="flex flex-col gap-4 border-b border-[#d7d8d0] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(['all', 'P1', 'P2', 'P3'] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={`rounded-lg border px-3 py-2 text-[11px] font-bold transition-colors ${filter === item ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] text-[#687271] hover:border-[#203c49]'}`} data-testid={`button-filter-priority-${item}`}>{item === 'all' ? 'All events' : `${item} only`}</button>)}</div><button onClick={resetDemo} className="inline-flex items-center gap-2 self-start text-xs font-bold text-[#687271] hover:text-[#203c49]" data-testid="button-reset-incidents"><RotateCcw size={14} /> Reset the sample</button></div>
+          {visible.length === 0 ? <div className="p-6"><EmptyState title="Nothing at this urgency level" detail="Pick another level above, or record a test event to add a P3 practice entry." /></div> : <div className="relative px-5 py-5"><div className="absolute bottom-7 left-[38px] top-7 w-px bg-[#d7d8d0]" />{visible.map((incident) => <div key={incident.id} className="relative grid grid-cols-[28px_1fr] gap-4 pb-6 last:pb-0" data-testid={`row-incident-${incident.id}`}><div className="z-10 mt-1 flex h-7 w-7 items-center justify-center rounded-full border border-[#d7d8d0] bg-[#fbfbf7]"><span className={`h-2 w-2 rounded-full ${incident.priority === 'P1' ? 'bg-[#203c49]' : incident.priority === 'P2' ? 'bg-[#e8a629]' : 'bg-[#8ca69f]'}`} /></div><div className="rounded-xl border border-[#e0e1da] bg-[#f7f7f1] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><PriorityPill priority={incident.priority} /><h2 className="text-sm font-bold text-[#203c49]">{incident.title}</h2></div><span className="text-[11px] text-[#687271]">{incident.time} UTC</span></div><p className="mt-2 text-sm leading-5 text-[#687271]">{incident.detail}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e0e1da] pt-3 text-[11px] font-medium text-[#687271]"><span>Status: <strong className={incident.state === 'Blocked' ? 'text-[#914136]' : incident.state === 'Local only' ? 'text-[#a06712]' : 'text-[#236047]'}>{incident.state}</strong></span><span>Source: {incident.source}</span>{incident.sample ? <EvidenceLabel /> : <span className="text-[#a06712]">Recorded by this console</span>}</div></div></div>)}</div>}
         </div>
         <aside className="space-y-5">
-          <div className="border border-[#d7d8d0] bg-[#203c49] p-5 text-[#f2f0e6]"><SectionKicker>Priority model</SectionKicker><h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">Urgency is explicit.</h2><div className="mt-4 space-y-3"><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P1" /><p className="text-xs leading-5 text-[#c2cec7]">Immediate duress signal; preserve first in the sequence.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P2" /><p className="text-xs leading-5 text-[#c2cec7]">Supporting delivery or location event.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P3" /><p className="text-xs leading-5 text-[#c2cec7]">Diagnostic, observer, or non-urgent record.</p></div></div></div>
-          <div className="border border-[#d7d8d0] bg-[#fbfbf7] p-5"><SectionKicker>Kernel contract</SectionKicker><h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">What must survive</h2><ul className="mt-4 space-y-3">{[['Ordering', 'Do not lose the sequence of alert, delivery, and location events.'], ['Priority', 'Keep P1 / P2 / P3 attached to every event.'], ['Provenance', 'Name the source and whether an observer can verify it.'], ['Time', 'Store the event time and the observed state, not a vague success flag.']].map(([title, detail]) => <li key={title} className="flex gap-3 text-xs leading-5 text-[#687271]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#e8a629]" /><span><strong className="text-[#203c49]">{title}:</strong> {detail}</span></li>)}</ul></div>
-          <div className="border border-[#e8c880] bg-[#fff8e7] p-5"><div className="flex gap-3"><LockKeyhole size={17} className="mt-0.5 shrink-0 text-[#a06712]" /><div><p className="text-sm font-bold text-[#765013]">Read-only by design</p><p className="mt-1 text-xs leading-5 text-[#765013]">Timeline entries are sample evidence or local TEST records. This prototype does not send messages or control the device.</p></div></div></div>
+          <div className="rounded-xl border border-[#d7d8d0] bg-[#203c49] p-5 text-[#f2f0e6]"><SectionKicker testId="kicker-priority-model"><span className="text-[#ffd067]">What P1 · P2 · P3 mean</span></SectionKicker><h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">How urgent each entry is.</h2><div className="mt-4 space-y-3"><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P1" /><p className="text-xs leading-5 text-[#c2cec7]">The emergency itself — someone needs help right now.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P2" /><p className="text-xs leading-5 text-[#c2cec7]">Supporting news: a delivery going out, a location arriving.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P3" /><p className="text-xs leading-5 text-[#c2cec7]">Background notes and practice records.</p></div></div></div>
+          <div className="rounded-xl border border-[#d7d8d0] bg-[#fbfbf7] p-5"><SectionKicker testId="kicker-kernel-contract">What this record guarantees</SectionKicker><h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">You can trust the timeline</h2><ul className="mt-4 space-y-3">{[['Order', 'Events stay in the order they happened — alert, deliveries, location.'], ['Urgency', 'Every entry keeps its P1 / P2 / P3 level.'], ['Source', 'Each entry says where it came from and whether a second person can verify it.'], ['Time', 'Entries keep their real timestamps and observed state, not a vague “success”.']].map(([title, detail]) => <li key={title} className="flex gap-3 text-xs leading-5 text-[#687271]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#e8a629]" /><span><strong className="text-[#203c49]">{title}:</strong> {detail}</span></li>)}</ul></div>
+          <div className="rounded-xl border border-[#e8c880] bg-[#fff8e7] p-5"><div className="flex gap-3"><LockKeyhole size={17} className="mt-0.5 shrink-0 text-[#a06712]" /><div><p className="text-sm font-bold text-[#765013]">A record, not a remote control</p><p className="mt-1 text-xs leading-5 text-[#765013]">This timeline never edits history. Sample entries are clearly marked, and real triggers only ever add to the record — nothing here can quietly change what happened.</p></div></div></div>
         </aside>
       </section>
-      <div className="mt-5 flex items-center justify-between border-t border-[#d7d8d0] pt-4 text-xs text-[#687271]"><span>Need to validate the source path first?</span><Link href="/gates" className="inline-flex items-center gap-1 font-bold text-[#a06712]" data-testid="link-incidents-gates">Review feasibility gates <ArrowRight size={13} /></Link></div>
+      <div className="mt-5 flex items-center justify-between border-t border-[#d7d8d0] pt-4 text-xs text-[#687271]"><span>Want to check the phone first?</span><Link href="/gates" className="inline-flex items-center gap-1 font-bold text-[#a06712]" data-testid="link-incidents-gates">Review the readiness checks <ArrowRight size={13} /></Link></div>
     </div>
   );
 }

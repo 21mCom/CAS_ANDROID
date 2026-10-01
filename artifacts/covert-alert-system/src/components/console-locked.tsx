@@ -1,4 +1,4 @@
-import { LockKeyhole } from 'lucide-react';
+import { KeyRound, LockKeyhole } from 'lucide-react';
 
 /**
  * Full-screen takeover shown when the console has no usable device
@@ -19,16 +19,28 @@ export function ConsoleLocked({ message, onUnlock }: { message: string; onUnlock
         {message}
       </p>
       <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-        No incident data is being shown — not even the built-in demo records. Without an enrolled
-        credential this console cannot distinguish live state from samples, so it shows nothing.
+        Nothing is shown while the console is locked — not even the built-in sample records — so you
+        can never mistake demo data for a real alert.
       </p>
+      <div className="mt-5 max-w-xl rounded-lg border border-border bg-card px-4 py-3 text-left">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <KeyRound size={14} className="shrink-0 text-muted-foreground" />
+          Where do I find the enrollment credential?
+        </p>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          It is the alert password chosen when the server was set up — stored as the{' '}
+          <span className="font-mono-ui text-xs">CAS_ALERT_TOKEN</span> value in the server&apos;s
+          secrets. Ask whoever deployed the server if you don&apos;t have it. This browser swaps it
+          for its own revocable credential; the password itself is never stored here.
+        </p>
+      </div>
       <button
         type="button"
         data-testid="button-unlock-console"
         onClick={onUnlock}
         className="mt-6 rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground hover:bg-secondary/80"
       >
-        Enter enrollment credential
+        Unlock with the enrollment credential
       </button>
     </div>
   );

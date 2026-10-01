@@ -301,7 +301,7 @@ test('the mismatch surface renders the reason and a retry, with no console data'
     createElement(StateResponseError, { message: 'The server’s state response does not match what this console expects (gates.0.status: Invalid enum value).' , onRetry: () => {} }),
   );
   assert.match(html, /data-testid="state-response-error"/);
-  assert.match(html, /Server response not understood/);
+  assert.match(html, /doesn&#x27;t recognize/);
   assert.match(html, /does not match what this console expects/);
   assert.match(html, /No console data is being shown/);
   assert.match(html, /data-testid="button-retry-state-load"/);
@@ -314,7 +314,7 @@ test('the locked surface renders the reason and an unlock retry, with no console
   assert.match(html, /data-testid="console-locked"/);
   assert.match(html, /Console locked/);
   assert.match(html, /credential is required/);
-  assert.match(html, /No incident data is being shown/);
+  assert.match(html, /Nothing is shown while the console is locked/);
   assert.match(html, /data-testid="button-unlock-console"/);
   assert.doesNotMatch(html, /SAMPLE EVIDENCE/, 'the locked surface must not render sample incidents');
 });
@@ -322,8 +322,8 @@ test('the locked surface renders the reason and an unlock retry, with no console
 test('the offline fallback labels itself as demo data and offers a retry', () => {
   const html = renderToStaticMarkup(createElement(OfflineDemoBanner, { onRetry: () => {} }));
   assert.match(html, /data-testid="banner-offline-demo"/);
-  assert.match(html, /Server unreachable/);
+  assert.match(html, /server can&#x27;t be reached/);
   assert.match(html, /demo data/);
-  assert.match(html, /not live incident state/);
+  assert.match(html, /isn&#x27;t live incident state|is not live incident state|Nothing on this screen is live incident state/);
   assert.match(html, /data-testid="button-retry-offline-load"/);
 });
