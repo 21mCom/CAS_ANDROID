@@ -214,6 +214,10 @@ try {
           CAS_EMAIL_SMTP_PORT: "",
           CAS_EMAIL_SMTP_USER: "",
           CAS_EMAIL_SMTP_PASSWORD: "",
+          // The auth-burst monitor is a live external endpoint too: an
+          // inherited URL would let the rehearsal ping (or flip) the real
+          // security check.
+          CAS_AUTH_BURST_ALERT_URL: "",
         },
         stdio: ["ignore", "inherit", "inherit"],
       },

@@ -38,6 +38,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { createServer as httpCreateServer } from "node:http";
 import { test } from "node:test";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
@@ -77,19 +78,30 @@ type BootedServer = {
   output: () => string;
 };
 
-async function bootApiServer(env: NodeJS.ProcessEnv): Promise<BootedServer> {
+async function bootApiServer(
+  env: NodeJS.ProcessEnv,
+  options: { keepHarnessMarkers?: boolean } = {},
+): Promise<BootedServer> {
   const port = await findFreePort();
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   // Strip the test-harness markers: index.ts deliberately skips the probe
-  // worker under them, and this suite proves the production boot path.
-  delete childEnv.NODE_ENV;
-  delete childEnv.CAS_TEST_DISPOSABLE_DB;
-  delete childEnv.CAS_TEST_EXPECTED_DATABASE_NAME;
-  delete childEnv.CAS_TEST_FORBIDDEN_DATABASE_URL;
+  // worker under them, and this suite proves the production boot path. The
+  // burst-pinger isolation test below keeps them on purpose.
+  if (!options.keepHarnessMarkers) {
+    delete childEnv.NODE_ENV;
+    delete childEnv.CAS_TEST_DISPOSABLE_DB;
+    delete childEnv.CAS_TEST_EXPECTED_DATABASE_NAME;
+    delete childEnv.CAS_TEST_FORBIDDEN_DATABASE_URL;
+  }
   delete childEnv.CAS_TRUST_PROXY;
   // Never inherit an HTTPS mail provider or the deployment's real mailbox:
   // every probe the child runs must land on the stub below.
   delete childEnv.CAS_EMAIL_PROVIDER_URL;
+  // Same quarantine for the auth-burst security monitor: this suite boots
+  // WITHOUT the harness markers (that is the behavior under test), so an
+  // inherited CAS_AUTH_BURST_ALERT_URL would start the pinger for real and
+  // let the child ping — or flip — the operator's live check.
+  delete childEnv.CAS_AUTH_BURST_ALERT_URL;
   Object.assign(childEnv, env, { PORT: String(port), HOST: "127.0.0.1" });
 
   const child = spawn(
@@ -166,6 +178,69 @@ test("src/index.ts wires the mailbox probe worker into server boot", () => {
     /startCasEmailHealthWorker\(\)/,
     "src/index.ts no longer starts the mailbox probe worker at boot — a silently dead alert mailbox would never reach the console",
   );
+});
+
+test("src/index.ts starts the auth-burst pinger only outside the test-harness branch", () => {
+  // Static guard for the isolation rule: the pinger start must sit in the
+  // else-branch of the testHarnessDeliveryForced check, never on the
+  // unconditional boot path — an inherited CAS_AUTH_BURST_ALERT_URL in a
+  // harness process would ping (or flip) the operator's real security
+  // monitor, the same risk class as live provider delivery.
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /if \(testHarnessDeliveryForced\(\)\) \{[\s\S]*?\} else \{[\s\S]*?authBurstAlert = startCasAuthBurstAlert\(\);/,
+    "src/index.ts starts the auth-burst pinger outside the test-harness guard — harness runs could contact the live security monitor",
+  );
+});
+
+test("a harness-marked server never contacts the auth-burst monitor", async () => {
+  // Live proof of the same rule: boot the real entrypoint WITH the harness
+  // markers kept and CAS_AUTH_BURST_ALERT_URL pointed at a stub check. The
+  // pinger must never start (no startup log line) and the stub must see zero
+  // requests — even the quiet-time success ping would flip a real check.
+  const hits: string[] = [];
+  const stub = httpCreateServer((req, res) => {
+    hits.push(req.url ?? "");
+    res.statusCode = 200;
+    res.end("OK");
+  });
+  stub.listen(0, "127.0.0.1");
+  await once(stub, "listening");
+  const stubPort = (stub.address() as AddressInfo).port;
+
+  let server: BootedServer | undefined;
+  try {
+    server = await bootApiServer(
+      {
+        CAS_ALERT_TOKEN: ALERT_TOKEN,
+        CAS_AUTH_BURST_ALERT_URL: `http://127.0.0.1:${stubPort}/burst-check`,
+      },
+      { keepHarnessMarkers: true },
+    );
+    await waitForOutput(server, /Test harness detected/, 15_000, "the harness warning");
+    assert.doesNotMatch(
+      server.output(),
+      /CAS auth burst alert pinger started/,
+      `pinger started under harness markers\n${server.output()}`,
+    );
+    // Give any mis-wired pinger a window to fire its first ping.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    assert.equal(
+      hits.length,
+      0,
+      `harness-marked server contacted the burst monitor: ${hits.join(",")}\n${server.output()}`,
+    );
+    const exitCode = await stopApiProcess(server);
+    assert.equal(exitCode, 0, `server did not shut down cleanly\n${server.output()}`);
+  } finally {
+    if (server && server.child.exitCode === null) {
+      server.child.kill("SIGKILL");
+      await once(server.child, "exit").catch(() => {});
+    }
+    stub.close();
+    await once(stub, "close").catch(() => {});
+  }
 });
 
 test("a booted server schedules and fires the mailbox probe on its configured cadence", async (t) => {

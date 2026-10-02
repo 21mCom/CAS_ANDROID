@@ -1,0 +1,18 @@
+# One-tap update field proof — sanitized UPDATE_* journal events (Pixel 11, 2026-10-02)
+# Source: device shared_prefs gate0a-local-journal.xml, XML-entity-decoded.
+# Credentials, responder numbers and non-update events removed.
+
+{"type":"UPDATE_CHECK","wallClockMs":1790923553529,"elapsedRealtimeMs":142770,"outcome":"UPDATE_AVAILABLE","manual":true,"detail":"update available: 0.8.1 (build 8)"}
+{"type":"UPDATE_DOWNLOAD","wallClockMs":1790923577883,"elapsedRealtimeMs":167124,"outcome":"VERIFIED","versionCode":8,"detail":"downloaded and verified 10278117 bytes, SHA-256 2da61935d74f…"}
+{"type":"UPDATE_INSTALL_HANDOFF","wallClockMs":1790923577890,"elapsedRealtimeMs":167131,"detail":"BLOCKED: Android has not allowed this app to install updates — in Settings → Apps → CAS Pixel Gate 0A enable 'Install unknown apps', then tap Download & install again"}
+{"type":"UPDATE_CHECK","wallClockMs":1790923682554,"elapsedRealtimeMs":271795,"outcome":"UPDATE_AVAILABLE","manual":true,"detail":"update available: 0.8.1 (build 8)"}
+{"type":"UPDATE_DOWNLOAD","wallClockMs":1790923688336,"elapsedRealtimeMs":277578,"outcome":"VERIFIED","versionCode":8,"detail":"already downloaded and verified (10278117 bytes)"}
+{"type":"UPDATE_INSTALL_HANDOFF","wallClockMs":1790923688480,"elapsedRealtimeMs":277721,"detail":"handed to the system installer — confirm the Android prompt to finish the update"}
+{"type":"UPDATE_INSTALL","wallClockMs":1790923688521,"elapsedRealtimeMs":277762,"outcome":"CONFIRM_PROMPT_SHOWN"}
+{"type":"UPDATE_INSTALL","wallClockMs":1790923706922,"elapsedRealtimeMs":296163,"outcome":"FAILED","status":3,"detail":"INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed for file:\/\/\/data\/app\/vmdl1202340696.tmp"}
+{"type":"UPDATE_DOWNLOAD","wallClockMs":1790923719564,"elapsedRealtimeMs":308805,"outcome":"VERIFIED","versionCode":8,"detail":"already downloaded and verified (10278117 bytes)"}
+{"type":"UPDATE_INSTALL_HANDOFF","wallClockMs":1790923719665,"elapsedRealtimeMs":308907,"detail":"handed to the system installer — confirm the Android prompt to finish the update"}
+{"type":"UPDATE_INSTALL","wallClockMs":1790923719720,"elapsedRealtimeMs":308961,"outcome":"CONFIRM_PROMPT_SHOWN"}
+{"type":"UPDATE_INSTALL","wallClockMs":1790923727461,"elapsedRealtimeMs":316702,"outcome":"INSTALLED"}
+{"type":"UPDATE_CHECK","wallClockMs":1790923737351,"elapsedRealtimeMs":326592,"outcome":"UP_TO_DATE","manual":false,"detail":"published build 8 is not newer than this build 8"}
+{"type":"UPDATE_CHECK","wallClockMs":1790923746883,"elapsedRealtimeMs":336124,"outcome":"UP_TO_DATE","manual":true,"detail":"published build 8 is not newer than this build 8"}

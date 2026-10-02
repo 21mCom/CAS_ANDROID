@@ -87,18 +87,23 @@ const outboxWorker = startCasOutboxWorker();
 // real mailbox with live secrets from the environment, which is the same
 // risk class as sending — test runs must not touch real provider accounts.
 let emailHealthWorker: ReturnType<typeof startCasEmailHealthWorker> | null = null;
+let authBurstAlert: ReturnType<typeof startCasAuthBurstAlert> = null;
 if (testHarnessDeliveryForced()) {
   logger.warn(
-    "Test harness detected (NODE_ENV=test or CAS_TEST_DISPOSABLE_DB=1): all CAS provider deliveries are forced to the dev sink and the mailbox health probe is disabled — configured provider secrets are ignored in this process.",
+    "Test harness detected (NODE_ENV=test or CAS_TEST_DISPOSABLE_DB=1): all CAS provider deliveries are forced to the dev sink, and the mailbox health probe and auth-burst alert pinger are disabled — configured provider and monitor secrets are ignored in this process.",
   );
 } else {
   emailHealthWorker = startCasEmailHealthWorker();
+  // On a deployment there is no cron host to scan the logs for the tarpit's
+  // burst line (the self-hosting Step 10 recipe), so when the operator wires
+  // a healthchecks.io-style check URL the server pings it itself: /fail on
+  // every burst, a success ping in quiet times. Unset, bursts stay log-only.
+  // Gated on the same test-harness marker as the mailbox probe: a harness
+  // process inherits the workspace environment, and an inherited
+  // CAS_AUTH_BURST_ALERT_URL would let tests ping (or clear) the real
+  // security monitor — the same risk class as live provider delivery.
+  authBurstAlert = startCasAuthBurstAlert();
 }
-// On a deployment there is no cron host to scan the logs for the tarpit's
-// burst line (the self-hosting Step 10 recipe), so when the operator wires a
-// healthchecks.io-style check URL the server pings it itself: /fail on every
-// burst, a success ping in quiet times. Unset, bursts stay log-only.
-const authBurstAlert = startCasAuthBurstAlert();
 if (authBurstAlert) {
   setCasAuthBurstRecorder((burst) => {
     logCasAuthBurst(burst);

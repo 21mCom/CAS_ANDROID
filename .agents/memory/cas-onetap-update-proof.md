@@ -1,13 +1,13 @@
 ---
 name: One-tap update field proof lessons
-description: Hardware quirks and evidence rules from the first physical-Pixel self-update proof (N → N+1).
+description: Durable verification lessons from the first physical-Pixel self-update proof (N → N+1).
 ---
 
-Two non-obvious findings from the first successful one-tap self-update field run on the physical Pixel 11 (2026-10-02):
+Two durable lessons from the first successful one-tap self-update field run on the physical Pixel 11 (2026-10-02):
 
-1. **First install attempt can fail with `INSTALL_FAILED_VERIFICATION_FAILURE` and succeed on immediate retry.** Journal showed CONFIRM_PROMPT_SHOWN → FAILED (status 3, "Install not allowed for file:///data/app/vmdl…tmp") right after the "Install unknown apps" grant, then an identical retry installed cleanly. Field guides and update UX should expect a possible one-time retry, not treat the first failure as fatal.
+1. **A first install attempt can fail and succeed on immediate retry.** The field journal showed the first handoff to the system installer fail with a verification refusal right after the "Install unknown apps" grant, then install cleanly on an identical retry. Field guides and update UX should treat a first-attempt failure as retryable, not fatal.
 
-2. **Journal-scraping scripts must match the journal's actual key.** TestStore writes each event under `"type"`, and shared_prefs XML HTML-escapes quotes (`&quot;`). A capture script regex written against `"event"` silently matched nothing on a healthy phone. When scraping shared_prefs XML, unescape entities first and grep for `"type"`.
+2. **Validate any journal-scraping script against a real device dump before shipping it.** shared_prefs XML entity-escapes its JSON payload, so a pattern written against the raw JSON silently matches zero events on a healthy phone. One unchecked assumption cost a hardware re-run.
 
-**Why:** both cost a re-run in a hardware session where each round-trip is expensive.
-**How to apply:** when writing or debugging field-proof capture scripts, verify the regex against a real journal dump before shipping the pack; when an update install fails once on hardware, retry before diagnosing.
+**Why:** hardware field runs are expensive; each avoidable re-run costs a physical session.
+**How to apply:** when writing field-proof capture scripts, test the extraction against a real (sanitized) dump first; when a hardware update install fails once, retry before diagnosing.
