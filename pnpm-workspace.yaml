@@ -174,3 +174,8 @@ overrides:
   # - express>qs: GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g (>=6.16.0). express
   #   5.x declares qs with a ^ range, so the scoped override resolves cleanly.
   "express>qs": "^6.16.0"
+  # Moderate alert (2026-10-02, dependency-audit watchdog on main):
+  # - typedoc>markdown-it: GHSA-253c-mchw-3w2r (>=14.3.1). Pulled in via
+  #   orval>typedoc (lib/api-spec codegen docs); markdown-it is only used for
+  #   typedoc's generated docs rendering, never at runtime.
+  "typedoc>markdown-it": "^14.3.1"
