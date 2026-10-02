@@ -95,6 +95,47 @@ object UpdateCheck {
         )
     }
 
+    /**
+     * The known post-permission-grant race: right after the owner grants
+     * "Install unknown apps", the AppOps change has not propagated to the
+     * package manager's verification path yet, so the first session commit
+     * comes back refused with "Install not allowed for file:…" even though
+     * the grant is in place. The identical handoff succeeds once the grant
+     * settles — the first physical-Pixel field journal proved exactly that
+     * (FAILED-then-clean-manual-retry).
+     *
+     * Only that exact refusal text marks the race. The surrounding status
+     * code (INSTALL_FAILED_VERIFICATION_FAILURE) is a GENERAL verification
+     * failure and also covers genuine verifier rejections, which must stay
+     * terminal — retrying those would re-prompt the owner for an install
+     * that can never pass.
+     */
+    fun isPostGrantVerificationRace(statusMessage: String): Boolean =
+        statusMessage.contains("Install not allowed for file:")
+
+    /** Total handoff attempts (first try + automatic retries) for the race. */
+    const val INSTALL_MAX_ATTEMPTS = 3
+
+    /**
+     * Settle delay before an automatic retry, giving the AppOps grant time
+     * to reach the verifier. The field journal showed a manual retry
+     * seconds later succeeding; 1.5s covers the propagation window without
+     * making the owner wait.
+     */
+    const val INSTALL_RETRY_DELAY_MS = 1_500L
+
+    /** Detail line UpdateManager.install returns when a session was committed. */
+    const val INSTALL_HANDOFF_ACCEPTED =
+        "handed to the system installer — confirm the Android prompt to finish the update"
+
+    /** True only while the race is retryable: right message AND attempts left. */
+    fun shouldRetryInstall(statusMessage: String, attempt: Int): Boolean =
+        isPostGrantVerificationRace(statusMessage) && attempt < INSTALL_MAX_ATTEMPTS
+
+    /** True when an install() detail line means a session was actually committed. */
+    fun isHandoffAccepted(detail: String): Boolean =
+        detail == INSTALL_HANDOFF_ACCEPTED
+
     /** Streaming SHA-256 of a downloaded file as lowercase hex. */
     fun sha256Hex(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

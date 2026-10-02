@@ -164,6 +164,17 @@ Install unknown apps** and allow it once (or from a workstation:
 `adb shell appops set com.covertalert.pixeltest REQUEST_INSTALL_PACKAGES allow`),
 then tap Download & install again.
 
+Known Android race, handled by the app: when the update is confirmed
+immediately after that grant, the permission change can lag the system
+verifier, so the first commit comes back
+`INSTALL_FAILED_VERIFICATION_FAILURE` ("Install not allowed for file:…")
+even though everything is in order. The app detects exactly that refusal,
+waits ~1.5s for the grant to settle, and re-hands the same verified APK to
+the installer itself (journaled as `UPDATE_INSTALL` `RETRY_SCHEDULED` /
+`RETRY_HANDOFF`) — no second tap needed. Only if all 3 attempts refuse does
+the journal show `FAILED`; then tap Download & install again manually. Any
+other failure message is real and is never retried.
+
 Every step is journaled on the phone (`UPDATE_CHECK`, `UPDATE_DOWNLOAD`,
 `UPDATE_INSTALL`) and visible via **Copy debug journal**.
 

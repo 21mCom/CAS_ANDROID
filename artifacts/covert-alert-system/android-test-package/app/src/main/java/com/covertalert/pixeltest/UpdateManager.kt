@@ -187,8 +187,13 @@ object UpdateManager {
      * Hands the verified APK to PackageInstaller; the OS shows the single
      * confirmation prompt and enforces the pinned signing key. The outcome
      * arrives in UpdateInstallReceiver. Returns the immediate detail line.
+     *
+     * The status intent carries the APK path and the attempt number so the
+     * receiver can retry the handoff itself when Android loses the known
+     * post-permission-grant race (see UpdateCheck.isPostGrantVerificationRace)
+     * instead of making the owner tap Download & install a second time.
      */
-    fun install(context: Context, file: File): String {
+    fun install(context: Context, file: File, attempt: Int = 1): String {
         if (!canRequestInstalls(context)) {
             return "BLOCKED: Android has not allowed this app to install updates — in Settings → Apps → CAS Pixel Gate 0A enable 'Install unknown apps', then tap Download & install again"
         }
@@ -202,6 +207,8 @@ object UpdateManager {
                     session.fsync(out)
                 }
                 val statusIntent = Intent(context, UpdateInstallReceiver::class.java)
+                    .putExtra(UpdateInstallReceiver.EXTRA_APK_PATH, file.absolutePath)
+                    .putExtra(UpdateInstallReceiver.EXTRA_ATTEMPT, attempt)
                 // MUTABLE: PackageInstaller fills in the status extras.
                 val pending = PendingIntent.getBroadcast(
                     context,
@@ -211,7 +218,7 @@ object UpdateManager {
                 )
                 session.commit(pending.intentSender)
             }
-            "handed to the system installer — confirm the Android prompt to finish the update"
+            UpdateCheck.INSTALL_HANDOFF_ACCEPTED
         }.getOrElse { "install handoff failed: ${it.message ?: it.javaClass.simpleName}" }
     }
 
