@@ -1,8 +1,13 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-// Guards the past-alert evidence browser's destructive operation against
-// selection races: the panel must never display — let alone delete — one
-// incident's clips while another incident is selected.
+// Proofs for the past-alert evidence browser. The third test walks the
+// operator happy path end to end (select an older alert, render its photo
+// inline through a blob URL, delete behind the confirmation step, watch the
+// row disappear and the journal keep the deletion entry) so a broken viewer
+// or delete button fails CI before responders hit it. The first two guard
+// the destructive operation against selection races: the panel must never
+// display — let alone delete — one incident's clips while another incident
+// is selected.
 //
 // Scenario 1 (failed selection load): after alert A's clips are shown,
 // switching to alert B whose detail request fails must leave the error and
@@ -43,19 +48,23 @@ test.beforeEach(() => {
   }
 });
 
-async function enroll(request: import('@playwright/test').APIRequestContext): Promise<string> {
+async function enroll(
+  request: import('@playwright/test').APIRequestContext,
+): Promise<{ deviceId: string; token: string }> {
   const response = await request.post(`${API_ORIGIN}/api/cas/devices/enroll`, {
     headers: { authorization: `Bearer ${ALERT_TOKEN}`, 'content-type': 'application/json' },
     data: { label: 'e2e-evidence-browse-delete-proof' },
   });
   expect(response.status()).toBe(201);
-  return ((await response.json()) as { token: string }).token;
+  const body = (await response.json()) as { device: { id: string }; token: string };
+  return { deviceId: body.device.id, token: body.token };
 }
 
 async function uploadClip(
   request: import('@playwright/test').APIRequestContext,
   token: string,
   incidentId: string,
+  bytes: Buffer = Buffer.from('e2e-fake-jpeg-bytes'),
 ): Promise<string> {
   const upload = await request.post(`${API_ORIGIN}/api/cas/incidents/${incidentId}/evidence`, {
     headers: {
@@ -65,11 +74,18 @@ async function uploadClip(
       'x-cas-evidence-camera': 'back',
       'x-cas-captured-at': '1760000000000',
     },
-    data: Buffer.from('e2e-fake-jpeg-bytes'),
+    data: bytes,
   });
   expect(upload.status()).toBe(201);
   return ((await upload.json()) as { id: string }).id;
 }
+
+// A real, decodable 2x2 JPEG: the inline-viewer proof asserts the <img>
+// actually decodes (naturalWidth > 0), which fake bytes would never do.
+const REAL_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAACAAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ACoXq4f/2Q==',
+  'base64',
+);
 
 async function openIncidents(page: Page, token: string): Promise<void> {
   await page.addInitScript((deviceToken) => {
@@ -80,7 +96,7 @@ async function openIncidents(page: Page, token: string): Promise<void> {
 }
 
 test('a failed selection load clears the previous alert’s clips — they cannot be deleted under the new selection', async ({ page, request }) => {
-  const token = await enroll(request);
+  const { token } = await enroll(request);
   const clipA = await uploadClip(request, token, INCIDENT_A);
   const clipB = await uploadClip(request, token, INCIDENT_B);
   await openIncidents(page, token);
@@ -107,7 +123,7 @@ test('a failed selection load clears the previous alert’s clips — they canno
 });
 
 test('a selection change during the post-delete refresh drops the late response for the unselected alert', async ({ page, request }) => {
-  const token = await enroll(request);
+  const { token } = await enroll(request);
   const clipA = await uploadClip(request, token, INCIDENT_A);
   const clipB = await uploadClip(request, token, INCIDENT_B);
   await openIncidents(page, token);
@@ -156,4 +172,49 @@ test('a selection change during the post-delete refresh drops the late response 
   expect(detail.status()).toBe(200);
   const body = (await detail.json()) as { evidence: { id: string }[] };
   expect(body.evidence.some((clip) => clip.id === clipA)).toBe(false);
+});
+
+test('a past alert’s photo renders inline and deletes behind a confirmation, journaled', async ({ page, request }) => {
+  // The operator happy path end to end: pick an older alert, view its clip
+  // inline, delete it behind the confirmation step, watch the row disappear
+  // and the journal keep the deletion entry. The throwaway credential and
+  // every row this proof seeds are removed again in the finally block.
+  const { deviceId, token } = await enroll(request);
+  const clipA = await uploadClip(request, token, INCIDENT_A, REAL_JPEG);
+  try {
+    await openIncidents(page, token);
+
+    // Past-incident selection: the older (non-latest) alert's clip lists.
+    await page.getByTestId('select-past-incident').selectOption(INCIDENT_A);
+    await expect(page.getByTestId(`browse-row-evidence-${clipA}`)).toBeVisible();
+
+    // Inline render: View fetches the bytes with the console credential and
+    // shows them through an object URL that actually decodes as an image.
+    await page.getByTestId(`browse-button-view-evidence-${clipA}`).click();
+    const image = page.getByTestId(`browse-viewer-evidence-${clipA}`).locator('img');
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute('src', /^blob:/);
+    await expect
+      .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+      .toBeGreaterThan(0);
+
+    // Delete with confirmation: the row leaves the list and the incident's
+    // journal keeps the EVIDENCE_DELETED entry (history is never rewritten).
+    await page.getByTestId(`browse-button-delete-evidence-${clipA}`).click();
+    await expect(page.getByTestId(`browse-confirm-delete-evidence-${clipA}`)).toBeVisible();
+    await page.getByTestId(`browse-button-confirm-delete-evidence-${clipA}`).click();
+    await expect(page.getByTestId(`browse-row-evidence-${clipA}`)).toHaveCount(0);
+    await expect(page.getByTestId('list-browse-journal')).toContainText('EVIDENCE DELETED');
+  } finally {
+    // Clean up what this proof seeded: any clip left over (e.g. after a
+    // mid-test failure) and the throwaway credential, so the disposable
+    // database holds no live credential this proof created.
+    await request
+      .delete(`${API_ORIGIN}/api/cas/evidence/${clipA}`, { headers: { authorization: `Bearer ${token}` } })
+      .catch(() => {});
+    const revoke = await request.post(`${API_ORIGIN}/api/cas/devices/${deviceId}/revoke`, {
+      headers: { authorization: `Bearer ${ALERT_TOKEN}` },
+    });
+    expect(revoke.ok()).toBeTruthy();
+  }
 });
