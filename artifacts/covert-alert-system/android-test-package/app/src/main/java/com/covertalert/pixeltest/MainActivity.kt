@@ -656,20 +656,46 @@ class MainActivity : Activity() {
     private fun startUpdateDownload() {
         val manifest = pendingUpdate ?: return
         // Mobile-data consent: an update may cross a metered link only after
-        // the owner explicitly accepts the size — never silently.
+        // the owner explicitly accepts the size — never silently. The prompt
+        // and the owner's decision are journaled so every update proof is
+        // self-verifying from the CaptureJournal output alone (the consent
+        // sequence contract is pinned by UpdateCheck.consentViolations).
         if (UpdateManager.isMetered(this)) {
+            TestStore.record(this, "UPDATE_DOWNLOAD", mapOf(
+                "consent" to "SHOWN",
+                "metered" to true,
+                "versionCode" to manifest.versionCode,
+                "sizeBytes" to manifest.sizeBytes,
+            ))
+            val decline = {
+                TestStore.record(this, "UPDATE_DOWNLOAD", mapOf(
+                    "consent" to "DECLINED",
+                    "metered" to true,
+                    "versionCode" to manifest.versionCode,
+                ))
+            }
             android.app.AlertDialog.Builder(this)
                 .setTitle("Download update over mobile data?")
                 .setMessage("${manifest.versionName} (build ${manifest.versionCode}) is ${"%.1f".format(manifest.sizeBytes / 1_048_576f)} MB and the current connection is metered.")
-                .setPositiveButton("Download") { _, _ -> downloadAndInstall(manifest) }
-                .setNegativeButton("Not now", null)
+                .setPositiveButton("Download") { _, _ ->
+                    TestStore.record(this, "UPDATE_DOWNLOAD", mapOf(
+                        "consent" to "ACCEPTED",
+                        "metered" to true,
+                        "versionCode" to manifest.versionCode,
+                    ))
+                    downloadAndInstall(manifest, metered = true)
+                }
+                .setNegativeButton("Not now") { _, _ -> decline() }
+                // Dismissing the prompt (back/outside tap) is also a decision:
+                // the owner saw the size and chose not to download.
+                .setOnCancelListener { decline() }
                 .show()
         } else {
-            downloadAndInstall(manifest)
+            downloadAndInstall(manifest, metered = false)
         }
     }
 
-    private fun downloadAndInstall(manifest: UpdateCheck.Manifest) {
+    private fun downloadAndInstall(manifest: UpdateCheck.Manifest, metered: Boolean) {
         installUpdateButton.isEnabled = false
         refreshUpdateStatus("downloading ${manifest.versionName} (build ${manifest.versionCode})…")
         Thread {
@@ -677,6 +703,7 @@ class MainActivity : Activity() {
             TestStore.record(this, "UPDATE_DOWNLOAD", mapOf(
                 "outcome" to if (result.ok) "VERIFIED" else "FAILED",
                 "versionCode" to manifest.versionCode,
+                "metered" to metered,
                 "detail" to result.detail,
             ))
             if (!result.ok || result.file == null) {

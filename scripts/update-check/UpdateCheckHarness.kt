@@ -115,5 +115,87 @@ fun main() {
         dir.deleteRecursively()
     }
 
+    // --- consentViolations: the metered-consent journal contract -----------
+    // The one-tap update proof must be self-verifying from the CaptureJournal
+    // output: a metered download is only lawful after a SHOWN prompt and an
+    // ACCEPTED decision, and one consent covers exactly one download attempt.
+    fun beat(consent: String? = null, outcome: String? = null, metered: Boolean? = null) =
+        UpdateCheck.DownloadJournalEvent(consent = consent, outcome = outcome, metered = metered)
+
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "ACCEPTED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).isEmpty(),
+        "a well-formed metered run (SHOWN → ACCEPTED → VERIFIED) has no violations",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "DECLINED", metered = true),
+        )).isEmpty(),
+        "a declined prompt downloads nothing and has no violations",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "DECLINED", metered = true),
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "ACCEPTED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).isEmpty(),
+        "declining once then accepting on a later prompt is a clean run",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(beat(outcome = "VERIFIED", metered = false))).isEmpty(),
+        "an unmetered (Wi-Fi) download needs no consent beats",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(beat(outcome = "VERIFIED", metered = true))).size == 1,
+        "a metered download with no consent beats is flagged",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).size == 1,
+        "a prompt that was shown but never accepted is flagged",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "DECLINED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).size == 1,
+        "a download after the owner DECLINED is flagged",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "ACCEPTED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).size == 2,
+        "ACCEPTED without a SHOWN prompt is flagged, and it cannot legitimize the download",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(consent = "SHOWN", metered = true),
+            beat(consent = "ACCEPTED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+            beat(outcome = "VERIFIED", metered = true),
+        )).size == 1,
+        "one consent covers exactly one download — the second metered download is flagged",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(beat(outcome = "VERIFIED"))).size == 1,
+        "a download beat with no metered marker (a pre-contract build) is flagged",
+    )
+    check(
+        UpdateCheck.consentViolations(listOf(
+            beat(outcome = "FAILED", metered = true),
+        )).size == 1,
+        "even a FAILED metered download without consent is flagged (it still burned data)",
+    )
+
     println("UPDATE_CHECK_OK checks=$checks")
 }

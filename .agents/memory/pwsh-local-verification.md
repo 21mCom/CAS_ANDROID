@@ -9,6 +9,8 @@ When a pwsh harness must fake Windows filesystem layout on Linux, remember backs
 
 Two scripting gotchas that cost verification rounds: with `$ErrorActionPreference = 'Stop'`, `Write-Error` is terminating — a following `exit 2` never runs and the process exits 1, so deliberate exit codes need `Write-Host` + `exit`. And in test harnesses, `\$` inside a double-quoted PowerShell string still interpolates the variable (backslash is not an escape in PowerShell); use single-quoted regex patterns or a shell grep to assert on generated code.
 
+Another trap: driving pwsh with a multi-line inline `-Command` from bash mangles quote escapes (`\"` reaches PowerShell, where backslash is not an escape), producing parse errors that look like the *target* script is broken. Write the harness to a `.ps1` file and use `pwsh -NoProfile -File` instead.
+
 Compress-Archive on sandboxed pwsh spins for many minutes at "0.0 MB/s" on even a few hundred KB when output is redirected — it is the Write-Progress rendering loop, not a hang; it does finish. Scripts that zip in CI should set `$ProgressPreference = 'SilentlyContinue'`.
 
 **Why:** Two verification rounds were lost to a wiped nix profile and to foreground timeouts before these quirks were understood.

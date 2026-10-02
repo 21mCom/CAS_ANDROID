@@ -12,6 +12,7 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/update-proof/**"
       - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
       - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -34,6 +35,7 @@ on:
       - "artifacts/covert-alert-system/scripts/build-android-test-apk.ps1"
       - "artifacts/covert-alert-system/scripts/package-windows-test-kit.ps1"
       - "artifacts/covert-alert-system/scripts/package-mvp-handoff.ps1"
+      - "artifacts/covert-alert-system/scripts/update-proof/**"
       - "artifacts/covert-alert-system/scripts/generate-gate0a-guide-readable.mjs"
       - "artifacts/covert-alert-system/public/gate0a-run-guide.pdf"
       - "artifacts/covert-alert-system/android-test-package/**"
@@ -756,6 +758,25 @@ jobs:
             exit 1
           }
           echo "A one-sided validator change turned the parity check red, as required."
+
+  update-proof-selftest:
+    name: One-tap update proof script self-test
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The update proof pack's CaptureJournal step must prove the metered
+      # consent from the journal alone — and must not drop download results
+      # whose detail is a JSON error body. SelfTest pins both against built-in
+      # fixtures, including the pre-consent-journaling baseline shape.
+      - name: Run update-proof journal/consent self-test
+        shell: pwsh
+        run: |
+          powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/update-proof/Install-Update-Proof.ps1 -Step SelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Install-Update-Proof.ps1 -Step SelfTest exited $LASTEXITCODE" }
 
   git-bash-report:
     name: Gate 0A report generation under Git Bash

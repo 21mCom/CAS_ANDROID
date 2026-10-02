@@ -151,6 +151,70 @@ object UpdateCheck {
     }
 
     /**
+     * One journaled UPDATE_DOWNLOAD beat, reduced to the fields the
+     * metered-consent contract checks. Consent beats carry [consent]
+     * (SHOWN / ACCEPTED / DECLINED) and no [outcome]; download-result beats
+     * carry [outcome] (VERIFIED / FAILED) and no [consent]. [metered] is
+     * null only on beats written by builds that predate consent journaling.
+     */
+    data class DownloadJournalEvent(
+        val consent: String? = null,
+        val outcome: String? = null,
+        val metered: Boolean? = null,
+    )
+
+    /**
+     * The metered-consent journal contract, as a sequence check over the
+     * UPDATE_DOWNLOAD beats of a field journal: every download result over a
+     * metered link must be preceded by a SHOWN prompt and an ACCEPTED
+     * decision, and one consent covers exactly one download attempt — a
+     * second metered download needs its own prompt. Returns the list of
+     * violations (empty = the journal proves consent by itself). MainActivity
+     * writes these beats; the proof pack's CaptureJournal step and the JVM
+     * harness (scripts/test-update-check.sh) both pin this rule.
+     */
+    fun consentViolations(events: List<DownloadJournalEvent>): List<String> {
+        val violations = mutableListOf<String>()
+        var promptShown = false
+        var accepted = false
+        events.forEachIndexed { index, event ->
+            val beat = "beat ${index + 1}"
+            when (event.consent) {
+                "SHOWN" -> {
+                    promptShown = true
+                    accepted = false
+                }
+                "ACCEPTED" -> {
+                    if (!promptShown) {
+                        violations += "$beat: consent ACCEPTED without a preceding SHOWN prompt"
+                    } else {
+                        // Only a prompt the owner actually saw can legitimize
+                        // the download — a lone ACCEPTED must not.
+                        accepted = true
+                    }
+                }
+                "DECLINED" -> {
+                    if (!promptShown) violations += "$beat: consent DECLINED without a preceding SHOWN prompt"
+                    promptShown = false
+                    accepted = false
+                }
+            }
+            if (event.outcome != null) {
+                when {
+                    event.metered == null ->
+                        violations += "$beat: UPDATE_DOWNLOAD ${event.outcome} carries no metered marker — the build predates consent journaling, so the proof cannot verify itself"
+                    event.metered && !accepted ->
+                        violations += "$beat: metered download (${event.outcome}) without a preceding SHOWN + ACCEPTED consent"
+                }
+                // Consent is per-attempt: any download result consumes it.
+                promptShown = false
+                accepted = false
+            }
+        }
+        return violations
+    }
+
+    /**
      * The hard pin: the downloaded file must match the manifest's size AND
      * hash, or it is deleted by the caller and never reaches the installer.
      * Returns null when the file verifies, else the refusal reason.

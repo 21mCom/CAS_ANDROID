@@ -4,8 +4,8 @@
     "b9da768": "Deliberately superseded within the same task: the completion rebase found mainline had gained its own review-hardened, CI-proven divide-fallback implementation via parallel work, so this commit's duplicate code was dropped in conflict resolution (all overlapping files verified byte-identical to mainline, harness green post-rebase), and its kit-doc expectation lines were rewritten by the later handoff repackage commit to the measured 2026-10-01 physical-Pixel field result.",
     "559bf4c": "Deliberate add-then-remove scratch pair with 0536cd8 (.push-files.txt push scratch); nothing was meant to survive to HEAD.",
     "8a09f04": "Deliberately superseded by 47044d0 in the same task: code review required the watchdog to stop referencing the push-capable PAT, so 47044d0 rewrote the rotation note and auth comment lines 8a09f04 had added.",
-    "1413253": "Accidental rebase damage: this completion commit restored pre-28498ee blobs for the cas-config files after 28498ee (responder-seeding removal) landed mid-completion. Fully superseded by 6a077ff's deliberate repair — HEAD's cas-config.ts and cas-delivery-config.ts are diff-empty against 28498ee, and cas-config.test.ts is a verified reconstruction (28498ee's own blob failed tsc with TS1128); contract suite 255/255 green at HEAD.",
-    "6a077ff": "Deliberate repair of 1413253's accidental discard of 28498ee: restores 28498ee's cas-config.ts and cas-delivery-config.ts blobs verbatim and reconstructs cas-config.test.ts (28498ee's blob was itself rebase-mangled garbage — stray for-loops, undefined identifiers) with the no-seed guard test; non-incremental typecheck clean, contract suite 255/255 green.",
+    "1413253": "Accidental rebase damage: this completion commit restored pre-28498ee blobs for the cas-config files after 28498ee (responder-seeding removal) landed mid-completion. Fully superseded by 6a077ff's deliberate repair \u2014 HEAD's cas-config.ts and cas-delivery-config.ts are diff-empty against 28498ee, and cas-config.test.ts is a verified reconstruction (28498ee's own blob failed tsc with TS1128); contract suite 255/255 green at HEAD.",
+    "6a077ff": "Deliberate repair of 1413253's accidental discard of 28498ee: restores 28498ee's cas-config.ts and cas-delivery-config.ts blobs verbatim and reconstructs cas-config.test.ts (28498ee's blob was itself rebase-mangled garbage \u2014 stray for-loops, undefined identifiers) with the no-seed guard test; non-incremental typecheck clean, contract suite 255/255 green.",
     "d3dffd6": "Deliberately superseded by a7d3299 within the same task: CI run 36705662402's viewport digests showed the gentle-drag scroll still flung past the Send button, so a7d3299 replaced that block with the sweep-with-reversal loop. Iteration within one task, not a clobber of concurrent work. (SHAs refer to the rebased history; pre-rebase equivalents were 22e84b4/6029abc.)",
     "27a40b2": "Intermediate secret-scanning-watchdog wording deliberately superseded by a373927's review fixes in the same remote lineage; the file's blob at both pre-merge tips (and HEAD) is byte-identical (3f8b57e0), so nothing was lost.",
     "f3c778b": "Deliberate add-then-remove scratch pair (same pattern as 559bf4c/0536cd8): .push-files.txt push scratch, removed by the rewritten 'Remove push scratch file' commit later in the linearized history; nothing was meant to survive to HEAD.",
@@ -444,7 +444,7 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "4374bcd",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "artifacts/api-server/src/routes/cas.ts",
@@ -489,7 +489,7 @@
     {
       "path": "artifacts/api-server/src/lib/cas-auth.ts",
       "by": "f3c196a",
-      "reason": "Revert of the deliberate CI probe 2d9990d; a walk-order artifact of the unified DAG — the remote tip blob equals c06162e's verified gate and the merge keeps the local tip's tested version."
+      "reason": "Revert of the deliberate CI probe 2d9990d; a walk-order artifact of the unified DAG \u2014 the remote tip blob equals c06162e's verified gate and the merge keeps the local tip's tested version."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
@@ -3874,52 +3874,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "4909948",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "7b58e42",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "0d53f43",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "089a06e",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "7ec7129",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "58f70bf",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "d37be62",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "3f811d8",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "7e1a7c9",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "cedb237",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
@@ -4109,52 +4109,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "1398fcc",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "1e5cf80",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "81ec1a0",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "863b67f",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a4eac36",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "d7090ef",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "ecce08a",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "f604352",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "f7fb9ad",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "fe4ccf3",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "artifacts/api-server/src/lib/cas-auth.ts",
@@ -4329,52 +4329,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "0317e19",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "03a32ba",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "12a8fa1",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "6a161fd",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a39cff5",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "ab04c4a",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "bf2e162",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "c532f5b",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "ddab251",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "ec367cf",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": ".push-files.txt",
@@ -4499,52 +4499,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "30c982d",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "3a7c5f9",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "4284087",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "5e00144",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "6cc7cef",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "8dc03c6",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "93e2be5",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "9d1cdbf",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "b880a79",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "d79bfea",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": ".push-files.txt",
@@ -4669,52 +4669,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "0c5e7e7",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "229b991",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "373f625",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "3912dfc",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "52d9c3a",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "65a1e37",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "71f030d",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "81a1cbf",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "8366afd",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "8b8ef40",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": ".push-files.txt",
@@ -4839,52 +4839,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "021f917",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "14b0539",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "1ba951d",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "68b38a9",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "7f5065f",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "91a1c17",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "9272990",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "c2c763a",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "c75aeac",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "e5d7e6c",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": ".push-files.txt",
@@ -5009,102 +5009,102 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "0f23f26",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "195bb0f",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "2f5efb9",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "3fe6d7d",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "4a5e6f7",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "6bc1be8",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "b84e735",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "e690997",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "ebbcbaa",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "eccadef",
-      "reason": "Deliberate revert of c64d7b4's only change to this file — a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
+      "reason": "Deliberate revert of c64d7b4's only change to this file \u2014 a duplicate drizzle-orm import line that broke the typecheck. Restores the last-known-good blob from 480d3f7; tsc --noEmit (fresh tsbuildinfo) is clean."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "6a93ed7",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "6465dad",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "cda54da",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a829adc",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "c415692",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "b1eeba3",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "15d3e90",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "195360c",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "bd166e7",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "d226da5",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirtieth completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
@@ -5229,52 +5229,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "31887d2",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "158c714",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "f811e10",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "01703ba",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "cda7ec0",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "e359823",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "e9d49f1",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "853acc9",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "9567069",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "b23a8c4",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-first completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
@@ -5399,52 +5399,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "5c28ce5",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "7a9bd13",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "faf4a5e",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "9480c51",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a97acd3",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "124413d",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a5f11f8",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "42f6f8a",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "2f62e09",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "930b20c",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-second completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
@@ -5569,52 +5569,52 @@
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "9e5c12b",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "aa9ccfb",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "d491058",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "a2c1794",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "f5e2153",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "558a819",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "b12a852",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "f60bde5",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "2f6bede",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "lib/db/src/schema/cas.ts",
       "by": "e8915f9",
-      "reason": "Deliberate revert of c64d7b4’s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
+      "reason": "Deliberate revert of c64d7b4\u2019s duplicate drizzle-orm import line, re-attributed by the thirty-third completion rebase; HEAD blob equals the clean verified restore (single import)."
     },
     {
       "path": "deliverables/CAS-Pixel11-MVP-Handoff-v0.4.0-mvp.zip",
@@ -14970,6 +14970,11 @@
       "path": ".replit",
       "by": "3a6c064",
       "reason": "Deliberate restore of the committed Reserved VM publish target (deploymentTarget=vm): a36294d 'Published your App' was an environment-generated flip to cloudrun that breaks the always-on workers contract the publish rehearsal asserts."
+    },
+    {
+      "path": "deliverables/CAS-Pixel11-OneTap-Update-Proof-v0.8.1.zip",
+      "by": "2c16898",
+      "reason": "Deliberate revert: the shipped pack's bundled baseline APK predates consent journaling, so the strict CaptureJournal validator must not ship in this ZIP; the hardened script lives in versioned source at artifacts/covert-alert-system/scripts/update-proof/ and the pack is regenerated around a consent-journaling baseline separately."
     }
   ]
 }

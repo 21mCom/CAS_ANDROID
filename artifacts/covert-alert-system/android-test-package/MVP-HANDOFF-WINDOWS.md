@@ -176,7 +176,10 @@ the journal show `FAILED`; then tap Download & install again manually. Any
 other failure message is real and is never retried.
 
 Every step is journaled on the phone (`UPDATE_CHECK`, `UPDATE_DOWNLOAD`,
-`UPDATE_INSTALL`) and visible via **Copy debug journal**.
+`UPDATE_INSTALL`) and visible via **Copy debug journal**. On mobile data the
+journal also records the metered-consent prompt and its outcome
+(`UPDATE_DOWNLOAD` with `consent` = `SHOWN` / `ACCEPTED` / `DECLINED` and
+`metered: true`), so a journal paste alone proves the download was consented.
 
 The operator publishes a build with one `curl` against the alert server —
 see "Publishing one-tap phone updates" in `artifacts/api-server/SELF-HOSTING.md`.

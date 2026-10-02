@@ -617,7 +617,9 @@ The phone side is automatic once the handset has enrolled (Step 7): on app
 open it checks the manifest, shows an "update available" line, and downloads
 only after the owner taps **Download & install update** (on mobile data it
 asks first). Android shows exactly one confirmation prompt; the journal on
-the phone records `UPDATE_CHECK` / `UPDATE_DOWNLOAD` / `UPDATE_INSTALL`.
+the phone records `UPDATE_CHECK` / `UPDATE_DOWNLOAD` / `UPDATE_INSTALL` —
+including, on mobile data, the metered-consent prompt and the owner's
+decision (`consent` = `SHOWN` / `ACCEPTED` / `DECLINED`, `metered: true`).
 
 ## Troubleshooting
 

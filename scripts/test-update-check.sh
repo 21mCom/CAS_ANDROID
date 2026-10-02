@@ -50,6 +50,18 @@ find_kotlinc() {
   echo "$CACHE/kotlinc/bin/kotlinc"
 }
 
+# Drift guard: the consent-sequence contract pinned by the harness below is
+# only meaningful if the app actually journals the SHOWN/ACCEPTED beats and
+# the metered marker on the download result. Grep MainActivity for the three
+# journaled fields so a refactor cannot silently untether app from contract.
+MAIN_ACTIVITY="$REPO_ROOT/artifacts/covert-alert-system/android-test-package/app/src/main/java/com/covertalert/pixeltest/MainActivity.kt"
+for needle in '"consent" to "SHOWN"' '"consent" to "ACCEPTED"' '"consent" to "DECLINED"' '"metered" to metered'; do
+  if ! grep -qF "$needle" "$MAIN_ACTIVITY"; then
+    echo "FAILED: MainActivity.kt no longer journals $needle — the consent journal contract and the app have drifted apart." >&2
+    exit 1
+  fi
+done
+
 KOTLINC="$(find_kotlinc)"
 JSON_JAR="$CACHE/json-$JSON_VERSION.jar"
 fetch "https://repo1.maven.org/maven2/org/json/json/$JSON_VERSION/json-$JSON_VERSION.jar" \
