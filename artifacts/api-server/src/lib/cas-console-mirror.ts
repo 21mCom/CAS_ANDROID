@@ -50,6 +50,7 @@ export interface ConsoleMirrors {
   parseCasTemplatesResponse: (body: unknown) => void;
   parseCasTemplateInfo: (body: unknown) => void;
   parseCasTemplatePreviewResult: (body: unknown) => void;
+  parseCasIncidentDetailResponse: (body: unknown) => void;
 }
 
 let cached: Promise<ConsoleMirrors> | undefined;
@@ -70,12 +71,16 @@ export function loadConsoleMirrors(): Promise<ConsoleMirrors> {
     const config: Record<string, unknown> = await import(
       pathToFileURL(path.join(scratchDir, "cas-config-schema.mjs")).href
     );
+    const state: Record<string, unknown> = await import(
+      pathToFileURL(path.join(scratchDir, "cas-state-schema.mjs")).href
+    );
     return {
       parseCasOutboxStatusResponse: outbox.parseCasOutboxStatusResponse as ConsoleMirrors["parseCasOutboxStatusResponse"],
       parseCasRespondersResponse: config.parseCasRespondersResponse as ConsoleMirrors["parseCasRespondersResponse"],
       parseCasTemplatesResponse: config.parseCasTemplatesResponse as ConsoleMirrors["parseCasTemplatesResponse"],
       parseCasTemplateInfo: config.parseCasTemplateInfo as ConsoleMirrors["parseCasTemplateInfo"],
       parseCasTemplatePreviewResult: config.parseCasTemplatePreviewResult as ConsoleMirrors["parseCasTemplatePreviewResult"],
+      parseCasIncidentDetailResponse: state.parseCasIncidentDetailResponse as ConsoleMirrors["parseCasIncidentDetailResponse"],
     };
   })();
   return cached;

@@ -31,6 +31,8 @@ import {
   casPrioritySchema,
   casStateResponseSchema,
   gatePatchSchema,
+  incidentDetailResponseSchema,
+  incidentDetailSummarySchema,
   incidentLocationSchema,
   kernelEventSchema,
   kernelStatusSchema,
@@ -412,5 +414,28 @@ test("console OutboxItem transport/state/priority unions match the outbox item s
     sorted(propertyUnionLiterals("OutboxItem", "priority")),
     sorted(outboxItemSchema.shape.priority.options),
     "console OutboxItem priority and the outbox item priority enum disagree",
+  );
+});
+
+// --- Per-incident evidence detail: GET /cas/incidents/:id/evidence ---
+//
+// The console's IncidentDetail/IncidentDetailSummary types are pinned to
+// the response schemas the same way as the state payload above; the route
+// test in routes/cas-evidence.test.ts additionally runs the live JSON
+// through the console's own parser.
+
+test("console IncidentDetail type fields match the incident detail response schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("IncidentDetail")),
+    sorted(Object.keys(incidentDetailResponseSchema.shape)),
+    "console IncidentDetail and incidentDetailResponseSchema disagree; change both sides together (lib/cas-readiness-schema.ts and use-field-test.tsx)",
+  );
+});
+
+test("console IncidentDetailSummary type fields match the incident detail summary schema keys exactly", () => {
+  assert.deepEqual(
+    sorted(typeFieldNames("IncidentDetailSummary")),
+    sorted(Object.keys(incidentDetailSummarySchema.shape)),
+    "console IncidentDetailSummary and incidentDetailSummarySchema disagree; change both sides together",
   );
 });

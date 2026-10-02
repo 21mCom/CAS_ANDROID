@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
+import { CasStateShapeError, parseCasIncidentDetailResponse, parseCasStateResponse } from '@/lib/cas-state-schema';
 import { applyActionFailure, applyLoadFailure, casAuthedFetch, CasCredentialError, lockOnCredentialFailure } from '@/hooks/use-field-test';
 import { StateResponseError } from '@/components/state-response-error';
 import { ConsoleLocked } from '@/components/console-locked';
@@ -130,6 +130,54 @@ test('a non-object body is rejected instead of blowing up on property access', (
   for (const body of [null, 42, 'garbage', []]) {
     assert.throws(() => parseCasStateResponse(body), CasStateShapeError);
   }
+});
+
+// --- GET /api/cas/incidents/:id/evidence (past-alert evidence browser) ----
+
+function validIncidentDetail() {
+  return {
+    incident: { id: 'inc-1', status: 'RESOLVED', priority: 'P1', triggerCount: 2, createdAt: '2026-09-27T14:08:12.000Z' },
+    evidence: [{
+      id: 'evi-1',
+      kind: 'photo',
+      contentType: 'image/jpeg',
+      sizeBytes: 2048,
+      sequence: 1,
+      camera: 'front',
+      capturedAt: '2026-09-27T14:08:10.000Z',
+      uploadedAt: '2026-09-27T14:09:00.000Z',
+      requestId: null,
+    }],
+    events: [{ id: 'ev-1', type: 'EVIDENCE_DELETED', priority: 'P2', time: '2026-09-27T14:10:00.000Z', detail: 'detail' }],
+  };
+}
+
+test('incident evidence detail: a response matching the contract parses through unchanged', () => {
+  const detail = validIncidentDetail();
+  assert.deepEqual(parseCasIncidentDetailResponse(detail), detail);
+});
+
+test('incident evidence detail: a payload smuggling clip bytes into the listing is rejected (strict objects)', () => {
+  const detail = validIncidentDetail();
+  (detail.evidence[0] as unknown as Record<string, unknown>).data = 'c2V1c2Q=';
+  assert.throws(() => parseCasIncidentDetailResponse(detail), CasStateShapeError);
+});
+
+test('incident evidence detail: drifted or non-object bodies are rejected with the offending path named', () => {
+  for (const body of [null, 42, 'garbage', []]) {
+    assert.throws(() => parseCasIncidentDetailResponse(body), CasStateShapeError);
+  }
+  const detail = validIncidentDetail() as Record<string, unknown>;
+  delete detail.events;
+  assert.throws(
+    () => parseCasIncidentDetailResponse(detail),
+    (error: unknown) => {
+      assert.ok(error instanceof CasStateShapeError);
+      assert.match(error.message, /incident evidence/);
+      assert.match(error.message, /events/);
+      return true;
+    },
+  );
 });
 
 test('load failure routing: a shape error raises the mismatch surface, never the demo fallback', () => {

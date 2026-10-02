@@ -25,6 +25,7 @@ import {
   type CasAuthRejection,
 } from "../lib/cas-auth";
 import { resetCasPushTokenCache } from "../lib/cas-push";
+import { loadConsoleMirrors } from "../lib/cas-console-mirror";
 import { assertDisposableTestDatabase } from "../lib/cas-test-db-guard";
 
 // This suite writes to whatever DATABASE_URL points at: refuse to boot unless
@@ -402,6 +403,144 @@ test("evidence download streams the bytes to the console credential only", async
   assert.equal(response.headers.get("content-type"), "video/mp4");
   assert.match(response.headers.get("content-disposition") ?? "", /attachment; filename="cas-.*-video-1\.mp4"/);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from("fake-video"));
+});
+
+// --- Browsing and deleting past evidence (console) ------------------------
+
+/** Acknowledge + resolve an incident so the next trigger opens a fresh one. */
+async function resolveIncident(incidentId: string) {
+  const ack = await fetch(`${baseUrl}/cas/incidents/${incidentId}/ack`, { method: "POST", headers: AUTH });
+  assert.equal(ack.status, 200);
+  const resolve = await fetch(`${baseUrl}/cas/incidents/${incidentId}/resolve`, { method: "POST", headers: AUTH });
+  assert.equal(resolve.status, 200);
+}
+
+/** Enroll a credential and revoke it: every credentialed endpoint must then reject it. */
+async function enrollRevokedCredential(): Promise<Record<string, string>> {
+  const enrolled = await enrollHandset("evidence-test-revoked-console");
+  const revoke = await fetch(`${baseUrl}/cas/devices/${enrolled.device.id}/revoke`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` },
+  });
+  assert.equal(revoke.status, 200);
+  return { authorization: `Bearer ${enrolled.token}` };
+}
+
+test("incident evidence detail requires an enrolled credential; the enrollment credential and revoked credentials are rejected", async () => {
+  const incidentId = await triggerIncident();
+  assert.equal((await uploadEvidence(incidentId)).status, 201);
+
+  assert.equal((await fetch(`${baseUrl}/cas/incidents/${incidentId}/evidence`)).status, 401);
+  // The enrollment credential itself is not a console credential.
+  assert.equal((await fetch(`${baseUrl}/cas/incidents/${incidentId}/evidence`, {
+    headers: { authorization: `Bearer ${process.env.CAS_ALERT_TOKEN}` },
+  })).status, 401);
+  const revoked = await enrollRevokedCredential();
+  assert.equal((await fetch(`${baseUrl}/cas/incidents/${incidentId}/evidence`, { headers: revoked })).status, 401);
+  assert.equal((await fetch(`${baseUrl}/cas/incidents/${incidentId}/evidence`, { headers: AUTH })).status, 200);
+});
+
+test("incident evidence detail 404s for an unknown incident", async () => {
+  const response = await fetch(`${baseUrl}/cas/incidents/no-such-incident/evidence`, { headers: AUTH });
+  assert.equal(response.status, 404);
+});
+
+test("incident evidence detail returns metadata for an older, resolved incident — never the bytes", async () => {
+  const olderId = await triggerIncident();
+  const first = await uploadEvidence(olderId, { body: Buffer.from("older-photo") });
+  assert.equal(first.status, 201);
+  const firstId = ((await first.json()) as { id: string }).id;
+  const second = await uploadEvidence(olderId, {
+    kind: "audio",
+    contentType: "audio/mp4",
+    body: Buffer.from("older-audio"),
+    headers: { "x-cas-sequence": "2" },
+  });
+  assert.equal(second.status, 201);
+  const secondId = ((await second.json()) as { id: string }).id;
+  await resolveIncident(olderId);
+
+  // A newer incident becomes the only one /cas/state carries evidence for;
+  // the older incident's clips are reachable through the detail endpoint.
+  const newerId = await triggerIncident();
+  assert.notEqual(newerId, olderId);
+  const state = await (await fetch(`${baseUrl}/cas/state`, { headers: AUTH })).json() as {
+    activeIncident: { id: string; evidence: unknown[] };
+  };
+  assert.equal(state.activeIncident.id, newerId);
+  assert.equal(state.activeIncident.evidence.length, 0);
+
+  const detail = await fetch(`${baseUrl}/cas/incidents/${olderId}/evidence`, { headers: AUTH });
+  assert.equal(detail.status, 200);
+  const body = await detail.json() as {
+    incident: { id: string; status: string; triggerCount: number };
+    evidence: { id: string; kind: string; sizeBytes: number; capturedAt: string | null; data?: unknown }[];
+    events: { id: string; type: string; time: string; detail: string }[];
+  };
+  // The console's own mirror schema is the validator: type drift on either
+  // side fails this test instead of an operator's browser.
+  (await loadConsoleMirrors()).parseCasIncidentDetailResponse(body);
+  assert.equal(body.incident.id, olderId);
+  assert.equal(body.incident.status, "RESOLVED");
+  assert.deepEqual(body.evidence.map((item) => item.id).sort(), [firstId, secondId].sort());
+  assert.ok(body.evidence.every((item) => !("data" in item)), "listings must never carry the clip bytes");
+  const photo = body.evidence.find((item) => item.id === firstId);
+  assert.equal(photo?.capturedAt, new Date(1759000000000).toISOString());
+  // The resolved incident keeps its full journal: trigger, uploads, resolve.
+  assert.ok(body.events.some((event) => event.type === "EVIDENCE_UPLOADED"));
+  assert.ok(body.events.some((event) => event.type === "RESPONDER_RESOLVE"));
+});
+
+test("evidence delete requires an enrolled credential and 404s for unknown ids", async () => {
+  const incidentId = await triggerIncident();
+  const upload = await uploadEvidence(incidentId);
+  const stored = (await upload.json()) as { id: string };
+
+  assert.equal((await fetch(`${baseUrl}/cas/evidence/${stored.id}`, { method: "DELETE" })).status, 401);
+  const revoked = await enrollRevokedCredential();
+  assert.equal((await fetch(`${baseUrl}/cas/evidence/${stored.id}`, { method: "DELETE", headers: revoked })).status, 401);
+  assert.equal((await fetch(`${baseUrl}/cas/evidence/no-such-evidence`, { method: "DELETE", headers: AUTH })).status, 404);
+  // None of the rejections above deleted the clip.
+  const rows = await db.select().from(casEvidence).where(eq(casEvidence.id, stored.id));
+  assert.equal(rows.length, 1);
+});
+
+test("evidence delete removes the row and bytes, journals EVIDENCE_DELETED, and keeps the incident's history", async () => {
+  const incidentId = await triggerIncident();
+  const upload = await uploadEvidence(incidentId, { headers: { "x-cas-evidence-camera": "front" } });
+  assert.equal(upload.status, 201);
+  const stored = (await upload.json()) as { id: string };
+
+  const deleted = await fetch(`${baseUrl}/cas/evidence/${stored.id}`, { method: "DELETE", headers: AUTH });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), { id: stored.id, incidentId, deleted: true });
+
+  // Row and bytes are gone; the download endpoint now 404s, and a second
+  // delete is a 404 rather than a duplicated journal entry.
+  assert.equal((await db.select().from(casEvidence).where(eq(casEvidence.id, stored.id))).length, 0);
+  assert.equal((await fetch(`${baseUrl}/cas/evidence/${stored.id}/download`, { headers: AUTH })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/cas/evidence/${stored.id}`, { method: "DELETE", headers: AUTH })).status, 404);
+
+  // The journal is append-only: the upload entry survives, the deletion is
+  // recorded with what was removed and which credential removed it, and the
+  // incident itself is untouched.
+  const journal = await db.select().from(casIncidentEvents).where(eq(casIncidentEvents.incidentId, incidentId));
+  const deletions = journal.filter((event) => event.type === "EVIDENCE_DELETED");
+  assert.equal(deletions.length, 1, "exactly one deletion entry must be journaled");
+  assert.match(deletions[0].detail, /photo evidence clip/);
+  assert.match(deletions[0].detail, /front camera/);
+  assert.match(deletions[0].detail, /evidence-test-console/);
+  assert.ok(journal.some((event) => event.type === "EVIDENCE_UPLOADED"), "the upload entry survives the deletion");
+  assert.equal((await db.select().from(casIncidents).where(eq(casIncidents.id, incidentId))).length, 1);
+
+  // The detail endpoint stops listing the deleted clip and shows the
+  // deletion in the incident's journal.
+  const detail = await (await fetch(`${baseUrl}/cas/incidents/${incidentId}/evidence`, { headers: AUTH })).json() as {
+    evidence: { id: string }[];
+    events: { type: string }[];
+  };
+  assert.equal(detail.evidence.length, 0);
+  assert.ok(detail.events.some((event) => event.type === "EVIDENCE_DELETED"));
 });
 
 test("capture requests require the matching responder policy setting", async () => {

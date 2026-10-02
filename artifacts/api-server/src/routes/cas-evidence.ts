@@ -12,6 +12,7 @@ import {
 } from "@workspace/db/schema";
 import { z } from "zod";
 import {
+  casDeviceFrom,
   delayCasAuthRejection,
   findDeviceCredentialByToken,
   recordCasCredentialRejection,
@@ -303,6 +304,124 @@ router.get("/cas/evidence/:id/download", requireCasCredential, async (req: Reque
     res.setHeader("Content-Length", String(row.data.length));
     res.setHeader("Content-Disposition", `attachment; filename="cas-${row.incidentId}-${row.kind}${row.camera ? `-${row.camera}` : ""}-${row.sequence}.${extension}"`);
     return res.end(row.data);
+  } catch (error) { return next(error); }
+});
+
+/**
+ * Per-incident evidence detail, console-only: /cas/state carries evidence
+ * metadata for the latest incident only, so browsing any older alert's
+ * evidence goes through this route. Metadata only — the clip bytes never
+ * appear in listings; viewing and downloading ride the credentialed
+ * download endpoint above. The incident's append-only journal rides along
+ * so a deletion the operator just made is immediately visible as an
+ * EVIDENCE_DELETED entry without a separate fetch.
+ */
+router.get("/cas/incidents/:id/evidence", requireCasCredential, async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
+  try {
+    const incidentRows = await db.select({
+      id: casIncidents.id,
+      status: casIncidents.status,
+      priority: casIncidents.priority,
+      triggerCount: casIncidents.triggerCount,
+      createdAt: casIncidents.createdAt,
+    }).from(casIncidents).where(eq(casIncidents.id, req.params.id)).limit(1);
+    const incident = incidentRows[0];
+    if (!incident) return res.status(404).json({ error: "No incident with this id" });
+    const [evidenceRows, eventRows] = await Promise.all([
+      db.select({
+        id: casEvidence.id,
+        kind: casEvidence.kind,
+        contentType: casEvidence.contentType,
+        sizeBytes: casEvidence.sizeBytes,
+        sequence: casEvidence.sequence,
+        camera: casEvidence.camera,
+        capturedAt: casEvidence.capturedAt,
+        requestId: casEvidence.requestId,
+        createdAt: casEvidence.createdAt,
+      }).from(casEvidence)
+        .where(eq(casEvidence.incidentId, incident.id))
+        .orderBy(asc(casEvidence.createdAt)),
+      db.select().from(casIncidentEvents)
+        .where(eq(casIncidentEvents.incidentId, incident.id))
+        .orderBy(asc(casIncidentEvents.createdAt)),
+    ]);
+    return res.json({
+      incident: {
+        id: incident.id,
+        status: incident.status,
+        priority: incident.priority,
+        triggerCount: incident.triggerCount,
+        createdAt: incident.createdAt.toISOString(),
+      },
+      evidence: evidenceRows.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        contentType: item.contentType,
+        sizeBytes: item.sizeBytes,
+        sequence: item.sequence,
+        camera: item.camera,
+        capturedAt: item.capturedAt ? item.capturedAt.toISOString() : null,
+        uploadedAt: item.createdAt.toISOString(),
+        requestId: item.requestId,
+      })),
+      events: eventRows.map((event) => ({
+        id: event.id,
+        type: event.type,
+        priority: event.priority,
+        time: event.createdAt.toISOString(),
+        detail: event.detail,
+      })),
+    });
+  } catch (error) { return next(error); }
+});
+
+/**
+ * Evidence deletion, console-only: removes one clip's row and bytes (e.g.
+ * for privacy or storage hygiene) and appends an EVIDENCE_DELETED entry to
+ * the incident's journal in the same transaction, mirroring the upload
+ * pattern. The journal stays append-only — deletion erases the bytes and
+ * the listing entry, never the history that the clip existed, and never
+ * the incident or its other events.
+ */
+router.delete("/cas/evidence/:id", requireCasCredential, async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
+  try {
+    const device = casDeviceFrom(res);
+    const now = new Date();
+    const result = await db.transaction(async (tx) => {
+      // Lock the row before reading it so a concurrent delete 404s instead
+      // of double-journaling the deletion.
+      const rows = await tx.execute(sql`
+        SELECT id, incident_id AS "incidentId", kind, size_bytes AS "sizeBytes",
+               sequence, camera, captured_at AS "capturedAt"
+        FROM cas_evidence
+        WHERE id = ${req.params.id}
+        FOR UPDATE
+      `);
+      const row = rows.rows[0] as {
+        id?: string;
+        incidentId?: string;
+        kind?: string;
+        sizeBytes?: number;
+        sequence?: number;
+        camera?: string | null;
+        // Raw driver rows return timestamptz as strings, not Dates.
+        capturedAt?: string | null;
+      } | undefined;
+      if (!row?.id || !row.incidentId || !row.kind) return "missing" as const;
+      await tx.delete(casEvidence).where(eq(casEvidence.id, row.id));
+      const capturedDetail = row.capturedAt ? `, captured ${new Date(row.capturedAt).toISOString()}` : "";
+      await tx.insert(casIncidentEvents).values({
+        id: `${row.id}-deleted`,
+        incidentId: row.incidentId,
+        type: "EVIDENCE_DELETED",
+        priority: "P2",
+        detail: `Responder deleted the ${row.kind} evidence clip (${formatBytes(row.sizeBytes ?? 0)}${row.camera ? `, ${row.camera} camera` : ""}${(row.sequence ?? 1) > 1 ? `, clip ${row.sequence}` : ""}${capturedDetail}) from this incident. The clip's bytes and listing entry are permanently removed; its upload entry stays in this append-only journal. Deleted by enrolled device "${device.label}" (${device.id}).`,
+        createdAt: now,
+      });
+      return { id: row.id, incidentId: row.incidentId } as const;
+    });
+    if (result === "missing") return res.status(404).json({ error: "No evidence with this id" });
+    return res.json({ ...result, deleted: true });
   } catch (error) { return next(error); }
 });
 

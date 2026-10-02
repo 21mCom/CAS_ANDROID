@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ActiveIncident, Gate, Incident, SetupItem } from '@/hooks/use-field-test';
+import type { ActiveIncident, Gate, Incident, IncidentDetail, SetupItem } from '@/hooks/use-field-test';
 
 /**
  * Console-side mirror of the API's GET /api/cas/state response contract
@@ -160,6 +160,40 @@ export function parseCasStateResponse(body: unknown): CasRemoteState {
   return result.data;
 }
 
+const incidentDetailSummarySchema = z.object({
+  id: z.string(),
+  status: z.enum(['INACTIVE', 'ACTIVE_UNACKED', 'ACTIVE_ACKED', 'RESOLVED']),
+  priority: prioritySchema,
+  triggerCount: z.number().int(),
+  createdAt: z.string(),
+}).strict();
+
+/**
+ * Console-side mirror of GET /api/cas/incidents/:id/evidence (server:
+ * incidentDetailResponseSchema in cas-readiness-schema.ts) — any incident's
+ * evidence metadata plus its append-only journal, for the past-alert
+ * evidence browser. Strict like the state mirror: a drifted server build
+ * raises the mismatch surface instead of rendering partial data.
+ */
+export const casIncidentDetailResponseSchema = z.object({
+  incident: incidentDetailSummarySchema,
+  evidence: z.array(evidenceItemSchema),
+  events: z.array(kernelEventSchema),
+}).strict();
+
+export type CasIncidentDetailResponse = z.infer<typeof casIncidentDetailResponseSchema>;
+
+/**
+ * Parses a GET /api/cas/incidents/:id/evidence JSON body. Throws
+ * CasStateShapeError — with the first offending path — when the server
+ * speaks a shape this console was not built against.
+ */
+export function parseCasIncidentDetailResponse(body: unknown): CasIncidentDetailResponse {
+  const result = casIncidentDetailResponseSchema.safeParse(body);
+  if (!result.success) throw casResponseShapeError('incident evidence', result.error);
+  return result.data;
+}
+
 // Compile-time lockstep with the console's state types: assigning in both
 // directions fails typecheck the moment the mirror schema and the hook's
 // Gate/SetupItem/Incident/ActiveIncident declarations disagree.
@@ -173,3 +207,9 @@ const _schemaMatchesConsole: ConsoleRemoteState = null as unknown as CasRemoteSt
 const _consoleMatchesSchema: CasRemoteState = null as unknown as ConsoleRemoteState;
 void _schemaMatchesConsole;
 void _consoleMatchesSchema;
+
+// Same lockstep for the per-incident evidence detail payload.
+const _detailSchemaMatchesConsole: IncidentDetail = null as unknown as CasIncidentDetailResponse;
+const _consoleMatchesDetailSchema: CasIncidentDetailResponse = null as unknown as IncidentDetail;
+void _detailSchemaMatchesConsole;
+void _consoleMatchesDetailSchema;

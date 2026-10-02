@@ -45,7 +45,8 @@
 - [CAS DB-heavy test files run sequentially](cas-test-db-coupling.md) — shared review DB means suites wipe each other's rows mid-test; every DB-touching suite gets its OWN &&-chained tsx --test invocation.
 - [Completion rebases can mangle mainline](completion-rebase-can-mangle-mainline.md) — always re-run the full suite post-rebase; recover via reflog pre-rebase tip and diff against the corrupted blob.
 - [Android emulator jobs on GitHub CI](android-emulator-ci.md) — emulators only boot on ubuntu+KVM+x86_64 (macOS dies with HVF); emulator-runner script blocks run under dash — no pipefail, single-line bash invocation.
-- [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after.
+- [CAS console browser testing](cas-console-browser-testing.md) — console reads are credential-gated, so browser proofs must enroll a credential, seed sessionStorage pre-load, and revoke after; keep entity ids out of visible text and panel test ids unique.
+- [Selection-owned async detail panels](selection-owned-async-detail-panels.md) — select-then-fetch panels must render/mutate only id-matched detail; clear on change, ref-guard async applies, surface refresh failures.
 - [Direct Playwright browser proofs](playwright-direct-proof.md) — testing-subagent infra flake fallback: import playwright from the root pnpm store path and launch /repl/tools/bin/chromium.
 - [CAS sink drill environment](cas-sink-drill-environment.md) — workspace SMTP secrets route T7 over real email; sink drills need a standalone no-SMTP instance with its own sink URLs and CAS_EMAIL_FROM, main workflow stopped.
 - [MVP handoff packaging constraints](mvp-handoff-packaging.md) — CI demands exactly one `CAS-Pixel11-MVP-Handoff-v*-mvp.zip` in deliverables/; extra run packs need another name pattern and the four standalone gates.

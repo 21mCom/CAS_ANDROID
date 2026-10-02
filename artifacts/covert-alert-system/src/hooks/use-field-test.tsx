@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { CasStateShapeError, parseCasStateResponse } from '@/lib/cas-state-schema';
+import { CasStateShapeError, parseCasIncidentDetailResponse, parseCasStateResponse } from '@/lib/cas-state-schema';
 import { DeviceEnrollmentDialog } from '@/components/device-enrollment-dialog';
 import {
   clearStoredDeviceToken,
@@ -145,6 +145,25 @@ export type ActiveIncident = {
   captureRequests: CaptureRequestItem[];
 };
 
+export type IncidentDetailSummary = {
+  id: string;
+  status: KernelStatus;
+  priority: Priority;
+  triggerCount: number;
+  createdAt: string;
+};
+
+/**
+ * Any incident's evidence list plus its append-only journal, from
+ * GET /api/cas/incidents/:id/evidence. /cas/state carries evidence only for
+ * the latest incident; this is the browse-any-past-alert payload.
+ */
+export type IncidentDetail = {
+  incident: IncidentDetailSummary;
+  evidence: EvidenceItem[];
+  events: KernelEvent[];
+};
+
 type FieldTestState = {
   gates: Gate[];
   setup: SetupItem[];
@@ -166,6 +185,17 @@ type FieldTestContextValue = FieldTestState & {
   resolveKernel: () => void;
   requeueOutboxItem: (id: string, reason?: string) => Promise<void>;
   requestCapture: (kind: 'audio' | 'photo' | 'video') => Promise<void>;
+  /**
+   * Loads any incident's evidence list and journal (not just the latest
+   * one's, which /cas/state carries) for the past-alert evidence browser.
+   */
+  loadIncidentDetail: (incidentId: string) => Promise<IncidentDetail>;
+  /**
+   * Permanently deletes one evidence clip (its bytes and listing entry) and
+   * journals the deletion on its incident; reloads state so the latest
+   * incident's panel and timeline reflect it.
+   */
+  deleteEvidence: (evidenceId: string) => Promise<void>;
   resetDemo: () => void;
   /**
    * Set when the server's state response did not match this console's
@@ -490,6 +520,31 @@ export function FieldTestProvider({ children }: { children: ReactNode }) {
         const body = await response.json().catch(() => ({})) as { error?: string };
         throw new Error(body.error || `Capture request was rejected (${response.status}).`);
       }
+      await reload();
+    })(), lockForCredential),
+    loadIncidentDetail: (incidentId) => lockOnCredentialFailure((async () => {
+      const response = await casAuthedFetch(`/api/cas/incidents/${encodeURIComponent(incidentId)}/evidence`);
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `The incident's evidence could not be loaded (${response.status}).`);
+      try {
+        return parseCasIncidentDetailResponse(body);
+      } catch (error) {
+        // A detail payload this console cannot parse is the same
+        // server/console version mismatch as a drifted state response:
+        // raise the shared mismatch surface instead of rendering
+        // partial/garbage data.
+        if (error instanceof CasStateShapeError) setStateIssue(error.message);
+        throw error;
+      }
+    })(), lockForCredential),
+    deleteEvidence: (evidenceId) => lockOnCredentialFailure((async () => {
+      const response = await casAuthedFetch(`/api/cas/evidence/${encodeURIComponent(evidenceId)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `Delete was rejected (${response.status}).`);
+      }
+      // Refresh the latest incident's panel and timeline so the deletion
+      // and its journal entry show without a manual reload.
       await reload();
     })(), lockForCredential),
     resetDemo: () => { void reload().catch(handleActionError); },

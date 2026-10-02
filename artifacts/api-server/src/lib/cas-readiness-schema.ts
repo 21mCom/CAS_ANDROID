@@ -164,3 +164,25 @@ export const casStateResponseSchema = z.object({
   incidents: z.array(stateIncidentRowSchema),
   activeIncident: activeIncidentSchema.nullable(),
 }).strict();
+
+// Mirrors IncidentDetailSummary in the console's use-field-test hook: the
+// incident header the per-incident evidence endpoint returns alongside the
+// evidence list, so the console can label which alert it is browsing.
+export const incidentDetailSummarySchema = z.object({
+  id: z.string(),
+  status: kernelStatusSchema,
+  priority: casPrioritySchema,
+  triggerCount: z.number().int(),
+  createdAt: z.string(),
+}).strict();
+
+// Mirrors IncidentDetail in the console's use-field-test hook: the response
+// of GET /cas/incidents/:id/evidence — evidence metadata (never the bytes)
+// plus the incident's append-only journal, for ANY incident, not just the
+// latest one /cas/state carries. The journal rides along so a deletion the
+// operator just made is immediately visible as an EVIDENCE_DELETED entry.
+export const incidentDetailResponseSchema = z.object({
+  incident: incidentDetailSummarySchema,
+  evidence: z.array(evidenceItemSchema),
+  events: z.array(kernelEventSchema),
+}).strict();

@@ -1,13 +1,11 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowRight, Camera, Check, CircleStop, Download, LockKeyhole, Mic, RotateCcw, ShieldAlert, Video } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { Activity, ArrowRight, Check, CircleStop, History, LockKeyhole, RotateCcw, ShieldAlert } from 'lucide-react';
 import { Link } from 'wouter';
-import { casAuthedFetch, useFieldTest, type EvidenceItem, type OutboxItem, type Priority } from '@/hooks/use-field-test';
-import { formatEvidenceSize, useCapturePolicy } from '@/hooks/use-capture-policy';
-import { evidenceDownloadFilename } from '@/lib/evidence-download';
+import { useFieldTest, type IncidentDetail, type OutboxItem, type Priority } from '@/hooks/use-field-test';
+import { useCapturePolicy } from '@/hooks/use-capture-policy';
+import { EvidenceItemRow } from '@/components/evidence-viewer';
 import { EvidenceLabel, EmptyState, FriendlyErrorMessage, PriorityPill, SectionKicker } from '@/components/field-ui';
 import { OutboxStatusPanel } from '@/components/outbox-status';
-
-const EVIDENCE_KIND_ICONS = { audio: Mic, photo: Camera, video: Video } as const;
 
 /** True when the delivery was accepted by the built-in dev provider sink, not a real provider. */
 const isSimulatedDelivery = (item: OutboxItem) => item.state === 'SENT' && item.deliveredTo === 'dev-sink';
@@ -43,7 +41,7 @@ function outboxChipClass(item: OutboxItem): string {
 }
 
 export default function Incidents() {
-  const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, requestCapture, resetDemo } = useFieldTest();
+  const { incidents, activeIncident, runTestIncident, triggerKernel, acknowledgeKernel, resolveKernel, requeueOutboxItem, requestCapture, loadIncidentDetail, resetDemo } = useFieldTest();
   const { policy } = useCapturePolicy();
   const [filter, setFilter] = useState<'all' | Priority>('all');
   const [requeueTarget, setRequeueTarget] = useState<string | null>(null);
@@ -52,7 +50,66 @@ export default function Incidents() {
   const [requeueBusy, setRequeueBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [captureBusy, setCaptureBusy] = useState<string | null>(null);
-  const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
+
+  // Past-alert evidence browser: the operator picks any real incident (the
+  // latest is the default) and its evidence + journal are fetched from the
+  // per-incident endpoint — /cas/state only carries the latest incident.
+  const realIncidents = useMemo(() => incidents.filter((row) => !row.sample), [incidents]);
+  const [browseId, setBrowseId] = useState<string | null>(null);
+  const browseTargetId = browseId ?? realIncidents[0]?.id ?? null;
+  const [browseDetail, setBrowseDetail] = useState<IncidentDetail | null>(null);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browseBusy, setBrowseBusy] = useState(false);
+  const browsePanelRef = useRef<HTMLDivElement | null>(null);
+  // Always the currently selected incident id, readable from async
+  // continuations: a detail response may only be applied while the incident
+  // it was fetched for is still the selected one.
+  const browseTargetRef = useRef<string | null>(null);
+  browseTargetRef.current = browseTargetId;
+  // The loaded detail renders (and its Delete buttons arm) only while it
+  // belongs to the selected incident — a slow or failed load for a new
+  // selection must never leave the previous alert's clips on screen.
+  const browseDetailForTarget = browseDetail && browseDetail.incident.id === browseTargetId ? browseDetail : null;
+
+  useEffect(() => {
+    if (!browseTargetId) { setBrowseDetail(null); return; }
+    let cancelled = false;
+    setBrowseBusy(true);
+    setBrowseError(null);
+    // Drop the previous incident's detail up front so a failed load shows
+    // the error and nothing else — never the old alert's deletable clips.
+    setBrowseDetail(null);
+    loadIncidentDetail(browseTargetId)
+      .then((detail) => { if (!cancelled) setBrowseDetail(detail); })
+      .catch((error: unknown) => {
+        if (!cancelled) setBrowseError(error instanceof Error ? error.message : 'The alert’s evidence could not be loaded.');
+      })
+      .finally(() => { if (!cancelled) setBrowseBusy(false); });
+    return () => { cancelled = true; };
+  }, [browseTargetId, loadIncidentDetail]);
+
+  const selectIncident = (id: string) => {
+    setBrowseId(id);
+    browsePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleEvidenceDeleted = (incidentId: string) => {
+    // The delete action already reloaded state (refreshing the current
+    // alert's panel and the timeline); refetch the incident the deleted clip
+    // belonged to so its list drops the clip and its journal shows the
+    // deletion entry. Apply the result only if that incident is still the
+    // selected one — a selection change mid-refresh must not apply one
+    // alert's detail under another.
+    void loadIncidentDetail(incidentId)
+      .then((detail) => { if (browseTargetRef.current === incidentId) setBrowseDetail(detail); })
+      .catch((error: unknown) => {
+        if (browseTargetRef.current !== incidentId) return;
+        // The refresh failed: the deleted clip's row is now stale. Drop the
+        // detail so nothing acts on it, and say why.
+        setBrowseDetail(null);
+        setBrowseError(error instanceof Error ? error.message : 'The alert’s evidence could not be reloaded after the deletion.');
+      });
+  };
 
   const submitCaptureRequest = async (kind: 'audio' | 'photo' | 'video') => {
     if (captureBusy) return;
@@ -64,43 +121,6 @@ export default function Incidents() {
       setCaptureError(error instanceof Error ? error.message : 'Capture request was rejected.');
     } finally {
       setCaptureBusy(null);
-    }
-  };
-
-  const downloadEvidence = async (item: EvidenceItem) => {
-    if (downloadBusy === item.id) return;
-    setDownloadBusy(item.id);
-    setCaptureError(null);
-    try {
-      // Downloads are credentialed: fetch the bytes with the Bearer credential
-      // and hand the operator a file, since a bare <a href> cannot send it.
-      const response = await casAuthedFetch(`/api/cas/evidence/${item.id}/download`);
-      if (!response.ok) throw new Error(`Download was rejected (${response.status}).`);
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      // The server's Content-Disposition filename is the source of truth
-      // (it carries the camera label); the local fallback mirrors it.
-      anchor.download = evidenceDownloadFilename(
-        response.headers.get('content-disposition'),
-        activeIncident?.id,
-        item,
-      );
-      // The anchor must be in the document: some browsers ignore synthetic
-      // click() downloads on detached elements.
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      // The click only schedules the download — the browser starts reading
-      // the blob asynchronously. Revoking the URL in the same tick races that
-      // startup and silently aborts the download, so revoke only after the
-      // download manager has had time to open the blob.
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (error) {
-      setCaptureError(error instanceof Error ? error.message : 'Download failed.');
-    } finally {
-      setDownloadBusy(null);
     }
   };
 
@@ -238,36 +258,9 @@ export default function Incidents() {
                     </p>
                   ) : (
                     <ul className="mt-2 space-y-2">
-                      {activeIncident.evidence.map((item) => {
-                        const KindIcon = EVIDENCE_KIND_ICONS[item.kind];
-                        const capturedAge = item.capturedAt
-                          ? (() => {
-                              const ageSeconds = Math.max(0, Math.round((Date.now() - Date.parse(item.capturedAt)) / 1000));
-                              return ageSeconds < 90 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
-                            })()
-                          : null;
-                        return (
-                          <li key={item.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#e0e1da] bg-[#f7f7f1] px-3 py-2" data-testid={`row-evidence-${item.id}`}>
-                            <KindIcon size={14} className="text-[#203c49]" />
-                            <span className="text-xs font-bold text-[#203c49]">
-                              {item.kind}{item.camera ? ` · ${item.camera} camera` : ''}{item.sequence > 1 ? ` · clip ${item.sequence}` : ''}
-                            </span>
-                            <span className="text-[11px] text-[#687271]">
-                              {formatEvidenceSize(item.sizeBytes)}
-                              {capturedAge ? ` · captured ${capturedAge} ago` : ''}
-                              {item.requestId ? ' · requested by a responder' : ''}
-                            </span>
-                            <button
-                              onClick={() => { void downloadEvidence(item); }}
-                              disabled={downloadBusy === item.id}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:border-[#203c49] disabled:cursor-not-allowed disabled:opacity-40"
-                              data-testid={`button-download-evidence-${item.id}`}
-                            >
-                              <Download size={12} /> {downloadBusy === item.id ? 'Downloading…' : 'Download'}
-                            </button>
-                          </li>
-                        );
-                      })}
+                      {activeIncident.evidence.map((item) => (
+                        <EvidenceItemRow key={item.id} item={item} incidentId={activeIncident.id} onDeleted={handleEvidenceDeleted} />
+                      ))}
                     </ul>
                   )}
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -310,8 +303,71 @@ export default function Incidents() {
               </div>
             )}
           </div>
+          {realIncidents.length > 0 && (
+            <div ref={browsePanelRef} className="border-b border-[#d7d8d0] bg-[#fbfbf7] p-5" data-testid="panel-past-incident-evidence">
+              <div className="flex items-center gap-2">
+                <History size={16} className="text-[#a06712]" />
+                <SectionKicker testId="kicker-past-incident-evidence">Past alerts</SectionKicker>
+              </div>
+              <h2 className="mt-1 font-display text-xl font-extrabold tracking-[-0.04em] text-[#203c49]">Evidence from any alert, not just the latest.</h2>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-[#687271]">
+                Pick an alert to review every clip it captured, play them here, and delete what should not be kept. Deleting removes the clip for good — the alert’s permanent record keeps a note that it existed and was deleted.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <label htmlFor="select-past-incident" className="text-[11px] font-semibold text-[#687271]">Alert</label>
+                <select
+                  id="select-past-incident"
+                  value={browseTargetId ?? ''}
+                  onChange={(event) => setBrowseId(event.target.value)}
+                  className="max-w-full rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1.5 text-xs text-[#203c49] focus:border-[#203c49] focus:outline-none"
+                  data-testid="select-past-incident"
+                >
+                  {realIncidents.map((row) => (
+                    // No incident id in the label: other surfaces (and
+                    // browser proofs) match the id as text, and an option
+                    // containing it would make those matches ambiguous.
+                    <option key={row.id} value={row.id}>{row.time} UTC · {row.state}</option>
+                  ))}
+                </select>
+              </div>
+              {browseError && <div className="mt-2" data-testid="text-browse-error"><FriendlyErrorMessage error={browseError} /></div>}
+              {browseBusy && <p className="mt-3 text-xs text-[#687271]" data-testid="text-browse-loading">Loading the alert’s evidence…</p>}
+              {browseDetailForTarget && !browseBusy && (
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#687271]">Clips captured for this alert</p>
+                    {browseDetailForTarget.evidence.length === 0 ? (
+                      <p className="mt-1 text-xs leading-5 text-[#687271]" data-testid="text-browse-no-evidence">
+                        No clips stored for this alert{browseDetailForTarget.events.some((event) => event.type === 'EVIDENCE_DELETED') ? ' — everything captured was deleted; the permanent record on the right keeps a note of each deletion' : ''}.
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-2">
+                        {browseDetailForTarget.evidence.map((item) => (
+                          // The same clip can render in the current-alert
+                          // panel too (the latest incident is both); the
+                          // prefix keeps every test id unique on the page.
+                          <EvidenceItemRow key={item.id} item={item} incidentId={browseDetailForTarget.incident.id} onDeleted={handleEvidenceDeleted} testIdPrefix="browse-" />
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#687271]">This alert’s permanent record</p>
+                    <ul className="mt-2 space-y-1.5" data-testid="list-browse-journal">
+                      {browseDetailForTarget.events.map((event) => (
+                        <li key={event.id} className="flex items-start gap-2 text-[11px] leading-4 text-[#687271]" data-testid={`row-browse-event-${event.id}`}>
+                          <span className="mt-0.5 shrink-0 font-mono-ui text-[10px] text-[#9aa39f]">{event.time.slice(11, 19)}</span>
+                          <span><strong className="text-[#203c49]">{event.type.replaceAll('_', ' ')}</strong> — {event.detail}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-4 border-b border-[#d7d8d0] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(['all', 'P1', 'P2', 'P3'] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={`rounded-lg border px-3 py-2 text-[11px] font-bold transition-colors ${filter === item ? 'border-[#203c49] bg-[#203c49] text-[#f2f0e6]' : 'border-[#c6cbc3] text-[#687271] hover:border-[#203c49]'}`} data-testid={`button-filter-priority-${item}`}>{item === 'all' ? 'All events' : `${item} only`}</button>)}</div><button onClick={resetDemo} className="inline-flex items-center gap-2 self-start text-xs font-bold text-[#687271] hover:text-[#203c49]" data-testid="button-reset-incidents"><RotateCcw size={14} /> Reset the sample</button></div>
-          {visible.length === 0 ? <div className="p-6"><EmptyState title="Nothing at this urgency level" detail="Pick another level above, or record a test event to add a P3 practice entry." /></div> : <div className="relative px-5 py-5"><div className="absolute bottom-7 left-[38px] top-7 w-px bg-[#d7d8d0]" />{visible.map((incident) => <div key={incident.id} className="relative grid grid-cols-[28px_1fr] gap-4 pb-6 last:pb-0" data-testid={`row-incident-${incident.id}`}><div className="z-10 mt-1 flex h-7 w-7 items-center justify-center rounded-full border border-[#d7d8d0] bg-[#fbfbf7]"><span className={`h-2 w-2 rounded-full ${incident.priority === 'P1' ? 'bg-[#203c49]' : incident.priority === 'P2' ? 'bg-[#e8a629]' : 'bg-[#8ca69f]'}`} /></div><div className="rounded-xl border border-[#e0e1da] bg-[#f7f7f1] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><PriorityPill priority={incident.priority} /><h2 className="text-sm font-bold text-[#203c49]">{incident.title}</h2></div><span className="text-[11px] text-[#687271]">{incident.time} UTC</span></div><p className="mt-2 text-sm leading-5 text-[#687271]">{incident.detail}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e0e1da] pt-3 text-[11px] font-medium text-[#687271]"><span>Status: <strong className={incident.state === 'Blocked' ? 'text-[#914136]' : incident.state === 'Local only' ? 'text-[#a06712]' : 'text-[#236047]'}>{incident.state}</strong></span><span>Source: {incident.source}</span>{incident.sample ? <EvidenceLabel /> : <span className="text-[#a06712]">Recorded by this console</span>}</div></div></div>)}</div>}
+          {visible.length === 0 ? <div className="p-6"><EmptyState title="Nothing at this urgency level" detail="Pick another level above, or record a test event to add a P3 practice entry." /></div> : <div className="relative px-5 py-5"><div className="absolute bottom-7 left-[38px] top-7 w-px bg-[#d7d8d0]" />{visible.map((incident) => <div key={incident.id} className="relative grid grid-cols-[28px_1fr] gap-4 pb-6 last:pb-0" data-testid={`row-incident-${incident.id}`}><div className="z-10 mt-1 flex h-7 w-7 items-center justify-center rounded-full border border-[#d7d8d0] bg-[#fbfbf7]"><span className={`h-2 w-2 rounded-full ${incident.priority === 'P1' ? 'bg-[#203c49]' : incident.priority === 'P2' ? 'bg-[#e8a629]' : 'bg-[#8ca69f]'}`} /></div><div className="rounded-xl border border-[#e0e1da] bg-[#f7f7f1] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><PriorityPill priority={incident.priority} /><h2 className="text-sm font-bold text-[#203c49]">{incident.title}</h2></div><span className="text-[11px] text-[#687271]">{incident.time} UTC</span></div><p className="mt-2 text-sm leading-5 text-[#687271]">{incident.detail}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#e0e1da] pt-3 text-[11px] font-medium text-[#687271]"><span>Status: <strong className={incident.state === 'Blocked' ? 'text-[#914136]' : incident.state === 'Local only' ? 'text-[#a06712]' : 'text-[#236047]'}>{incident.state}</strong></span><span>Source: {incident.source}</span>{incident.sample ? <EvidenceLabel /> : <span className="text-[#a06712]">Recorded by this console</span>}{incident.source === 'Kernel API' ? <button onClick={() => selectIncident(incident.id)} className="rounded-md border border-[#c6cbc3] bg-[#fbfbf7] px-2 py-1 text-[11px] font-bold text-[#203c49] transition-colors hover:border-[#203c49]" data-testid={`button-browse-evidence-${incident.id}`}>Browse evidence</button> : null}</div></div></div>)}</div>}
         </div>
         <aside className="space-y-5">
           <div className="rounded-xl border border-[#d7d8d0] bg-[#203c49] p-5 text-[#f2f0e6]"><SectionKicker testId="kicker-priority-model"><span className="text-[#ffd067]">What P1 · P2 · P3 mean</span></SectionKicker><h2 className="mt-1 font-display text-lg font-extrabold tracking-[-0.03em]">How urgent each entry is.</h2><div className="mt-4 space-y-3"><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P1" /><p className="text-xs leading-5 text-[#c2cec7]">The emergency itself — someone needs help right now.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P2" /><p className="text-xs leading-5 text-[#c2cec7]">Supporting news: a delivery going out, a location arriving.</p></div><div className="flex gap-3 border-t border-[#3a5962] pt-3"><PriorityPill priority="P3" /><p className="text-xs leading-5 text-[#c2cec7]">Background notes and practice records.</p></div></div></div>

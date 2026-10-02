@@ -152,7 +152,11 @@ try {
       environment.DATABASE_URL,
       "-v", "ON_ERROR_STOP=1",
       "-c",
-      `INSERT INTO cas_incidents (id, priority, status, trigger_count, created_at, updated_at) VALUES ('${INCIDENT_ID}', 'P1', 'ACTIVE_UNACKED', 1, now(), now())`,
+      // The older incident gives the past-alert evidence browser a second,
+      // non-latest alert to select. It is strictly older than INCIDENT_ID so
+      // the seeded active incident stays the "latest" everywhere (the state
+      // payload's active incident is the newest row regardless of status).
+      `INSERT INTO cas_incidents (id, priority, status, trigger_count, created_at, updated_at) VALUES ('${INCIDENT_ID}', 'P1', 'ACTIVE_UNACKED', 1, now(), now()), ('e2e-browse-older-incident', 'P2', 'RESOLVED', 1, now() - interval '1 hour', now() - interval '1 hour')`,
     ]);
 
     run("pnpm", ["--filter", "@workspace/api-server", "run", "build"], { env: environment });
@@ -272,7 +276,7 @@ try {
             : {}),
         },
       });
-      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, responder two-step delete, and remember-this-browser (persisted vs session-only enrollment, dialog retry, sign-out, revoke-then-lock).");
+      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, past-alert browse/delete selection guards, responder two-step delete, and remember-this-browser (persisted vs session-only enrollment, dialog retry, sign-out, revoke-then-lock).");
     } finally {
       await stopProcess(webServer, "console preview");
       await stopProcess(apiServer, "api-server");
