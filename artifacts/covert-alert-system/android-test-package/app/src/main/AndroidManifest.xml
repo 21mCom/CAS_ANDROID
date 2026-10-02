@@ -85,6 +85,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Legacy static shortcut kept so pins made by older builds stay
+                 enabled after upgrade; the disguised pin uses its own ID
+                 (see ProxyShortcut.ID). -->
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <activity

@@ -1,10 +1,18 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Legacy static shortcut, kept so pins made by older kit builds stay
+         enabled after in-place upgrades (manifest shortcuts are immutable and
+         their pins would otherwise disable permanently). It stays generic;
+         the disguised shortcut is the pinned "gate0a-proxy-pin" built by
+         ProxyShortcut. -->
     <shortcut
         android:shortcutId="gate0a-proxy"
         android:enabled="true"
         android:icon="@drawable/ic_proxy"
         android:shortcutShortLabel="@string/proxy_shortcut_label"
         android:shortcutLongLabel="@string/proxy_shortcut_long_label">
-        <intent android:action="com.covertalert.pixeltest.action.PROXY_TRIGGER" />
+        <intent
+            android:action="com.covertalert.pixeltest.action.PROXY_TRIGGER"
+            android:targetPackage="com.covertalert.pixeltest"
+            android:targetClass="com.covertalert.pixeltest.TriggerActivity" />
     </shortcut>
 </shortcuts>

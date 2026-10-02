@@ -57,7 +57,7 @@ fi
 #        flow begins at the operator's explicit Download & install tap).
 violations="$(grep -rn 'startActivity' "$APP_SRC" --include='*.kt' --include='*.java' \
   | grep -v 'TriggerActivity.kt' \
-  | grep -v 'MainActivity.kt.*IntentFactory\.proxy()' \
+  | grep -v 'MainActivity.kt.*IntentFactory\.proxy(' \
   | grep -v 'UpdateInstallReceiver.kt' || true)"
 if [ -n "$violations" ]; then
   echo "$violations"
@@ -75,8 +75,8 @@ fi
 
 # MainActivity may only start the internal proxy — no other startActivity call.
 if grep -n 'startActivity' "$APP_SRC/main/java/com/covertalert/pixeltest/MainActivity.kt" \
-  | grep -v 'IntentFactory\.proxy()'; then
-  fail "MainActivity starts an activity other than its own internal proxy (IntentFactory.proxy())."
+  | grep -v 'IntentFactory\.proxy('; then
+  fail "MainActivity starts an activity other than its own internal proxy (IntentFactory.proxy(...))."
 fi
 
 # 4. No manifest may declare visibility of specific third-party packages.

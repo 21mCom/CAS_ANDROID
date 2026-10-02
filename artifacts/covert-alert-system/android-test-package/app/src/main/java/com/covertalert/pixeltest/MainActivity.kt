@@ -86,6 +86,7 @@ class MainActivity : Activity() {
             // unaffected; an empty package means manual trigger.
             TestStore.setCoverPackage(this, "")
             TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to "", "validInstalledPackage" to false))
+            ProxyShortcut.updateInPlace(this)
             refreshCoverStatus()
             refreshReport()
         })
@@ -248,20 +249,17 @@ class MainActivity : Activity() {
             if (manager == null || !manager.isRequestPinShortcutSupported) {
                 TestStore.record(this, "SHORTCUT_OUTCOME", mapOf("outcome" to "UNSUPPORTED"))
             } else {
-                val shortcut = manager.dynamicShortcuts.firstOrNull { it.id == "gate0a-proxy" }
-                    ?: android.content.pm.ShortcutInfo.Builder(this, "gate0a-proxy")
-                        .setShortLabel("Test cover launch")
-                        .setLongLabel("CAS Gate 0A test proxy")
-                        .setIcon(android.graphics.drawable.Icon.createWithResource(this, com.covertalert.pixeltest.R.drawable.ic_proxy))
-                        .setIntent(IntentFactory.proxy())
-                        .build()
+                // Disguised with the selected cover app's label/icon (plus the
+                // red-dot marker) and an explicit-component intent so every
+                // launcher can fire it; see ProxyShortcut.
+                val shortcut = ProxyShortcut.build(this)
                 val requested = runCatching { manager.requestPinShortcut(shortcut, null); true }.getOrDefault(false)
                 TestStore.record(this, "SHORTCUT_OUTCOME", mapOf("outcome" to if (requested) "REQUESTED" else "FAILED", "launcherControlsResult" to true))
             }
             refreshReport()
         })
         root.addView(button("Run proxy trigger") {
-            startActivity(IntentFactory.proxy())
+            startActivity(IntentFactory.proxy(this))
         })
         root.addView(button("Copy JSON report") {
             val clipboard = getSystemService<ClipboardManager>()
@@ -765,6 +763,7 @@ class MainActivity : Activity() {
                 val (_, pkg) = apps[which]
                 TestStore.setCoverPackage(this, pkg)
                 TestStore.record(this, "COVER_CONFIGURED", mapOf("coverPackage" to pkg, "validInstalledPackage" to true))
+                ProxyShortcut.updateInPlace(this)
                 refreshCoverStatus()
                 refreshReport()
             }
@@ -869,7 +868,9 @@ class MainActivity : Activity() {
             })
             .put("shortcut", JSONObject()
                 .put("pinSupported", shortcutManager?.isRequestPinShortcutSupported == true)
-                .put("pinned", shortcutManager?.pinnedShortcuts?.any { it.id == "gate0a-proxy" } == true)
+                .put("pinned", shortcutManager?.pinnedShortcuts?.any {
+                    it.id == ProxyShortcut.ID || it.id == ProxyShortcut.LEGACY_ID
+                } == true)
                 .put("launcherControlsPinnedState", true))
             .put("tasks", taskReport)
             .put("recents", JSONObject().put("proxyExcludedFromRecents", true).put("observedTaskCount", appTasks.size))
@@ -952,7 +953,16 @@ class MainActivity : Activity() {
 }
 
 object IntentFactory {
-    fun proxy() = android.content.Intent("com.covertalert.pixeltest.action.PROXY_TRIGGER")
+    /**
+     * Explicit-component proxy trigger intent. Pinned-shortcut taps must reach
+     * TriggerActivity on every launcher; an action-only implicit intent is
+     * silently dropped by several launchers (tap does nothing, no journal
+     * entry). The action stays set so the manifest intent filter remains
+     * consistent.
+     */
+    fun proxy(context: Context) = Intent()
+        .setClassName(context.packageName, TriggerActivity::class.java.name)
+        .setAction("com.covertalert.pixeltest.action.PROXY_TRIGGER")
 }
 
 private const val REQUEST_SEND_SMS = 41
