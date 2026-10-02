@@ -1,0 +1,5 @@
+== CrossKey: attempting to install the debug-key-signed v8 APK over the field install ==
+Performing Streamed Install
+adb.exe: failed to install C:\Users\CAS_DEV\Desktop\CAS-Pixel11-Field-Proofs\OneTap-Update-Proof-v0.8.1\app-v8-crosskey.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.covertalert.pixeltest signatures do not match newer version; ignoring!]
+System.Management.Automation.RemoteException
+PROOF OK: Android refused the cross-key update package. The field install is untouched.

@@ -1,0 +1,6 @@
+== InstallN: removing any previous install (old debug key) ==
+Success
+== InstallN: installing build N (versionCode 7, field release key) ==
+Performing Streamed Install
+Success
+OK: build N installed. Continue in the run guide (step 3: open app, save alert server, enroll).

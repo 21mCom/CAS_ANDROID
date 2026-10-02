@@ -1,0 +1,2 @@
+== CaptureJournal: pulling UPDATE_* events from the app's debug journal ==
+No UPDATE_* events found in the journal. Open the app once so the update check runs, then retry.
