@@ -595,7 +595,7 @@ curl -fsS -X POST \
   -H "Authorization: Bearer $CAS_ALERT_TOKEN" \
   -H "Content-Type: application/vnd.android.package-archive" \
   --data-binary @app/build/outputs/apk/debug/app-debug.apk \
-  "https://cas.example.org/api/cas/app-updates?versionCode=8&versionName=0.8.1"
+  "https://cas.example.org/api/cas/app-updates?versionCode=9&versionName=0.8.2"
 ```
 
 Rules the server enforces:

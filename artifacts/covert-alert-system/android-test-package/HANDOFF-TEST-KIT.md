@@ -101,9 +101,9 @@ as armed.
 
 ## T1 — Build and install the app
 
-`scripts\run-mvp-install.cmd` → installs version `0.8.0-selfupdate` (versionCode 7).
+`scripts\run-mvp-install.cmd` → installs version `0.8.2` (versionCode 9).
 Pass: `adb shell dumpsys package com.covertalert.pixeltest | findstr versionName`
-prints `0.8.0-selfupdate`.
+prints `0.8.2`.
 
 **Field signing key (required for field builds):** every kit APK is signed with
 one pinned release key (the single key entry in the keystore stored in the
