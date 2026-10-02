@@ -159,35 +159,32 @@ object DeviceSmsSender {
         // replacement send gets a fresh id under the new cycle token.
         val sendId = "${incidentId ?: "offline"}-${java.util.UUID.randomUUID()}"
 
-        // The body is shared by every responder, so divide it once.
-        // divideMessage is NOT reliable on every handset/Android build (seen
-        // in the field: a Pixel on Android 17 / API 37 fails it for every
-        // recipient, so no alert SMS ever left the phone). An undividable but
-        // non-empty body must not kill the alert: fall back to sending it as
-        // a single part and journal the real exception so field reports show
-        // WHY division failed. Only a blank body stays DIVIDE_FAILED — there
-        // is genuinely nothing to send. (An over-long single part may still
-        // be rejected by the radio; that rejection is reported honestly via
-        // the normal per-part result path, which beats certain silence.)
-        // Blank bodies are rejected BEFORE division: divideMessage can return
-        // a part for whitespace-only text, and an empty alert must report
-        // DIVIDE_FAILED for every responder — never dispatch dead air.
-        var divideError: String? = null
-        val sharedParts = if (body.isBlank()) {
-            null
-        } else {
-            runCatching { sms.divideMessage(body) }
-                .onFailure { divideError = it.message ?: it.javaClass.simpleName }
-                .getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-                ?: run {
-                    TestStore.record(context, "SMS_DIVIDE_FALLBACK", mapOf(
-                        "reason" to (divideError ?: "divideMessage returned no parts"),
-                        "bodyChars" to body.length,
-                    ))
-                    listOf(body)
-                }
+        // The body is shared by every responder, so divide it once. The APP
+        // owns segmentation now (SmsSegmenter — android-free, JVM-proven by
+        // scripts/test-sms-division.sh): platform divideMessage is NOT
+        // reliable (field-observed on a Pixel running Android 17 / API 37:
+        // it throws for every recipient), and the old stopgap of sending
+        // the whole body as ONE part died on the radio with
+        // RESULT_ERROR_GENERIC_FAILURE once the body outgrew a single
+        // segment (~210 chars with the location clause). divideMessage is
+        // still invoked, but ONLY as a diagnostic: its failure is journaled
+        // as SMS_DIVIDE_FALLBACK with the real exception plus the app's own
+        // segment count, so field reports keep showing whether the platform
+        // bug is still live — while the app's segments decide what actually
+        // goes out. A body goes out as one part only when it genuinely fits
+        // a single segment. Blank bodies are rejected BEFORE division: an
+        // empty alert reports DIVIDE_FAILED for every responder — never
+        // dispatch dead air.
+        val division = SmsSegmenter.divide(body) { sms.divideMessage(it) }
+        if (division?.platformFailure != null) {
+            TestStore.record(context, "SMS_DIVIDE_FALLBACK", mapOf(
+                "reason" to division.platformFailure,
+                "bodyChars" to body.length,
+                "appSegments" to division.segments.size,
+                "encoding" to division.encoding.name,
+            ))
         }
+        val sharedParts = division?.segments
         // Compute the FULL roster before persisting or sending anything: the
         // durable record must cover every responder, so a process death
         // mid-dispatch can never finalize a partially attempted roster into

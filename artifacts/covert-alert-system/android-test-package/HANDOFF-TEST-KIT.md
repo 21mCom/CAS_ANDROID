@@ -151,21 +151,23 @@ remains the fallback in every build.
    SENT then `SMS_SEND_OUTCOME` delivered=1; the console incident's SMS item
    turns `SENT` within seconds (journal shows `DELIVERY_REPORTED`).
    On handsets where `SmsManager.divideMessage` is broken (observed on the
-   Pixel running Android 17 / API 37), the app falls back to sending the  <!-- toolreq-gate: allow -- the field Pixel's OS is deliberately newer than the kit's declared API floor -->
-   whole body as ONE part and the journal shows `SMS_DIVIDE_FALLBACK` with
-   the real divide exception. **Paste that exception text into the
-   report-back** — it decides the proper fix (per-subscription SmsManager,
-   manual splitting).
-   Field result, 2026-10-01 (Pixel): the fallback fired (`reason`:
-   `getGroupIdLevel1`, body 210 chars) and every part came back
-   `RESULT_ERROR_GENERIC_FAILURE` — delivered=0 on both runs, while the same
-   handset had delivered alerts to the same responders on 2026-09-19. A
-   plausible cause is that one SMS part cannot carry a ~210-char body
-   (unproven — the earlier successes counted delivered responders, not
-   message segments). Until the proper split fix ships, a fallback run with
-   a real-length body is a KNOWN FAIL: record it with the journal paste,
-   don't chase your setup. A fallback run passes only when the responder
-   actually receives the SMS.
+   Pixel running Android 17 / API 37), the app no longer depends on it: the  <!-- toolreq-gate: allow -- the field Pixel's OS is deliberately newer than the kit's declared API floor -->
+   app splits the body into valid SMS segments itself (GSM-7 vs Unicode
+   limits, escape/surrogate pairs never split) and sends them as a proper
+   concatenated multipart message. The journal still shows
+   `SMS_DIVIDE_FALLBACK` with the platform's real divide exception PLUS the
+   app's own segment count (`appSegments`) and `encoding` — the platform
+   call is now diagnostic only. A body goes out as ONE part only when it
+   genuinely fits a single segment.
+   Field history, 2026-10-01 (Pixel, build 0.8.1, pre-fix): the old
+   single-part fallback fired (`reason`: `getGroupIdLevel1`, body 210
+   chars) and every part came back `RESULT_ERROR_GENERIC_FAILURE` —
+   delivered=0, because one SMS part cannot carry a ~210-char body. That
+   failure mode is what app-owned segmentation removes: the same body now
+   goes out as multiple valid segments (note: the location clause's `±`
+   forces Unicode encoding, so the 70/67-char limits apply, not 160/153).
+   Pass criterion is unchanged: the responder actually receives the SMS
+   and the journaled radio results are RESULT_OK.
 3. The SMS ends with a location sentence: a `maps.google.com` link plus
    `(±Nm, fix Xs old)`. The console incident view shows the same fix with a
    map link, accuracy radius, and fix age. If the phone could not get a fix

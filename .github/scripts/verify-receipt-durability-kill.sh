@@ -8,9 +8,10 @@
 # Phase 0 (environment probe, machine-checked): a real alert send classifies
 #   this AVD's radio. On the workspace's modem-less AVD the send must finalize
 #   with a NAMED failure within milliseconds — SmsManager.divideMessage throws
-#   "Sms is not supported", the non-blank body falls back to a single-part
-#   send (journaled as SMS_DIVIDE_FALLBACK), and the radio-less send call then
-#   fails immediately as SEND_FAILED:<exception>. On GitHub's ubuntu-latest
+#   "Sms is not supported" (journaled as SMS_DIVIDE_FALLBACK; the app's own
+#   segmenter still divides the body — the platform call is diagnostic only),
+#   and the radio-less send call then fails immediately as
+#   SEND_FAILED:<exception>. On GitHub's ubuntu-latest
 #   KVM image the emulated radio ACCEPTS the send (result OK), which is just
 #   as valid: the probe records which environment this is and downstream
 #   assertions (scenario A's final console state, the divide-fallback check)

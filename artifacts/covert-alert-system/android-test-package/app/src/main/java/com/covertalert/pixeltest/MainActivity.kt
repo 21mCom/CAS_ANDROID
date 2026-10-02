@@ -102,6 +102,19 @@ class MainActivity : Activity() {
         root.addView(serverInput, LinearLayout.LayoutParams(-1, -2))
         root.addView(button("Save alert server") {
             val value = serverInput.text.toString().trim()
+            // Reject at entry time: a pasted URL carrying whitespace or an
+            // unparseable host (seen in the field: a trailing " no" paste
+            // artifact) saved cleanly here and then wedged every update
+            // check with Android's "Invalid host" MalformedURLException.
+            // The rejection is journaled and shown inline; nothing is saved.
+            val rejection = ServerUrlPolicy.rejectionReason(value)
+            if (rejection != null) {
+                serverInput.error = rejection
+                TestStore.record(this, "ALERT_SERVER_REJECTED", mapOf("reason" to rejection))
+                refreshReport()
+                return@button
+            }
+            serverInput.error = null
             TestStore.setAlertServerUrl(this, value)
             TestStore.record(this, "ALERT_SERVER_CONFIGURED", mapOf("configured" to value.isNotBlank(), "https" to value.startsWith("https://")))
             refreshReport()

@@ -23,6 +23,8 @@ on:
       - "scripts/alert-location/**"
       - "scripts/test-update-check.sh"
       - "scripts/update-check/**"
+      - "scripts/test-sms-division.sh"
+      - "scripts/sms-division/**"
       # The sms-receipt-flow job gates the handset-facing API contract too, so
       # API server and schema changes must trigger this workflow.
       - "artifacts/api-server/**"
@@ -49,6 +51,8 @@ on:
       - "scripts/alert-location/**"
       - "scripts/test-update-check.sh"
       - "scripts/update-check/**"
+      - "scripts/test-sms-division.sh"
+      - "scripts/sms-division/**"
       - "artifacts/api-server/**"
       - "lib/db/**"
   workflow_dispatch:
@@ -139,6 +143,29 @@ jobs:
       # without a device.
       - name: Run update-check harness
         run: scripts/test-update-check.sh
+
+  sms-division:
+    name: SMS division + server URL harness (JVM, no emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Same pinned-toolchain pattern as the other harnesses; proves the
+      # app-owned SMS segmentation (GSM-7/Unicode limits, escape and
+      # surrogate pairs never split, app segments win even when the
+      # Pixel's platform divideMessage still throws) and the alert-server
+      # URL entry-time rejections without a device.
+      - name: Run SMS division harness
+        run: scripts/test-sms-division.sh
 
   assemble-debug:
     name: Compile Gate 0A debug APK

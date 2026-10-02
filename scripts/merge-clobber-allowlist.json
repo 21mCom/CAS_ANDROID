@@ -436,7 +436,8 @@
     "832e86f": "Rewritten generation of the deliberate .push-files.txt scratch add (add-then-remove pair, already allowlisted); the scratch file is deliberately absent at HEAD.",
     "159c859": "Rewritten generation of the deliberate .push-files.txt scratch add (add-then-remove pair, already allowlisted); the scratch file is deliberately absent at HEAD.",
     "63cbc03": "Rewritten generation of the deliberate .push-files.txt scratch add (add-then-remove pair, already allowlisted); the scratch file is deliberately absent at HEAD.",
-    "3503fe3": "Rewritten generation of the deliberate .push-files.txt scratch add (add-then-remove pair, already allowlisted); the scratch file is deliberately absent at HEAD."
+    "3503fe3": "Rewritten generation of the deliberate .push-files.txt scratch add (add-then-remove pair, already allowlisted); the scratch file is deliberately absent at HEAD.",
+    "5308759": "Deliberately superseded: its HANDOFF-TEST-KIT.md divide-fallback wording (15 missing lines) was rewritten by the app-owned SMS segmentation fix because the documented single-part fallback WAS the bug, and its package-mvp-handoff.ps1 0.6.3 default (1 missing line) was bumped to 0.6.4 by the later v0.6.4 repackage."
   },
   "paths": {},
   "reversions": [
