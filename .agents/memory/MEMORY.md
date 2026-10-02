@@ -60,3 +60,4 @@
 - [Replit deployment secret sync](replit-deployment-secret-sync.md) — deployments inherit workspace secrets automatically; quarantine live delivery secrets with blank overrides before first publish.
 - [CAS console sign-out seal](cas-console-signout-seal.md) — sign-out needs storage clear + shell unmount + auth-generation guard, or a held in-flight response re-opens the sealed console.
 - [CAS production schema migrations](cas-production-schema-migrations.md) — schema applies at boot from committed migrations; non-TTY drizzle-kit rename prompts exit 0 silently; config `out` must be relative.
+- [One-tap update field proof lessons](cas-onetap-update-proof.md) — first hardware install attempt can fail VERIFICATION_FAILURE then succeed on retry; journal-scrape regexes must use the "type" key and unescape &quot;.
