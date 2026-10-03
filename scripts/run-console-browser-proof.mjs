@@ -276,7 +276,7 @@ try {
             : {}),
         },
       });
-      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, past-alert browse/delete happy path (inline blob-URL render, delete-with-confirm, journal entry) and selection guards, responder two-step delete, and remember-this-browser (persisted vs session-only enrollment, dialog retry, sign-out, revoke-then-lock).");
+      console.log("Console browser proofs passed: mid-session revocation lock, failed mailbox login check, handset-SIM chip tooltip, first-click evidence download, past-alert browse/delete happy path (inline blob-URL render, delete-with-confirm, journal entry) and selection guards, past-alert audio/video inline playback (media elements load the blob-URL bytes), responder two-step delete, and remember-this-browser (persisted vs session-only enrollment, dialog retry, sign-out, revoke-then-lock).");
     } finally {
       await stopProcess(webServer, "console preview");
       await stopProcess(apiServer, "api-server");
