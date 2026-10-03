@@ -10,10 +10,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.ImageFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.media.Image
 import android.media.ImageReader
 import android.media.MediaRecorder
 import android.os.Handler
@@ -27,6 +33,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.min
 
 /**
  * Owner-visible, bounded evidence playground. No preview surface or activity
@@ -111,6 +119,24 @@ class EvidenceCaptureService : Service() {
                                 // Each lens gets its own artifact so the panel
                                 // can label which camera the evidence came from.
                                 for ((index, lens) in lenses.withIndex()) {
+                                    // Covered-lens gate: a ~1 s low-res probe per lens
+                                    // skips solid-black captures (pocket, box, face-down).
+                                    // Probe failures fail OPEN — capture proceeds — because
+                                    // losing real evidence is worse than a black artifact.
+                                    val probe = runCatching { probeLens(lens) }.getOrElse { error ->
+                                        TestStore.record(this, "EVIDENCE_CAPTURE", mapOf(
+                                            "kind" to kind, "outcome" to "PROBE_FAILED",
+                                            "camera" to lens.label, "detail" to "probe failed, capturing anyway: $error",
+                                        ))
+                                        null
+                                    }
+                                    if (probe?.covered == true) {
+                                        TestStore.record(this, "EVIDENCE_CAPTURE", mapOf(
+                                            "kind" to kind, "outcome" to "SKIPPED_COVERED",
+                                            "camera" to lens.label, "detail" to probe.detail,
+                                        ))
+                                        continue
+                                    }
                                     val start = System.currentTimeMillis()
                                     val file = File(cacheDir, if (kind == "photo") "photo-${lens.label}.jpg" else "video-${lens.label}.mp4")
                                     try {
@@ -240,6 +266,140 @@ class EvidenceCaptureService : Service() {
         return opened ?: throw IOException("Camera session configuration failed")
     }
 
+    /**
+     * Every camera2 capture request (still, record, probe) is built through
+     * this helper so the flash can NEVER fire: AE is pinned ON and the flash
+     * is pinned OFF explicitly instead of inheriting template defaults, which
+     * can differ across templates and devices.
+     */
+    private fun noFlashRequest(camera: CameraDevice, template: Int, target: Surface): CaptureRequest =
+        camera.createCaptureRequest(template).apply {
+            addTarget(target)
+            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+        }.build()
+
+    /**
+     * Samples the light and proximity sensors during a probe window. A sensor
+     * the device lacks simply stays null and the classifier treats that input
+     * as unavailable (failing open toward capture).
+     */
+    private class SensorWindow : SensorEventListener {
+        private var manager: SensorManager? = null
+        private var proximityRange: Float = 0f
+        @Volatile var lux: Float? = null; private set
+        @Volatile var proximityNear: Boolean? = null; private set
+
+        fun start(context: Context) {
+            val sensors = context.getSystemService(SensorManager::class.java)
+            manager = sensors
+            sensors.getDefaultSensor(Sensor.TYPE_LIGHT)?.let {
+                sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+            sensors.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let {
+                proximityRange = it.maximumRange
+                sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        }
+
+        fun stop() {
+            manager?.unregisterListener(this)
+            manager = null
+        }
+
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                // Brightest reading wins: a transient shadow must not read as dark.
+                Sensor.TYPE_LIGHT -> lux = maxOf(lux ?: 0f, event.values[0])
+                // Once anything was near during the window it stays "near".
+                Sensor.TYPE_PROXIMITY ->
+                    proximityNear = proximityNear == true || event.values[0] < proximityRange
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    /** Mean and population variance of the Y plane, subsampled for speed. */
+    private fun frameStats(image: Image): CoveredLensClassifier.FrameStats {
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val width = image.width
+        val height = image.height
+        // Aim for ~4k samples regardless of probe resolution.
+        val colStep = maxOf(1, width / 64)
+        val rowStep = maxOf(1, height / 64)
+        val row = ByteArray(plane.rowStride)
+        var count = 0L
+        var sum = 0.0
+        var sumSq = 0.0
+        var y = 0
+        while (y < height) {
+            buffer.position(y * plane.rowStride)
+            buffer.get(row, 0, min(plane.rowStride, buffer.remaining()))
+            var x = 0
+            while (x < width) {
+                val value = row[x * plane.pixelStride].toInt() and 0xFF
+                count++
+                sum += value
+                sumSq += value.toDouble() * value
+                x += colStep
+            }
+            y += rowStep
+        }
+        if (count == 0L) throw IOException("Probe frame had no samples")
+        val mean = sum / count
+        return CoveredLensClassifier.FrameStats(mean, sumSq / count - mean * mean)
+    }
+
+    /**
+     * ~1 s per-lens luminance probe: opens the camera on a small YUV reader,
+     * streams frames (flash pinned off like every request), and classifies the
+     * LAST frame — by then auto-exposure has settled, so the camera's ramp-up
+     * frames cannot read as a false "covered". Light and proximity sensors are
+     * sampled across the same window. Runs on the serialized worker thread, so
+     * it can never overlap another capture.
+     */
+    private fun probeLens(lens: Lens): CoveredLensClassifier.Decision {
+        val map = getSystemService(CameraManager::class.java).getCameraCharacteristics(lens.id)
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val size = map?.getOutputSizes(ImageFormat.YUV_420_888)
+            ?.minByOrNull { it.width.toLong() * it.height }
+            ?: throw IOException("No YUV probe output")
+        val sensors = SensorWindow()
+        sensors.start(this)
+        try {
+            val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 4)
+            try {
+                val latest = AtomicReference<CoveredLensClassifier.FrameStats?>()
+                val frameError = AtomicReference<Exception?>()
+                reader.setOnImageAvailableListener({ source ->
+                    try {
+                        source.acquireLatestImage()?.use { image -> latest.set(frameStats(image)) }
+                    } catch (error: Exception) {
+                        frameError.set(error)
+                    }
+                }, callback)
+                openCamera(lens.id).use { camera ->
+                    session(camera, reader.surface).use { captureSession ->
+                        captureSession.setRepeatingRequest(
+                            noFlashRequest(camera, CameraDevice.TEMPLATE_PREVIEW, reader.surface), null, callback)
+                        Thread.sleep(1_000)
+                        captureSession.stopRepeating()
+                    }
+                }
+                frameError.get()?.let { throw IOException("Probe frame failed", it) }
+                val stats = latest.get() ?: throw IOException("Probe produced no frames")
+                return CoveredLensClassifier.classify(stats, sensors.lux, sensors.proximityNear)
+            } finally {
+                reader.setOnImageAvailableListener(null, null)
+                reader.close()
+            }
+        } finally {
+            sensors.stop()
+        }
+    }
+
     private fun photograph(file: File, id: String) {
         val sizes = getSystemService(CameraManager::class.java).getCameraCharacteristics(id)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG)
@@ -267,9 +427,8 @@ class EvidenceCaptureService : Service() {
             }, callback)
             openCamera(id).use { camera ->
                 session(camera, reader.surface).use { captureSession ->
-                    val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-                        .apply { addTarget(reader.surface) }.build()
-                    captureSession.capture(request, null, callback)
+                    captureSession.capture(
+                        noFlashRequest(camera, CameraDevice.TEMPLATE_STILL_CAPTURE, reader.surface), null, callback)
                     if (!latch.await(10, TimeUnit.SECONDS)) throw IOException("JPEG capture timed out")
                     imageError?.let { throw IOException("JPEG capture failed", it) }
                     file.writeBytes(bytes ?: throw IOException("Empty JPEG"))
@@ -297,9 +456,8 @@ class EvidenceCaptureService : Service() {
             recorder.prepare()
             openCamera(id).use { camera ->
                 session(camera, recorder.surface).use { captureSession ->
-                    val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                        .apply { addTarget(recorder.surface) }.build()
-                    captureSession.setRepeatingRequest(request, null, callback)
+                    captureSession.setRepeatingRequest(
+                        noFlashRequest(camera, CameraDevice.TEMPLATE_RECORD, recorder.surface), null, callback)
                     recorder.start()
                     Thread.sleep(20_000)
                     recorder.stop()
