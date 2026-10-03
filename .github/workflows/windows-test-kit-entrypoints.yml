@@ -772,11 +772,61 @@ jobs:
       # consent from the journal alone — and must not drop download results
       # whose detail is a JSON error body. SelfTest pins both against built-in
       # fixtures, including the pre-consent-journaling baseline shape.
-      - name: Run update-proof journal/consent self-test
+      # The pack is what field testers actually run, so the job extracts the
+      # COMMITTED one-tap ZIP and tests that script — testing only the
+      # canonical copy once certified a pack whose shipped script was stale.
+      - name: Extract the committed one-tap update proof pack
         shell: pwsh
         run: |
-          powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File artifacts/covert-alert-system/scripts/update-proof/Install-Update-Proof.ps1 -Step SelfTest
-          if ($LASTEXITCODE -ne 0) { throw "Install-Update-Proof.ps1 -Step SelfTest exited $LASTEXITCODE" }
+          $ErrorActionPreference = 'Stop'
+          $pack = @(Get-ChildItem -LiteralPath deliverables -Filter 'CAS-Pixel11-OneTap-Update-Proof-v*.zip' -File)
+          if ($pack.Count -ne 1) { throw "Expected exactly one committed one-tap update proof ZIP in deliverables/, found $($pack.Count)." }
+          Expand-Archive -LiteralPath $pack[0].FullName -DestinationPath "$env:RUNNER_TEMP\onetap-pack" -Force
+          $script = "$env:RUNNER_TEMP\onetap-pack\Install-Update-Proof.ps1"
+          if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw "The committed pack does not contain Install-Update-Proof.ps1 at its root." }
+          Add-Content -Path $env:GITHUB_ENV -Value "ONETAP_PACK_SCRIPT=$script"
+
+      - name: Run update-proof journal/consent self-test from the packaged script
+        shell: pwsh
+        run: |
+          powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:ONETAP_PACK_SCRIPT" -Step SelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Install-Update-Proof.ps1 -Step SelfTest exited $LASTEXITCODE" }
+
+  onetap-pack-parity:
+    name: One-tap update proof pack ships the canonical script and guide
+    # ubuntu-latest: the comparison must be byte-exact, and a Windows checkout
+    # could normalize line endings differently than the Linux workspace the
+    # deliverable is committed from (same reason as mvp-handoff-freshness).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The 2026-10-03 review caught the committed pack shipping a pre-fix
+      # Install-Update-Proof.ps1 while the canonical script had the fix: the
+      # self-test job exercised only the canonical copy, so nothing compared
+      # the shipped bytes. Compare both pack documents byte-for-byte here.
+      - name: Packaged script and guide must match the canonical sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pack = @(Get-ChildItem -LiteralPath deliverables -Filter 'CAS-Pixel11-OneTap-Update-Proof-v*.zip' -File)
+          if ($pack.Count -ne 1) { throw "Expected exactly one committed one-tap update proof ZIP in deliverables/, found $($pack.Count)." }
+          $dest = Join-Path $env:RUNNER_TEMP 'onetap-pack'
+          Expand-Archive -LiteralPath $pack[0].FullName -DestinationPath $dest -Force
+          foreach ($name in @('Install-Update-Proof.ps1', 'RUN-ONE-TAP-UPDATE-PROOF.md')) {
+              $shipped = Join-Path $dest $name
+              $canonical = Join-Path 'artifacts/covert-alert-system/scripts/update-proof' $name
+              if (-not (Test-Path -LiteralPath $shipped -PathType Leaf)) { throw "The committed pack does not contain $name at its root." }
+              $shippedHash = (Get-FileHash -LiteralPath $shipped -Algorithm SHA256).Hash
+              $canonicalHash = (Get-FileHash -LiteralPath $canonical -Algorithm SHA256).Hash
+              if ($shippedHash -ne $canonicalHash) {
+                  throw "The committed one-tap pack ships a stale $name. Refresh the pack from artifacts/covert-alert-system/scripts/update-proof/ and recommit the ZIP."
+              }
+          }
+          Write-Host 'One-tap pack script and guide match the canonical sources byte-for-byte.'
 
   git-bash-report:
     name: Gate 0A report generation under Git Bash
