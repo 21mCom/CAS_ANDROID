@@ -69,6 +69,14 @@ function Get-JournalUpdateEvents {
   $node = $prefs.SelectSingleNode('/map/string[@name="events"]')
   if ($null -eq $node -or [string]::IsNullOrWhiteSpace($node.InnerText)) { return @() }
   $events = @($node.InnerText | ConvertFrom-Json)
+  # Host normalization: some ConvertFrom-Json builds emit a top-level JSON
+  # array as ONE pipeline object instead of enumerating it, leaving $events as
+  # a single-element wrapper around the real array (the CI self-test's
+  # five-event fixture then counts 1). Unwrap exactly that shape; real journal
+  # events are PSCustomObjects, never nested enumerables.
+  if ($events.Count -eq 1 -and $null -ne $events[0] -and $events[0] -is [System.Collections.IEnumerable] -and $events[0] -isnot [string]) {
+    $events = @($events[0])
+  }
   return @($events | Where-Object { $_.type -like 'UPDATE_*' })
 }
 
