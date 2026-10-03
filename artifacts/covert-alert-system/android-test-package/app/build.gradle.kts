@@ -57,8 +57,8 @@ android {
         // they are a product contract, not a workstation prerequisite.
         minSdk = 35
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.8.2"
+        versionCode = 10
+        versionName = "0.8.3"
     }
 
     if (fieldSigningConfigured) {

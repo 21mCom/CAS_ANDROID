@@ -5,8 +5,8 @@
 
   Steps:
     InstallN       uninstall any old-key install, then install build N
-                   (app-v7-release-signed.apk, versionCode 7).
-    CrossKey       attempt to install app-v8-crosskey.apk (same versionCode 8,
+                   (app-v9-release-signed.apk, versionCode 9).
+    CrossKey       attempt to install app-v10-crosskey.apk (same versionCode 10,
                    signed with the DEFAULT ANDROID DEBUG KEY) over the field
                    install. Android must REFUSE it - that refusal is the proof
                    that a wrong-key (or tampered-and-resigned) update cannot
@@ -41,8 +41,8 @@ $ErrorActionPreference = 'Stop'
 # Resolve script-relative paths AFTER parameter binding (5.1 evaluates default
 # parameter values before the body runs).
 $pkg  = 'com.covertalert.pixeltest'
-$apkN = Join-Path $PSScriptRoot 'app-v7-release-signed.apk'
-$apkX = Join-Path $PSScriptRoot 'app-v8-crosskey.apk'
+$apkN = Join-Path $PSScriptRoot 'app-v9-release-signed.apk'
+$apkX = Join-Path $PSScriptRoot 'app-v10-crosskey.apk'
 
 # Native stderr under $ErrorActionPreference='Stop' turns merged 2>&1 output
 # into a terminating error on Windows PowerShell 5.1 - drop to Continue around
@@ -182,7 +182,7 @@ switch ($Step) {
     Write-Host "== InstallN: removing any previous install (old debug key) =="
     $u = Invoke-Adb @('uninstall', $pkg)
     Write-Host $u.Text
-    Write-Host "== InstallN: installing build N (versionCode 7, field release key) =="
+    Write-Host "== InstallN: installing build N (versionCode 9, field release key) =="
     $i = Invoke-Adb @('install', $apkN)
     Write-Host $i.Text
     if ($i.Text -notmatch '(?m)^Success') {
@@ -198,7 +198,7 @@ switch ($Step) {
       exit 1
     }
     if (-not (Test-Path $apkX)) { Write-Host "ERROR: $apkX not found next to this script."; exit 1 }
-    Write-Host "== CrossKey: attempting to install the debug-key-signed v8 APK over the field install =="
+    Write-Host "== CrossKey: attempting to install the debug-key-signed v10 APK over the field install =="
     $i = Invoke-Adb @('install', '-r', $apkX)
     Write-Host $i.Text
     if ($i.Text -match 'INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_FAILED_UPDATE_WRONG_KEY|INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES|signatures do not match|INSTALL_FAILED_VERSION_DOWNGRADE') {
